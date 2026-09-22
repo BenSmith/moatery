@@ -8,12 +8,10 @@ a connection across the requests of one guest connection; the module
 functions name a failed leg -- which drop reason it is, and the one sentence
 a guest may be told.
 
-Dialled by NAME, never by the address the guest aimed at (the inspector
-design, §7.4): that address is this inspector's own listener, so resolving
-the authorised name here is what makes the destination the one the policy
-named rather than one the guest chose.
-
-Installed to /usr/libexec/workloadctl/egress_upstream.py.
+Dialled by NAME, never by the address the guest aimed at: that address is
+this inspector's own listener, so resolving the authorised name here is
+what makes the destination the one the policy named rather than one the
+guest chose.
 """
 
 import ipaddress
@@ -51,13 +49,14 @@ BROKER_UPSTREAM_KEY = "broker\x00"
 
 # What the inspector offers upstream, and what it offers the guest. One
 # protocol, from configuration, on both legs -- never mirrored from what the
-# guest asked for. Mirroring would make the inspector sniff the guest's ALPN and
-# then have to speak whatever came back, including h2 it does not
-# parse; §6 requires the upstream leg up BEFORE the guest's handshake completes
+# guest asked for. Mirroring would make the inspector sniff the guest's ALPN
+# and then have to speak whatever came back, including h2 it does not parse;
+# the upstream leg is brought up BEFORE the guest's handshake completes
 # precisely so there is nothing to mirror.
 UPSTREAM_ALPN = ("http/1.1",)
 
-# What a host named in [[vm.network.http2]] is offered instead, on BOTH legs.
+# What a host named in the policy's `http2` list is offered instead, on BOTH
+# legs.
 #
 # THIS OFFER BINDS NOBODY, and every reader of this path has to know it.
 # Measured on Python 3.14 / OpenSSL 3.5.7: a server offering `http/1.1` alone
@@ -67,8 +66,9 @@ UPSTREAM_ALPN = ("http/1.1",)
 # selects what a COOPERATING client speaks, and the guest this design exists
 # for writes its own bytes. What actually binds a terminated host to HTTP/1.1
 # is the non-HTTP refusal in inspect_tls._is_http, and what binds an `http2`
-# host to h2 is the preface check in inspect_tls._serve_h2 -- not either of these
-# tuples. Deleting a refusal because "the ALPN already says so" reopens the whole plane.
+# host to h2 is the preface check in inspect_tls._serve_h2 -- not either of
+# these tuples. Deleting a refusal because "the ALPN already says so" reopens
+# the whole plane.
 ALPN_H2 = ("h2",)
 
 
@@ -93,13 +93,12 @@ class Upstream:
         self._ctx_h2.set_alpn_protocols(list(ALPN_H2))
         # The (address, port) of THIS workload's credential broker instance,
         # handed in by whoever started the listener, or None for a listener
-        # started without one. Handed in rather than derived: the derivation
-        # is "this uid's loopback address plus the instance port", which is a
-        # fact about how workloadctl lays out a host, and the inspector has no
-        # business knowing it -- the generator (gen_egress) does the
-        # derivation from the workload's uid and writes the pair into the
-        # unit's ExecStart=. A None here makes a brokered dial a legible
-        # refusal rather than a guess.
+        # started without one. Handed in rather than derived: which address
+        # a workload's broker binds is a fact about how a host is laid out,
+        # and the inspector has no business knowing it -- whoever writes
+        # both units chooses the pair once and writes it onto each
+        # ExecStart=. A None here makes a brokered dial a legible refusal
+        # rather than a guess.
         self._broker_endpoint = (
             None if broker_endpoint is None else tuple(broker_endpoint))
 
@@ -115,7 +114,7 @@ class Upstream:
     def dial_tls(self, host, alpn=UPSTREAM_ALPN):
         """A verified TLS session to an allowlisted name, as a _Stream.
 
-        Dials the NAME (§7.4), like every other upstream here. Verification is
+        Dials the NAME, like every other upstream here. Verification is
         full and against the HOST's trust store; see __init__ on why there is
         no key to turn it off.
         """
@@ -143,12 +142,11 @@ class Upstream:
         Cleartext, and on loopback, which is not a downgrade: the leg the guest
         cares about is the broker's own, which is TLS to the provider and
         verified there. This hop never leaves the host, and the endpoint it
-        goes to was handed to this process on its command line, derived by
-        the generator from the workload's uid -- so a second workload's
-        inspector, handed its own,
-        reaches its own broker and finds nothing here. That derivation is the
-        whole of ADR 007 decision 6: a single broker on 127.0.0.1 would be
-        reachable by every workload on the box.
+        goes to was handed to this process on its command line, chosen per
+        workload -- so a second workload's inspector, handed its own, reaches
+        its own broker and finds nothing here. One broker per workload at an
+        address of its own is the whole point: a single broker on 127.0.0.1
+        would be reachable by every workload on the box.
 
         `host` is unused for ADDRESSING and is deliberately still the argument,
         because `connection_for` calls every dial the same way. It is not
@@ -177,13 +175,13 @@ class Upstream:
         """The connection to an authorised name, opened once and reused.
 
         `dial` is what OPENS one, and it is the whole of the difference between
-        the two planes here: cleartext dials port 80, the terminated plane dials
-        443 and verifies. A redial is a real possibility on both -- an origin
-        that answers `Connection: close`, an HTTP/1.0 exchange -- so the
+        the two planes here: cleartext dials port 80, the terminated plane
+        dials 443 and verifies. A redial is a real possibility on both -- an
+        origin that answers `Connection: close`, an HTTP/1.0 exchange -- so the
         terminated plane passes the same verifying dial it used at the front of
         the connection rather than a socket it captured once.
 
-        Dialled by NAME (§7.4), like the TLS plane: the address the guest aimed
+        Dialled by NAME, like the TLS plane: the address the guest aimed
         at is this inspector's own listener, so resolving the authorised name
         here is what makes the destination the one the policy named.
 
@@ -278,7 +276,8 @@ def tls_failure(host, exc):
     dozen others -- so that arm names the possibility rather than asserting
     it. A server for which the certificate is OPTIONAL is invisible at every
     layer here; the symptom is a host that starts answering 401 or 403 only
-    under termination, and `diagnose` is where that sentence belongs.
+    under termination, and a host-side report is where that sentence
+    belongs.
     """
     code = getattr(exc, "reason", "") or ""
     if "CERTIFICATE_REQUIRED" in code:
@@ -310,7 +309,7 @@ def dial_failure_reason(host: str, internal) -> str:
     process can honestly tell.
 
     Two failures arrive as the same OSError. A name that resolves into
-    private space with no [[vm.network.internal]] entry -- `internal` is the
+    private space with no `internal` entry -- `internal` is the
     policy's set of the names that have one -- was refused by the
     kernel's internal drop -- the wildcard trap firing, and an operator one
     line from a working config. A name that resolves anywhere else, or that

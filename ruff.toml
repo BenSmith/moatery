@@ -1,0 +1,13 @@
+# `just lint`. Syntax, undefined names, unused imports, and 79 columns;
+# no style rules beyond that, and no formatter (measured and declined: it
+# explodes paired argv lists).
+line-length = 79
+include = ["lib/*.py", "libexec/customs-broker", "libexec/customs-inspect",
+           "tests/manual/*.py"]
+
+[lint]
+select = ["E4", "E7", "E9", "F", "E501"]
+
+[lint.per-file-ignores]
+# sys.dont_write_bytecode has to be set before the lib imports it governs.
+"libexec/customs-inspect" = ["E402"]

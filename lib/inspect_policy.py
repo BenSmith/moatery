@@ -8,12 +8,10 @@ get through, is it spliced, is it h2, which policy entry governs it -- are
 answered with the same hostname rule and the same entry matcher the render
 side uses, both imported from inspect_document so the two cannot diverge.
 
-The renderer is egress_policy, and this module does not import it: the
-document is the whole interface, and a reader that imported its writer
-would drag the config grammar into the listener's closure. What is shared
-lives one rung below both, in inspect_document.
-
-Installed to /usr/libexec/workloadctl/inspect_policy.py.
+This module does not import whatever renders the document: the document
+is the whole interface, and a reader that imported its writer would drag
+the config grammar into the listener's closure. What is shared lives one
+level below both, in inspect_document.
 """
 
 import json
@@ -37,11 +35,10 @@ class Policy(NamedTuple):
     listener that could mutate its own policy would make the restart optional
     and the running policy unknowable from the file.
 
-    `internal` is the [[vm.network.internal]] host names, and it admits
-    nothing. The kernel's wl_internal_ok4/6 elements are the one enforcement
-    point; this copy exists so a failed dial into private space can be
-    attributed to the wildcard trap rather than to a host that is down. See
-    vm_inspect_policy.
+    `internal` is the document's `internal` host names, and it admits
+    nothing. The host's rules are the one enforcement point for private
+    address space; this copy exists so a failed dial into it can be
+    attributed to the wildcard trap rather than to a host that is down.
     """
 
     tls: str
@@ -51,7 +48,7 @@ class Policy(NamedTuple):
     http2: tuple = ()
     policy: tuple = ()
     # The digest of the document text this was parsed from, echoed into the
-    # status file so `diagnose` can tell a listener enforcing the file on disk
+    # status file so a reader can tell a listener enforcing the file on disk
     # from one enforcing an older one it still holds in memory. Defaulted so
     # every Policy() a test constructs by hand keeps working; the empty string
     # reads downstream as "this listener does not report a digest", which is a
@@ -69,7 +66,7 @@ class Policy(NamedTuple):
 
         Asked at the front of a TLS connection, where there is no request yet
         and the only thing known is the name in the ClientHello. A `policy`
-        entry allowlists its own host (§3: a name in `policy` need not also
+        entry allowlists its own host (a name in `policy` need not also
         appear in `hosts`), so a workload whose entire allowlist is written as
         policy entries has to be admitted here -- otherwise the connection dies
         before the request the rules were written about ever exists, and the
@@ -79,7 +76,7 @@ class Policy(NamedTuple):
                 or bool(policy_governs(host, self.policy)))
 
     def permits(self, host: str, method: str, path: str) -> bool:
-        """Whether one request is authorised -- §3's composition rule.
+        """Whether one request is authorised -- the composition rule.
 
         A host ANY policy entry matches is governed by those entries alone and
         `hosts` is not consulted for it; a host no entry matches is allowed by
@@ -108,10 +105,11 @@ class Policy(NamedTuple):
         """Whether this host is exempt from termination.
 
         True on the whole-workload mode as well as the per-host list, so that
-        every caller asks one question. Splitting it -- `tls == "splice"` in one
-        place and a list check in another -- is how a path gets one of the two
-        and reads correct: the connection is spliced by the mode and terminated
-        by the list, or the reverse, depending on which branch it took.
+        every caller asks one question. Splitting it -- `tls == "splice"` in
+        one place and a list check in another -- is how a path gets one of the
+        two and reads correct: the connection is spliced by the mode and
+        terminated by the list, or the reverse, depending on which branch it
+        took.
         """
         return self.tls == "splice" or hostname_match(host, self.splice)
 
@@ -134,17 +132,16 @@ class Policy(NamedTuple):
         Asked once per authorised request, and it decides only WHERE the
         request is sent -- to this workload's broker instance instead of to the
         origin. Nothing about the credential itself is known here and nothing
-        needs to be: ADR 007 decision 9 keys the broker's table by `(uid,
-        Host)`, so the name travels on no wire and exists in this process for
-        one purpose, which is naming the credential in the record and the
-        figures.
+        needs to be: the broker's table is keyed by `(uid, Host)`, so the
+        name travels on no wire and exists in this process for one purpose,
+        which is naming the credential in the record and the figures.
 
-        THE FIRST governing entry that carries one, not a merge. `validate`
-        already refuses two entries that match the same host and disagree about
-        `credential`, so on a document written by the generator there is at most
-        one answer -- but this reads a FILE, which an operator can edit, and a
-        reader that raised or picked arbitrarily on a hand-edited document would
-        turn an editing mistake into a dead workload. First-match is
+        THE FIRST governing entry that carries one, not a merge. A writer
+        that validates refuses two entries that match the same host and
+        disagree about `credential`, so on such a document there is at most
+        one answer -- but this reads a FILE, which an operator can edit, and
+        a reader that raised or picked arbitrarily on a hand-edited document
+        would turn an editing mistake into a dead workload. First-match is
         deterministic and matches the order the file states.
         """
         for entry in policy_governs(host, self.policy):
@@ -174,7 +171,8 @@ def load_policy(path):
     digest = inspect_policy_digest(text)
     doc = json.loads(text)
     if not isinstance(doc, dict):
-        raise ValueError(f"{path}: expected a JSON object, got {type(doc).__name__}")
+        raise ValueError(
+            f"{path}: expected a JSON object, got {type(doc).__name__}")
     hosts = doc.get("hosts") or []
     if not isinstance(hosts, list):
         raise ValueError(f"{path}: 'hosts' is not a list")
@@ -212,10 +210,9 @@ def load_policy(path):
         # nothing, which fails closed and therefore quietly -- the workload
         # reaches nothing and every unit test still passes.
         #
-        # Uppercased and string-filtered HERE as well as in
-        # vm_policy_entries, which is the convention this file already holds
-        # for `internal` and the responder holds for its static map: the
-        # writer normalises, and the reader normalises again so that a
+        # Uppercased and string-filtered HERE as well as by the writer,
+        # which is the convention this file already holds for `internal`:
+        # the writer normalises, and the reader normalises again so that a
         # hand-edited document cannot introduce a rule that never matches.
         # `methods` is the one that needs it -- VmPolicyEntry.permits compares
         # `method.upper()` against these, so a document carrying `["get"]`
@@ -223,10 +220,10 @@ def load_policy(path):
         # permitting it. Fails closed, and therefore in silence.
         methods = item.get("methods")
         paths = item.get("paths")
-        # `.get`, not `[...]`: the document emits the key only on the entries
-        # that carry one (vm_inspect_policy explains why the sparseness is
-        # load-bearing there), so absent and null mean the same thing here and
-        # the reader is the side that pays for it. A non-string is dropped to
+        # `.get`, not `[...]`: a writer may emit the key only on the
+        # entries that carry one, so absent and null mean the same thing
+        # here and the reader is the side that pays for it. A non-string is
+        # dropped to
         # None rather than refused -- the value's only use is as a name, and a
         # document that named a number would otherwise fail the listener's
         # START, which is a worse outcome than one brokered host reaching the

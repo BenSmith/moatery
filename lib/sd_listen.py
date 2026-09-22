@@ -1,13 +1,13 @@
 """Recovering the listeners a .socket unit passed in.
 
-Shared by the two programs that are socket-activated and never bind:
-`libexec/workload-inspect-listener` and `libexec/workload-vm-resolve`.
-Both take their sockets from systemd and refuse to open one of their own --
-but for different reasons, which is why `refusal` is a parameter rather than
-a sentence written here. The listener's bind must stay in the inherited fd to
-keep it out of the workload SELinux domain; the resolver's port 53 is
-privileged and the process is not. An operator who hits this needs the reason
-that applies to the program they are looking at, so each supplies its own.
+For a program that is socket-activated and never binds: it takes its
+sockets from systemd and refuses to open one of its own, for a reason that
+is the program's -- which is why `refusal` is a parameter rather than a
+sentence written here. The inspector's bind must stay in the inherited fd
+to keep it out of the workload's security domain; another program's port
+may be privileged where the process is not. An operator who hits this
+needs the reason that applies to the program they are looking at, so each
+supplies its own.
 
 Only the *reason* differs. Reading LISTEN_PID/LISTEN_FDS, refusing an
 activation environment that belongs to another process, and turning the fd

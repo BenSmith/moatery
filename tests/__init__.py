@@ -3,14 +3,14 @@
 Test modules are imported as ``tests.<name>``, so this runs before any of them
 and is the one place that knows the checkout layout.
 
-Shipped code in ``lib/`` is a flat set of top-level modules. On a host every
-entrypoint is installed beside them in ``/usr/libexec/workloadctl`` and finds
-them via its own ``sys.path[0]``; from a checkout that job is ours. ``tests/``
-itself goes on the path too, so sibling helpers (e.g.
-``covhelper``) import by bare name. The entrypoints under ``bin/``, ``generators/``
-and ``libexec/`` have no ``.py`` extension and so cannot be imported by name --
-use :func:`load_script`. Subprocess launches of those scripts need the same lib
-path handed down in the child env -- use :func:`script_env`.
+Shipped code in ``lib/`` is a flat set of top-level modules. Installed,
+the entrypoints sit beside them and find them via their own
+``sys.path[0]``; from a checkout that job is ours. ``tests/`` itself goes
+on the path too, so sibling helpers (e.g. ``covhelper``) import by bare
+name. The entrypoints under ``libexec/`` have no ``.py`` extension and so
+cannot be imported by name -- use :func:`load_script`. Subprocess launches
+of those scripts need the same lib path handed down in the child env --
+use :func:`script_env`.
 """
 
 import importlib.machinery
@@ -45,7 +45,7 @@ for _dir in (LIB_DIR, str(TESTS_DIR)):
 
 
 def load_script(relpath, name=None):
-    """Import an extension-less entrypoint, e.g. ``generators/workload-generate``.
+    """Import an extension-less entrypoint, e.g. ``libexec/customs-broker``.
 
     The scripts guard execution behind ``if __name__ == "__main__"``, so importing
     one under any other name is side-effect free beyond its top-level imports.

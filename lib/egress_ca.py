@@ -2,27 +2,19 @@
 """The per-workload egress CA, the leaves it signs, and where all of it lives.
 
 One CA per workload rather than one per host, and the directory names, the
-validity windows, the SELinux types of the subtree and the two openssl
-invocations are all here together because they are one decision each spelled
-in several places: the minter creates the directories, the SELinux patterns
-label them (workload_selinux.pki_fcontext_patterns composes the names here
-with the workload's root), `diagnose` reads the certificate back, and the
-seed writes the anchor into the guest (vm_default_seed.vm_ca_env decides
-which guest gets one). A drift between any two of those is a mislabelled
-directory or an untrusted anchor, and both present as a network fault rather
-than as a naming mistake.
+validity windows, the labels of the subtree and the two openssl invocations
+are all here together because they are one decision each spelled in several
+places: the minter creates the directories, whoever labels the state
+directory composes the names here, whoever reports on a workload reads the
+certificate back, and whoever provisions the workload writes the anchor
+into it. A drift between any two of those is a mislabelled directory or an
+untrusted anchor, and both present as a network fault rather than as a
+naming mistake.
 
-Both substrates, despite the `vm_`/`VM_` prefixes -- the container half mints
-against the same CA through the same minter.
-
-On the listener's side of the line: this module takes a STATE DIRECTORY and
-knows nothing about which workload it belongs to or how workloadctl found it.
-It imports inspect_document and nothing above it, so the inspector's closure
-stays free of the config grammar. Nothing here runs openssl or touches the
-filesystem; it builds paths and argv, and lib/egress_mint.py is what executes
-them.
-
-Installed to /usr/libexec/workloadctl/egress_ca.py.
+This module takes a STATE DIRECTORY and knows nothing about which workload
+it belongs to or how the caller found it. It imports inspect_document and
+nothing above it. Nothing here runs openssl or touches the filesystem; it
+builds paths and argv, and lib/egress_mint.py is what executes them.
 """
 
 import ipaddress
@@ -32,23 +24,24 @@ from pathlib import Path
 from inspect_document import normalise_hostname
 
 
-# Where the guest finds the CA whose certificates the inspector's spliced
-# connections are presented under. A guest path, not a host path: the file
-# arrives inside the seed and is written by cloud-init.
+# Where the workload finds the CA whose certificates the inspector's
+# terminated connections are presented under. A path INSIDE the workload,
+# not a host path: whoever provisions the workload puts the file there.
 #
 # /usr/local/share/ca-certificates is the directory `update-ca-certificates`
-# consumes on Debian-family guests; Fedora's anchors live elsewhere. The five
-# variables below name the FILE directly rather than relying on either, because
-# the whole point of the block is to work in a guest whose distribution we do
-# not choose.
-CA_BUNDLE_PATH = "/usr/local/share/ca-certificates/workloadctl-egress.crt"
+# consumes on Debian-family systems; Fedora's anchors live elsewhere. The
+# five variables below name the FILE directly rather than relying on either,
+# because the whole point of the block is to work in a workload whose
+# distribution we do not choose.
+CA_BUNDLE_PATH = "/usr/local/share/ca-certificates/customs.crt"
 
 
-# The environment variables that point a guest's HTTP clients at that bundle.
-# Five, because there is no single one: OpenSSL reads SSL_CERT_FILE, Node reads
-# NODE_EXTRA_CA_CERTS, python-requests reads REQUESTS_CA_BUNDLE, git reads
-# GIT_SSL_CAINFO and pip reads PIP_CERT. A guest missing any one of them fails
-# only in that ecosystem, which is the hardest kind of failure to attribute.
+# The environment variables that point a workload's HTTP clients at that
+# bundle. Five, because there is no single one: OpenSSL reads SSL_CERT_FILE,
+# Node reads NODE_EXTRA_CA_CERTS, python-requests reads REQUESTS_CA_BUNDLE,
+# git reads GIT_SSL_CAINFO and pip reads PIP_CERT. A workload missing any one
+# of them fails only in that ecosystem, which is the hardest kind of failure
+# to attribute.
 CA_ENV_VARS = (
     "SSL_CERT_FILE",
     "NODE_EXTRA_CA_CERTS",
@@ -58,92 +51,87 @@ CA_ENV_VARS = (
 )
 
 
-# The guest variables workloadctl seeds itself, and therefore the ones a
-# credential's `env` may not be. Derived from the producers rather than listed,
-# so a sixth CA variable cannot leave this behind: the failure a stale copy
-# produces is a silent overwrite in the seed, not an error anywhere.
+# The variables a provisioner sets in the workload itself, and therefore the
+# ones a placeholder's variable may not be. Derived from the producers rather
+# than listed, so a sixth CA variable cannot leave this behind: the failure a
+# stale copy produces is a silent overwrite, not an error anywhere.
 #
-# No broker variable is reserved, because nothing seeds one -- the guest is
-# never told a broker address (ADR 007 decision 6).
+# No broker variable is reserved, because nothing sets one -- the workload
+# is never told a broker address.
 RESERVED_GUEST_ENV = frozenset(CA_ENV_VARS)
 
 
 # --- The per-workload egress CA ---
 #
 # One CA per workload, generated like the SSH host keypair: idempotent, made
-# once, NEVER churned, and created before the seed ISO that carries it.
+# once, NEVER churned, and created before the workload that trusts it.
 #
 # Per-workload scoping is what makes the key affordable. It lives in the
-# workload's state directory owned by _wl-<name> -- the same uid QEMU runs as --
-# and the only party trusting it is the guest that uid already owns, so a guest
-# escape stealing it gains the ability to impersonate sites TO ITSELF. A single
+# workload's state directory, owned by the uid the workload runs as, and the
+# only party trusting it is the workload that uid already owns, so an escape
+# stealing it gains the ability to impersonate sites TO ITSELF. A single
 # host-wide CA shared by every workload would be a genuine crown jewel.
-#
-# `backup` never captures state/, so the key is in no archive and needs no
-# exclusion rule.
 
 CA_DIR_NAME = "ca"
 CA_KEY_NAME = "egress-ca.key"
 CA_CERT_NAME = "egress-ca.crt"
 
 
-# The two leaf caches live beside the CA, under the same state directory, and
-# their names are here rather than in egress_mint because the SELinux patterns
+# The two leaf caches live beside the CA, under the same state directory,
+# and their names are here rather than in egress_mint because the labels
 # below have to name the same three directories the minter creates. A drift
-# between the two spellings is a mislabelled directory, which presents as the
-# inspector failing to mint and not as a naming mistake.
+# between the two spellings is a mislabelled directory, which presents as
+# the inspector failing to mint and not as a naming mistake.
 LEAF_DIR_NAME = "leaves"
 DENIAL_DIR_NAME = "leaves-denied"
 
 
 # THE PKI SUBTREE HAS ITS OWN LABELS, AND THAT IS THE WHOLE POINT
 #
-# `wlinspect_t` is a separate domain from `svirt_t` so that the component
-# terminating guest input cannot reach the workload's disks, volumes or state
-# directory. The inspector reads a private key and writes a leaf cache, and
-# both live in that state directory beside the disk images.
-# Granting the domain `svirt_image_t` would be one rule shorter, would work,
-# and would hand the inspector the guest's disks — so the material moves
-# instead: three directories with labels of their own, and the domain is
-# granted those.
+# On a host that confines the inspector under SELinux, its domain is granted
+# these two types and nothing else in the state directory: the component
+# terminating workload input reads a private key and writes a leaf cache,
+# and those live beside things it must not reach (a VM's disks, a
+# container's volumes). Three directories with labels of their own, rather
+# than one rule granting the whole directory.
 #
 # Two types, not one, because the permissions genuinely differ. The CA is
-# READ-ONLY to the inspector: an inspector that could rewrite it could replace
-# the anchor the guest was seeded with, which is unrecoverable without a
+# READ-ONLY to the inspector: an inspector that could rewrite it could
+# replace the anchor the workload trusts, which is unrecoverable without a
 # re-provision. The leaves are read-write because minting them is the job.
 CA_SELINUX_TYPE = "wlinspect_ca_t"
 LEAF_SELINUX_TYPE = "wlinspect_leaf_t"
 
 
-# Ten years. The number follows from never rotating rather than from any threat
-# estimate: a CA that expires is a CA that must be replaced, replacing it means
-# re-provisioning the guest (cloud-init runs once per instance-id), so the
-# validity is the real upper bound on a VM's life. Ten years puts that boundary
-# beyond the hardware's, which is the point -- anything shorter schedules a
-# total outage, every HTTPS request failing validation on a VM `diagnose` calls
-# healthy, for a date nobody wrote down.
+# Ten years. The number follows from never rotating rather than from any
+# threat estimate: a CA that expires is a CA that must be replaced, replacing
+# it means re-provisioning the workload, so the validity is the real upper
+# bound on a workload's life. Ten years puts that boundary beyond the
+# hardware's, which is the point -- anything shorter schedules a total
+# outage, every HTTPS request failing validation on a workload every report
+# calls healthy, for a date nobody wrote down.
 #
-# Distance is not the same as invisibility: the CA report carries notAfter and
-# `diagnose` warns inside the last year, so a workload that lives long enough
-# to reach it gets a re-provision SCHEDULED rather than discovered.
+# Distance is not the same as invisibility: the certificate carries notAfter
+# and CA_EXPIRY_WARN_DAYS is the window a report warns inside, so a workload
+# that lives long enough to reach it gets a re-provision SCHEDULED rather
+# than discovered.
 CA_VALIDITY_DAYS = 3650
 
 
-# notBefore is backdated an hour for clock skew. Guest drift is ~10 ppm
-# (about five minutes a year), so this covers roughly 1,200
-# years of it -- and exactly ONE HOUR of a vCPU pause, which a guest loses
-# permanently. The backdate is not what makes pauses survivable; the clock
-# keeper (lib/vm_clock.py, once a minute per VM) is. What the backdate buys
-# is that a pause SHORTER than an hour, and the keeper's own one-minute
-# window after a longer one, cost the guest nothing at all.
+# notBefore is backdated an hour for clock skew. Clock drift is ~10 ppm
+# (about five minutes a year), so this covers roughly 1,200 years of it --
+# and exactly ONE HOUR of a paused VM's lost time, which a paused guest does
+# not recover on its own. The backdate is not what makes a long pause
+# survivable; something that steps the guest's clock is. What the backdate
+# buys is that a pause SHORTER than an hour costs the workload nothing.
 CA_BACKDATE_SECONDS = 3600
 
 
-# The window CA_VALIDITY_DAYS' comment already promised: `diagnose` warns
+# The window CA_VALIDITY_DAYS' comment already promised: a report warns
 # inside the last year. A year rather than a month because the remedy is a
-# RE-PROVISION -- cloud-init runs once per instance-id, so the guest is rebuilt,
-# not restarted -- and a month's notice for that is notice of an outage rather
-# than of a decision.
+# RE-PROVISION -- the workload is rebuilt with a new anchor, not restarted
+# -- and a month's notice for that is notice of an outage rather than of a
+# decision.
 CA_EXPIRY_WARN_DAYS = 365
 
 
@@ -173,11 +161,13 @@ def denial_dir(state_dir) -> Path:
 
 def ca_subject(name: str) -> str:
     """The CA's subject. Names the workload, because an operator reading a
-    certificate error inside a guest needs to know which CA it came from."""
-    return f"/CN=workloadctl egress CA ({name})"
+    certificate error inside a workload needs to know which CA it came
+    from."""
+    return f"/CN=customs egress CA ({name})"
 
 
-def ca_openssl_argv(name: str, key_path, cert_path, *, now: float) -> list[str]:
+def ca_openssl_argv(name: str, key_path, cert_path, *,
+                    now: float) -> list[str]:
     """One `openssl req -x509` invocation that mints the CA.
 
     THE THREE EXTENSIONS ARE NOT DECORATION. Python 3.14's ssl (OpenSSL 3.5)
@@ -321,9 +311,8 @@ def leaf_openssl_argv(name: str, ca_key, ca_cert,
     against any of them, including ones a later narrowing of the list removes.
     One name asked for, one name signed.
 
-    notBefore is backdated by the same hour the CA is, for the same reason and
-    with the same caveat -- see CA_BACKDATE_SECONDS, and the clock keeper
-    (lib/vm_clock.py) that is the actual remedy for a paused guest.
+    notBefore is backdated by the same hour the CA is, for the same reason
+    and with the same caveat -- see CA_BACKDATE_SECONDS.
     """
     not_before = time.strftime(
         "%Y%m%d%H%M%SZ", time.gmtime(now - CA_BACKDATE_SECONDS))

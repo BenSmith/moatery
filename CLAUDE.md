@@ -10,8 +10,8 @@ modules lift, which stay, and the open copy-vs-dependency decision).
 
 ## Where the code came from
 
-`lib/`, `libexec/` and the tests are a verbatim copy (2026-09-22) of
-these, in the hypervisor repo checked out beside this one:
+`lib/`, `libexec/` and the tests are a copy (2026-09-22) of these, in
+the hypervisor repo checked out beside this one:
 
 ```
 ../hypervisor/workloadctl/
@@ -36,10 +36,12 @@ workloadctl still carries its own copy and is not yet a consumer of this
 one; the copy-vs-dependency decision in `docs/EXTRACTION.md` is open.
 Until it is made, a fix that matters to both goes to both.
 
-The copy is verbatim: module names, docstrings and comments still say
-"workload", "workloadctl", "guest" and cite workloadctl docs by path.
-Renaming and rewording is owed, and it should be done in the style
-below — present-tense reasons, no "used to be".
+The prose is renamed: nothing under `lib/` or `libexec/` says
+"workloadctl", cites its docs, or narrates history. Module names and
+every identifier workloadctl imports are unchanged (`docs/PLAN.md` lists
+the boundary). "Guest" and "workload" remain as the words for the thing
+behind the inspector. Diffing against workloadctl is now a diff of prose
+plus the two entrypoints' names; code lines are the same.
 
 ## Conventions carried over from workloadctl
 
@@ -71,7 +73,7 @@ below — present-tense reasons, no "used to be".
 
 ```bash
 just test     # all unit tests (unittest discover; 295 on arrival)
-just lint     # compiles lib/ and both entrypoints in memory
+just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user
 ```

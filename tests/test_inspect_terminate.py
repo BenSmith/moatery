@@ -433,12 +433,11 @@ class TestAClientThatRefusesTheLeafIsToldBothRemedies(TerminationCase):
         self.assertIn("splice", logged)
         self.assertIn(self.HOST, logged)
 
-    def test_it_still_names_the_re_seeding_case(self):
-        """The old sentence was not wrong, it was incomplete.
-
-        A VM instance seeded before the CA existed really does need re-seeding,
-        and dropping that half to fix the other one would move the same defect
-        to the other substrate.
+    def test_it_still_names_the_re_provisioning_case(self):
+        """Naming only the embedded-store case would be the same defect
+        mirrored: a workload provisioned before the CA existed really does
+        need re-provisioning, and dropping that half to fix the other one
+        would move the wrongness to the other kind of client.
         """
         mod = _mod()
         origin = _Origin(self.origin_pem)
@@ -446,8 +445,8 @@ class TestAClientThatRefusesTheLeafIsToldBothRemedies(TerminationCase):
         listener, out = self._listener(mod, origin)
         self._exchange(listener, origin, guest_ctx=self._stranger_context())
         logged = out.getvalue()
-        self.assertIn("re-seed", logged)
-        self.assertIn("ca_delivery", logged)
+        self.assertIn("re-provision", logged)
+        self.assertIn("environment variables are absent or wrong", logged)
 
 
 class TestADeniedNameIsBumpedRatherThanClosed(TerminationCase):
@@ -471,7 +470,7 @@ class TestADeniedNameIsBumpedRatherThanClosed(TerminationCase):
         self.assertIsNone(error, f"the handshake must succeed: {error}")
         self.assertIn(b"403 Forbidden", response)
         self.assertNotIn(b"egress allowlist", response)
-        self.assertNotIn(b"workloadctl", response)
+        self.assertNotIn(b"customs", response)
         self.assertEqual(origin.requests, [],
                          "a denied name must never reach an origin")
         status = listener.status()
@@ -1024,7 +1023,7 @@ class TestARedirectOffTheAllowlistIsNamedWhereBothNamesAreKnown(
         line = out.getvalue()
         self.assertIn("host=localhost", line)
         self.assertIn("other.example/blocked", line)
-        self.assertIn("[[vm.network.policy]]", line)
+        self.assertIn("policy entry does not permit", line)
         self.assertNotIn("not allowlisted", line)
 
     def test_a_target_its_policy_entry_permits_is_silent(self):
@@ -1056,7 +1055,7 @@ class TestARedirectOffTheAllowlistIsNamedWhereBothNamesAreKnown(
             listener, origin,
             request=b"POST /p HTTP/1.1\r\nHost: localhost\r\n"
                     b"Content-Length: 0\r\nConnection: close\r\n\r\n")
-        self.assertIn("[[vm.network.policy]]", out.getvalue())
+        self.assertIn("policy entry does not permit", out.getvalue())
 
     def test_a_302_says_nothing_when_either_reading_permits(self):
         """301 and 302 have two live readings -- the RFC preserves the method,
@@ -1081,7 +1080,7 @@ class TestARedirectOffTheAllowlistIsNamedWhereBothNamesAreKnown(
                                           304, "Not Modified")
         listener, out = self._policy_listener(mod, origin)
         self._exchange(listener, origin)
-        self.assertNotIn("[[vm.network.policy]]", out.getvalue())
+        self.assertNotIn("`policy`", out.getvalue())
 
     def test_the_path_is_normalised_the_way_the_request_side_will(self):
         """The note predicts a verdict the guest's NEXT connection will get,
@@ -1307,7 +1306,7 @@ class TestNonHttpInsideATerminatedSessionIsClosed(TerminationCase):
         listener, out = self._listener(mod, origin)
         self._exchange(listener, origin, request=self.NOT_HTTP)
         line = out.getvalue()
-        self.assertIn("[[vm.network.splice]]", line)
+        self.assertIn("`splice`", line)
         self.assertIn("localhost", line)
 
     def test_a_malformed_but_recognisable_request_still_gets_its_400(self):
@@ -1435,8 +1434,8 @@ class TestTheNonHttpRefusalIsSplitByPolicy(TerminationCase):
         listener, out = self._governed(mod, origin)
         self._exchange(listener, origin, request=self.NOT_HTTP)
         line = out.getvalue()
-        self.assertIn("[[vm.network.splice]]", line)
-        self.assertIn("[[vm.network.policy]]", line)
+        self.assertIn("`splice`", line)
+        self.assertIn("`policy` entry", line)
         self.assertIn("deleted", line)
 
     def test_the_ungoverned_line_does_NOT_mention_policy(self):
@@ -1774,8 +1773,8 @@ class TestAnHttp2HostIsRelayedAtFrameLevel(TerminationCase):
         text = back.decode("latin-1")
         self.assertIn("502", text)
         self.assertIn("did not select h2", text)
-        self.assertIn("[[vm.network.http2]]", text)
-        self.assertIn("[[vm.network.splice]]", text)
+        self.assertIn("`http2`", text)
+        self.assertIn("`splice`", text)
 
     def test_the_answer_is_readable_because_the_guest_leg_stays_http11(self):
         """A refusal is an HTTP/1.1 response, so the guest leg must not have

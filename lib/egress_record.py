@@ -6,18 +6,16 @@ The vocabulary of one refusal (`DROP_*`, `DROP_REASONS`, the per-host subset),
 the shape of one line of the per-request record (`RECORD_FIELDS` and the
 closed sets three of its fields draw from), and the writer (`Record`,
 `RequestLog`). Defined once, here, and read by everything on both sides of
-the file: the listener writes it, `workloadctl egress` renders and filters
-it, `diagnose` reads the counters keyed by the same strings.
+the file: the listener writes it, and whatever renders, filters or reports
+on it reads the counters keyed by the same strings.
 
 Defined once because a writer and a reader that each spell the vocabulary
 can drift, and a drift turns a real refusal into a figure that reads zero --
 indistinguishable from a refusal that never fired. One definition both sides
 import needs no pin test to hold it together.
 
-Where the record file lives (`INSPECT_RECORD_ROOT`, `inspect_record_path`)
-stays in egress_policy beside the rest of the inspector's paths.
-
-Installed to /usr/libexec/workloadctl/egress_record.py.
+Where the record file lives is the `--record` flag's business, not this
+module's.
 """
 
 import datetime
@@ -53,8 +51,8 @@ def format_endpoint(addr):
 # the exact failure the pre-seeded `drop_reasons` exists to prevent. Adding a
 # reason means adding it here.
 #
-# DROP_REASONS IS THE WHOLE SET, and `workloadctl egress --reason` validates
-# against it. A closed set is the point: a reason value that matches nothing
+# DROP_REASONS IS THE WHOLE SET, and a renderer's `--reason` filter should
+# validate against it. A closed set is the point: a value that matches nothing
 # renders identically to a guest that never hit that refusal, so `--reason
 # "not allowed"` for `not allowlisted` would print an empty report and an
 # operator would conclude the denial never happened. Validated, it is an
@@ -70,9 +68,9 @@ DROP_INTERNAL = "internal destination"
 DROP_CEILING = "connection ceiling reached"
 # Connection-level like DROP_CEILING, and refused for the same reason: decided
 # before any byte is read, so it never reaches a plane or a policy. The
-# caller's uid is not this workload's; the listener identifies callers through
-# peer_identity, `workload_filter` is the primary control and this is the
-# layer behind it.
+# caller's uid is not this workload's; the listener identifies callers
+# through peer_identity, the host's rules are the primary control and this
+# is the layer behind it.
 DROP_FOREIGN_CALLER = "caller is not this workload"
 DROP_RELAY_FAILED = "relay failed"
 DROP_TIMED_OUT = "timed out"
@@ -82,8 +80,8 @@ DROP_MISDIRECTED = "host does not match the server name"
 # The same binding rejection where the name inside the session IS on this
 # workload's allowlist, and the split is the whole value of the figure.
 #
-# §4 gives the count one job: a non-zero value is either an attack or a broken
-# assumption in §4, and an operator has to tell which AT A GLANCE. Merged, they
+# The count has one job: a non-zero value is either an attack or a broken
+# assumption, and an operator has to tell which AT A GLANCE. Merged, they
 # cannot. A guest reusing an authorised session to reach a name it was never
 # given is the attack the binding exists to close, and the name it picks is on
 # no list. A client reusing one connection across two names that resolve to the
@@ -102,9 +100,9 @@ DROP_MISDIRECTED_LISTED = "host does not match the server name (allowlisted)"
 DROP_THROTTLED = "mint rationed"
 DROP_MINT_FAILED = "could not mint a leaf"
 DROP_NOT_HTTP = "not HTTP"
-# The same refusal on a host a [[vm.network.policy]] entry names, kept apart
+# The same refusal on a host a `policy` entry names, kept apart
 # because the operator's next move differs. Plain `not HTTP` is one line away
-# from working -- add the host to [[vm.network.splice]]. This one is two, and
+# from working -- add the host to the `splice` list. This one is two, and
 # the second is a DELETION: `validate` refuses a host that is in both `splice`
 # and `policy`, so the entry whose `methods` and `paths` can never run has to
 # go with it. An operator reading a single merged figure cannot tell which of
@@ -119,16 +117,14 @@ DROP_NOT_H2 = "not HTTP/2"
 # The dial to this workload's own credential broker failed, and it is NOT
 # DROP_UNREACHABLE. "The provider is down" and "this workload's credential
 # broker is down" need different operator responses -- the first is somebody
-# else's outage, the second is a unit on this host that failed to start, or an
-# SELinux rule missing from security/workload-inspect.cil, which is the
-# failure the listener's "THE UPSTREAM DIAL" block records as "a policy gap
-# wearing a network error's clothes": an OSError caught by the relay and
-# counted as a dead upstream. Merged into the generic reason, such an AVC is
-# indistinguishable from a provider outage, and `workloadctl egress --reason`
-# -- which validates against DROP_REASONS -- would have no filter that
-# selects it. `upstream unreachable` says "the provider is down, wait"; this
-# says "a unit on this host is not answering, look at
-# workload-<name>-broker.service and at audit.log".
+# else's outage, the second is a unit on this host that failed to start, or
+# a mandatory-access rule missing for the dial, which the relay sees as an
+# OSError and would otherwise count as a dead upstream: a policy gap wearing
+# a network error's clothes. Merged into the generic reason, such a denial
+# is indistinguishable from a provider outage, and a filter on the reason
+# would have nothing that selects it. `upstream unreachable` says "the
+# provider is down, wait"; this says "a unit on this host is not answering,
+# look at the broker's unit and at audit.log".
 DROP_BROKER_UNREACHABLE = "credential broker unreachable"
 
 DROP_REASONS = (
@@ -157,11 +153,11 @@ DROP_REASONS = (
 # The reasons that also get a PER-HOST figure, and the only ones that do.
 #
 # Each is a refusal an operator acts on by NAME: the host to add an
-# [[vm.network.internal]] entry for, the host whose private root has to go into
+# `internal` entry for, the host whose private root has to go into
 # this host's anchors, the host that needs client certificates and therefore
 # `tls = "splice"`, and the host that is not speaking HTTP and therefore needs
 # the same. `not HTTP/2` joins them and is read the same way with one word
-# changed: the operator put that host in [[vm.network.http2]] and it did not
+# changed: the operator put that host in the `http2` list and it did not
 # speak h2, so either the entry is wrong or the host needs splicing.
 #
 # `not HTTP` appears TWICE, and the split is the whole value of the pair. The
@@ -169,7 +165,7 @@ DROP_REASONS = (
 # which hosts have method and path rules that can never run. The second has no
 # other way of being learnt: nothing at startup could have told the operator,
 # because whether a host speaks HTTP is not knowable from the file, which is
-# exactly why §8 made it a runtime report rather than a validation rule.
+# exactly why it is a runtime report rather than a validation rule.
 #
 # A per-host figure for `not allowlisted` is deliberately absent --
 # the guest picks those names, there is no bound on how many it invents, and
@@ -178,19 +174,20 @@ DROP_REASONS = (
 # and the ALLOWLISTED half is present for its inverse: those names came off
 # this workload's own lists, so the key space is bounded by the file, and WHICH
 # PAIR of names a client is coalescing is the entire question that figure
-# answers. A count alone says a mismatch happened; §4 needs to know between
-# what.
+# answers. A count alone says a mismatch happened; an operator needs to know
+# between what.
 #
 # `not permitted by policy` is absent too, and unlike the two above that is a
 # decision rather than a consequence. Its keys look bounded by the file -- a
-# `policy` entry allowlists its own host -- but a WILDCARD entry bounds nothing,
-# and a guest under `*.example.com` invents subdomains as freely as it invents
-# anything else. That alone would settle it. What settles it twice is that the
-# figure would not help if it were free: an operator whose request was refused
-# needs the METHOD and the PATH to know which of their `methods`/`paths` lines
-# to change, and a per-host count carries neither. That question belongs to the
-# per-request record, which has all three, and half-answering it here would put
-# the more findable of the two answers in the operator's way.
+# `policy` entry allowlists its own host -- but a WILDCARD entry bounds
+# nothing, and a guest under `*.example.com` invents subdomains as freely as it
+# invents anything else. That alone would settle it. What settles it twice is
+# that the figure would not help if it were free: an operator whose request was
+# refused needs the METHOD and the PATH to know which of their
+# `methods`/`paths` lines to change, and a per-host count carries neither. That
+# question belongs to the per-request record, which has all three, and
+# half-answering it here would put the more findable of the two answers in the
+# operator's way.
 #
 # Every one of these is a BOUNDED top-N with a counted overflow, because the
 # keys are guest-chosen: unbounded, a guest inflating the report damages the
@@ -205,12 +202,12 @@ PER_HOST_REASONS = (
     DROP_NOT_H2,
 )
 
-# Where a drop whose reason is not in DROP_REASONS is counted. Emitted only when
-# it is non-zero, for the reason `(other)` is: a bucket reading zero on every
-# healthy workload trains an operator to skip the line, and this is the line
-# that matters when it is not zero. Its presence means the listener has a bug,
-# not that the guest did anything -- but the totals still reconcile while it
-# does.
+# Where a drop whose reason is not in DROP_REASONS is counted. Emitted only
+# when it is non-zero, for the reason `(other)` is: a bucket reading zero on
+# every healthy workload trains an operator to skip the line, and this is the
+# line that matters when it is not zero. Its presence means the listener has a
+# bug, not that the guest did anything -- but the totals still reconcile while
+# it does.
 DROP_UNCLASSIFIED = "(unclassified)"
 
 
@@ -317,9 +314,9 @@ class Record:
         self._log = log
         self._t0 = where.t0
         # SEEDED FROM RECORD_FIELDS, so the constant the readers import is the
-        # one this actually emits. Every field is present on every line and null
-        # where it was not measured: a key that is absent and a key that is
-        # null are different facts, and a reader cannot tell "not measured"
+        # one this actually emits. Every field is present on every line and
+        # null where it was not measured: a key that is absent and a key that
+        # is null are different facts, and a reader cannot tell "not measured"
         # from "measured as nothing" if the writer drops the Nones.
         self.fields = dict.fromkeys(RECORD_FIELDS)
         self.fields.update({
@@ -361,7 +358,7 @@ class Record:
                  query=query or None, http=req.version)
 
     def dialled(self, sock):
-        """The address actually reached -- §11's other half of the join.
+        """The address actually reached -- the other half of the join.
 
         The name was resolved here, by this process, so it is the only party
         that knows which address a policy name became. Best effort: a socket
@@ -396,15 +393,13 @@ class RequestLog:
     where they are -- they exist to tell an operator what to fix, and the
     journal is the right place for that. This carries the per-request detail
     for allowed and denied alike, which is evidence of what a sandboxed agent
-    was doing, and lands in a file readable by root and the workload uid only.
-    egress_policy's INSPECT_RECORD_ROOT comment carries the whole argument, including
-    why a LogNamespace= was not enough.
+    was doing, and lands in a file readable by its owner only.
 
-    NEVER RAISES, and the except clauses have to be as wide as that claim -- the
-    standing rule for every diagnostic in the listener, and it binds harder
-    here than in write_status: this runs on the CONNECTION threads, so an exception
-    escaping would take one guest request down per failure rather than the
-    accept loop once.
+    NEVER RAISES, and the except clauses have to be as wide as that claim --
+    the standing rule for every diagnostic in the listener, and it binds harder
+    here than in write_status: this runs on the CONNECTION threads, so an
+    exception escaping would take one guest request down per failure rather
+    than the accept loop once.
 
     The first failure is logged and the rest are not. A sink that cannot be
     written is unwritable for every request, and a line per request would put

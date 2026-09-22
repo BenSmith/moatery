@@ -263,12 +263,12 @@ class TestEntrypointWiring(unittest.TestCase):
         self.addCleanup(lambda: [setattr(broker_server.Handler, k, v)
                                  for k, v in self.saved.items()])
         self.mod = load_script("libexec/customs-broker")
-        self.env = mock.patch.dict(os.environ, {"AGENT_BROKER_SECRET": "sk-test"},
+        self.env = mock.patch.dict(os.environ, {"CUSTOMS_BROKER_SECRET": "sk-test"},
                                    clear=False)
         self.env.start(); self.addCleanup(self.env.stop)
         os.environ.pop("CREDENTIALS_DIRECTORY", None)
 
-    MINIMAL = ["agent-broker", "--name", "agent", "--listen", "127.0.0.1:0",
+    MINIMAL = ["customs-broker", "--name", "agent", "--listen", "127.0.0.1:0",
                "--caller-uid", "10000", "--host", "api.example.com=main-key"]
 
     def _run(self, argv, **patches):
@@ -301,7 +301,7 @@ class TestEntrypointWiring(unittest.TestCase):
         self.assertIs(server.RequestHandlerClass, broker_server.Handler)
         self.assertNotEqual(server.server_address[1], 0, "the port was bound")
         self.assertIn("listening url=http://127.0.0.1:", err)
-        self.assertIn("using AGENT_BROKER_SECRET", err)
+        self.assertIn("using CUSTOMS_BROKER_SECRET", err)
 
     def test_the_timeouts_default_to_the_servers(self):
         self._run(self.MINIMAL)

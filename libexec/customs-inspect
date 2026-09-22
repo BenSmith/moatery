@@ -1,69 +1,53 @@
 #!/usr/bin/python3
 """
-workload-inspect-listener: the socket-activated entrypoint of the transparent
-egress inspector. The inspector itself is lib/inspect_listener.py; this
-process reads the policy, builds the minter, recovers the inherited sockets
-and runs the accept loop until SIGTERM.
+customs-inspect: the socket-activated entrypoint of the transparent egress
+inspector. The inspector itself is lib/inspect_listener.py; this process
+reads the policy, builds the minter, recovers the inherited sockets and
+runs the accept loop until SIGTERM.
 
 WHAT THIS FILE IS, AND WHAT IT IS NOT
 
-This is the inspector's entrypoint, and it is NOT workloadctl's launcher for
-it -- it was, and the difference is every flag below. The inspector
-(inspect_listener and everything it imports, this file included) takes a
-policy document, a state directory, a status file, a record file and a
-broker endpoint, and knows nothing about workloads: not the config grammar,
-not where a workload keeps its state, not how a uid becomes a loopback
-address, not what substrate the guest on the other end is. Every one of
-those is a fact about how workloadctl lays out a host, and every one is
-computed by the GENERATOR (lib/gen_egress.py, generate_inspect_service) and
-written into the unit's ExecStart= as an argument. This file derives
-nothing; it parses. tests/test_inspector_closure.py holds that line, so the
-inspector stays startable by something that is not workloadctl, on a host
-not laid out the way workloadctl lays one out, by writing a unit that
-answers the same five questions differently.
+This is the inspector's entrypoint, and it is not a launcher for it. The
+inspector (inspect_listener and everything it imports, this file included)
+takes a policy document, a state directory, a status file, a record file
+and a broker endpoint, and knows nothing about workloads: not any config
+grammar, not where a workload keeps its state, not how a uid becomes a
+loopback address, not what substrate the guest on the other end is. Every
+one of those is a fact about how a host is laid out, and every one is
+chosen by whoever writes the unit and put on its ExecStart= as an
+argument. This file derives nothing; it parses. tests/test_closure.py holds
+that line, so the inspector stays startable on any host by writing a unit
+that answers the same five questions.
 
-Until the flags, this file imported egress_policy, workload_lib and
-workload_addr to turn a workload name into those values itself, which made
-it the one file that imported both sides. That was a launcher: a thin
-program whose whole job was the derivation. Moving the derivation into the
-generator -- which already knew all five values, and already imported every
-module needed to compute them -- left nothing here that was not the
-inspector's own, so there is no launcher any more, and the entrypoint's
-closure is the inspector's closure.
-
-The workload name is still taken, as a LABEL: the CA subject and the log
-lines carry it. It is a flag rather than argv[1] so that a unit written by
-hand cannot pass a name and nothing else and get a listener that starts,
+The workload name is taken as a LABEL: the CA subject and the log lines
+carry it. It is a flag rather than argv[1] so that a unit written by hand
+cannot pass a name and nothing else and get a listener that starts,
 serves, and fails every guest handshake looking for a policy it was never
 told the path of.
 
-The guest's clock is NOT the inspector's concern, and it once was: a
-per-mint "remedy" the launcher handed in dialled the QEMU guest agent on
-every cache miss. That is the clock keeper's job now
-(workload-<name>-clock.timer, lib/vm_clock.py), which covers every VM
-whether or not it has an inspector; the inspector mints, and the guest
-either validates or does not.
+The guest's clock is NOT the inspector's concern. A leaf is backdated an
+hour, and a guest whose clock is further out than that rejects every leaf;
+that is repaired by whatever owns the guest, and the inspector mints while
+the guest either validates or does not.
 
 WHERE THE POLICY COMES FROM
 
-Wherever --policy says. Under workloadctl that is
-/run/workload-vm/<name>/inspect.json, written by `workload-vm-inspect up`
-(the socket unit's ExecStartPre) and read HERE once, at start. A policy that
+Wherever --policy says. It is read HERE once, at start. A policy that
 cannot be read is a failed start, never an empty allowlist -- an empty
 allowlist is a listener that refuses everything while reporting itself
 healthy.
 
 WHY IT NEVER BINDS
 
-It is socket-activated: the .socket unit binds the four listeners and
-hands them in as inherited fds. This process recovers them from LISTEN_PID /
+It is socket-activated: the .socket unit binds the listeners and hands
+them in as inherited fds. This process recovers them from LISTEN_PID /
 LISTEN_FDS and accepts on them; it opens no socket of its own. That is not
-defensiveness -- socket activation is what moves the bind out of the workload
-SELinux domain and into an inherited fd. A fallback that bound the ports
-itself when the activation environment was missing would silently undo that:
-it would run as the workload user, in the workload domain, and bind the very
-listener a guest is redirected into. So a missing environment is a loud
-failure, never a second path.
+defensiveness -- socket activation is what moves the bind out of the
+workload's security domain and into an inherited fd. A fallback that bound
+the ports itself when the activation environment was missing would
+silently undo that: it would run as the workload user, in the workload's
+domain, and bind the very listener a guest is redirected into. So a
+missing environment is a loud failure, never a second path.
 """
 
 import argparse
@@ -71,6 +55,8 @@ import os
 import signal
 import sys
 
+# Before the lib imports: the install directory is not this process's to
+# write, and under a confining policy every start would log the attempt.
 sys.dont_write_bytecode = True
 
 from inspect_policy import load_policy
@@ -83,28 +69,24 @@ from sd_listen import (
 def inherited_listening_sockets():
     """Recover the listening sockets systemd passed in, or fail loudly.
 
-    The mechanics are shared with workload-vm-resolve (lib/sd_listen.py); what
-    is ours is the reason a fallback bind is refused. Binding here rather than
-    accepting the inherited fd would move the bind into the workload SELinux
-    domain, which is the property the socket unit exists to hold.
+    The mechanics are lib/sd_listen.py's; what is ours is the reason a
+    fallback bind is refused. Binding here rather than accepting the
+    inherited fd would move the bind into the workload's security domain,
+    which is the property the socket unit exists to hold.
     """
     return sd_inherited_listening_sockets(
         refusal=(", because a fallback bind would move the bind out of the "
-                 "inherited fd and back into the workload SELinux domain"))
+                 "inherited fd and back into the workload's security "
+                 "domain"))
 
 
 def broker_endpoint(value):
     """The --broker value as an (address, port) pair, or None when absent.
 
-    Handed in, not derived. It was derived, from this process's own uid --
-    which is the workload's, and which the broker's unit turns into the same
-    address -- and the reasoning still holds one level up: the generator
-    computes both halves from the same uid with the same function, so the
-    pair in this unit's ExecStart= and the `--listen` pair on the broker's
-    cannot drift.
-    What moved is only WHERE the derivation runs, from the inspector's
-    process to the generator's, which is the side that is allowed to know
-    what a uid becomes.
+    Handed in, not derived: whoever writes both units chooses the pair
+    once and writes it onto this unit's ExecStart= and the broker's
+    `--listen`, which is what keeps the two from drifting, and that writer
+    is the side that is allowed to know what a workload's address is.
 
     None is a legitimate value, not an error: a unit written for a policy
     with no brokered host may leave the flag off, and the inspector turns None
@@ -157,18 +139,6 @@ def parse_args(argv):
 
 def main(argv=None):
     argv = sys.argv if argv is None else argv
-    if len(argv) == 2 and not argv[1].startswith("-"):
-        # The shape the unit had before the flags: a bare workload name, with
-        # the entrypoint deriving the rest. argparse would report it as five
-        # missing flags, which is true and points nowhere. This is a unit the
-        # previous build generated and this build did not regenerate; the
-        # package's %post already says so at upgrade, and the journal line an
-        # operator lands on from a failed socket activation should say it too.
-        print(f"error: {argv[0]} was given a bare name ({argv[1]!r}) and "
-              f"takes flags; this unit was generated by a build that derived "
-              f"the rest from the name. Regenerate the workload's units.",
-              file=sys.stderr)
-        return 2
     try:
         args = parse_args(argv)
     except SystemExit as exc:
@@ -206,11 +176,12 @@ def main(argv=None):
                         broker_endpoint=args.broker)
     print(f"policy loaded from {policy_path}: {policy.summary}", flush=True)
     signal.signal(signal.SIGTERM, lambda *_args: listener.stop())
-    # Rotation is logrotate's (see /etc/logrotate.d/workloadctl-inspect), and
-    # this is the half of it that lives here: the snippet renames the file and
-    # then HUPs us, rather than using copytruncate, which races an in-flight
-    # write. The handler only sets a flag -- RequestLog.reopen says why.
-    signal.signal(signal.SIGHUP, lambda *_args: listener.inspection.record.reopen())
+    # Rotation is logrotate's, and this is the half of it that lives here:
+    # the snippet renames the file and then HUPs us, rather than using
+    # copytruncate, which races an in-flight write. The handler only sets a
+    # flag -- RequestLog.reopen says why.
+    signal.signal(signal.SIGHUP,
+                  lambda *_args: listener.inspection.record.reopen())
     try:
         listener.accept_loop()
     finally:

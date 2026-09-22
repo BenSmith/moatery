@@ -1,6 +1,6 @@
 """
-inspect_listener: the transparent egress inspector (the inspector design,
-§7.7.1), one connection at a time.
+inspect_listener: the transparent egress inspector, one connection at a
+time.
 
 The shape is the socket, the concurrency and the timeout discipline: accept
 on the inherited listeners, admit up to a ceiling, name the plane, and hand
@@ -21,11 +21,11 @@ the name cannot tell the cleartext listener from the TLS one. The local port
 of the inherited fd can, and it is the honest source of it: a guest dial to 80
 is translated onto the cleartext plane's inspect port, one to 443 onto the
 TLS plane's (lib/egress_plane.py), and the socket that accepted the
-connection knows which it is. §7.1 uses exactly this property to justify never calling
-SO_ORIGINAL_DST; a regression that started reading the port from anywhere
-else quietly reintroduces the need for it.
+connection knows which it is. That property is what makes SO_ORIGINAL_DST
+unnecessary for choosing the plane; a regression that started reading the
+port from anywhere else quietly reintroduces the need for it.
 
-CONCURRENCY AND TIMEOUTS (the shape, per §7.7.1)
+CONCURRENCY AND TIMEOUTS
 
 One thread per connection, with a ceiling, and reject above it — do not queue.
 An unbounded accept queue turns a guest's connection storm into memory growth
@@ -38,8 +38,6 @@ Every accepted socket gets an explicit timeout before it is touched, and the
 two numbers it moves between -- one bounding every wait up to a decision, one
 bounding every wait after -- are egress_relay's, which says why they cannot
 be one number and which wait on the cleartext plane takes which.
-
-Installed to /usr/libexec/workloadctl/inspect_listener.py.
 """
 
 import os
@@ -83,9 +81,9 @@ _ACCEPT_POLL = 0.1
 
 
 # How often the status file is replaced while the listener is serving. A low
-# tick, deliberately: it is read by `diagnose` at a moment nobody chose, and a
-# file minutes out of date reads as a stalled counter. Cheap enough to ignore
-# -- a few hundred bytes of JSON against a process whose other work is relaying
+# tick, deliberately: it is read at a moment nobody chose, and a file
+# minutes out of date reads as a stalled counter. Cheap enough to ignore --
+# a few hundred bytes of JSON against a process whose other work is relaying
 # a tunnel.
 STATUS_INTERVAL = 30.0
 
@@ -141,7 +139,8 @@ class Ceiling:
 
 
 class Listener:
-    """Accept on the inherited listeners and act on each connection by plane."""
+    """Accept on the inherited listeners and act on each connection by
+    plane."""
 
     def __init__(self, sockets, out=None, limit=MAX_CONNECTIONS, policy=None,
                  status_path=None, minter=None, record_path=None,
@@ -201,7 +200,8 @@ class Listener:
         # that connects and then says nothing.
         conn.settimeout(egress_relay.CONNECTION_TIMEOUT)
         # The accepting port, from getsockname() on the inherited fd — the fd
-        # name cannot distinguish the planes under Accept=no (module docstring).
+        # name cannot distinguish the planes under Accept=no (module
+        # docstring).
         local = listen_sock.getsockname()
         plane = plane_for_port(local[1])
         # HERE, not in _serve, and before the ceiling is consulted: _serve does
@@ -218,28 +218,28 @@ class Listener:
             # Not a port the socket unit binds, so not a listener of ours:
             # there is no plane to serve it on and none a record could name.
             self.inspection.log(
-                f"rejected {LOG_ID_FIELD}={cid} local={format_endpoint(local)} "
+                f"rejected {LOG_ID_FIELD}={cid} "
+                f"local={format_endpoint(local)} "
                 f"peer={format_endpoint(peer)} reason='not an inspect port'")
             conn.close()
             return
         # WHO IS CALLING. Before the ceiling, so a foreign caller cannot spend
         # a slot the workload needs, and before any byte is read.
         #
-        # This is defence in depth, not the primary control: `workload_filter`
-        # already drops a non-root packet aimed at any live inspector address
-        # that is not the sender's own. It exists because that guard is one
-        # rule in a table this program does not own and cannot verify, and
-        # because of what leaked past it before it was fixed -- a dial from any
-        # local uid reached this listener AND was written into this workload's
-        # egress records, so the records described traffic the workload never
-        # sent. A record an operator cannot trust is worse than no record.
+        # This is defence in depth, not the primary control: the host's
+        # rules are what keep another uid's packets away from this
+        # listener. It exists because that guard is a rule in a table this
+        # program does not own and cannot verify, and because of what a gap
+        # in it lets through -- a dial from any local uid reaches this
+        # listener AND is written into this workload's egress records, so
+        # the records describe traffic the workload never sent. A record an
+        # operator cannot trust is worse than no record.
         #
-        # Root is refused here even though the nft guard exempts it. The
-        # exemption exists so `diagnose` and `doctor` are not caught by a
-        # host-wide drop, and neither dials this listener -- nothing in the
-        # tree does. So the exemption is about packets, not about callers, and
-        # root's manual probe landing in a workload's records was the second
-        # half of the same defect.
+        # Root is refused here even where a host's rules exempt it. Such an
+        # exemption exists so host tooling is not caught by a host-wide
+        # drop, and host tooling does not dial this listener. So the
+        # exemption is about packets, not about callers, and a manual probe
+        # from root landing in a workload's records is the same defect.
         try:
             caller = peer_uid(local_endpoints(conn), peer[:2])
         except Exception:
@@ -251,7 +251,8 @@ class Listener:
         if caller is not None and caller != os.getuid():
             self.inspection.log(
                 f"rejected {LOG_ID_FIELD}={cid} plane={plane.label} "
-                f"local={format_endpoint(local)} peer={format_endpoint(peer)} caller_uid={caller} "
+                f"local={format_endpoint(local)} "
+                f"peer={format_endpoint(peer)} caller_uid={caller} "
                 f"reason='{DROP_FOREIGN_CALLER}'")
             self.inspection.counters.record_drop(DROP_FOREIGN_CALLER)
             conn.close()
@@ -272,8 +273,10 @@ class Listener:
         if not self._ceiling.admit():
             # Reject rather than queue: close now, count it, spawn no thread.
             self.inspection.log(
-                f"rejected {LOG_ID_FIELD}={cid} plane={plane.label} local={format_endpoint(local)} "
-                f"peer={format_endpoint(peer)} reason='connection ceiling reached'")
+                f"rejected {LOG_ID_FIELD}={cid} plane={plane.label} "
+                f"local={format_endpoint(local)} "
+                f"peer={format_endpoint(peer)} "
+                f"reason='connection ceiling reached'")
             # Counted as a drop as well as a rejection. The guest saw a closed
             # connection, which is the same thing every other drop reason gives
             # it, and a disposition total that omitted these would not add up
@@ -285,13 +288,13 @@ class Listener:
         # accept loop does not wait on the connections it already took.
         #
         # The slot is admitted before the thread exists, so the failure to
-        # start one has to give it back here. Thread.start() raises RuntimeError
-        # when the process cannot get another thread — exactly the condition a
-        # connection storm produces, and exactly when the ceiling matters. A
-        # leaked slot is never returned by anything: _serve's release only runs
-        # for a thread that ran, so each failure lowers the effective ceiling
-        # permanently and the listener degrades to refusing every connection
-        # while still reporting itself active.
+        # start one has to give it back here. Thread.start() raises
+        # RuntimeError when the process cannot get another thread — exactly the
+        # condition a connection storm produces, and exactly when the ceiling
+        # matters. A leaked slot is never returned by anything: _serve's
+        # release only runs for a thread that ran, so each failure lowers the
+        # effective ceiling permanently and the listener degrades to refusing
+        # every connection while still reporting itself active.
         try:
             threading.Thread(
                 target=self._serve, args=(conn, peer, local, plane, cid),
@@ -299,8 +302,10 @@ class Listener:
         except RuntimeError as exc:
             self._ceiling.release(refused=True)
             self.inspection.log(
-                f"rejected {LOG_ID_FIELD}={cid} plane={plane.label} local={format_endpoint(local)} "
-                f"peer={format_endpoint(peer)} reason='cannot start thread: {exc}'")
+                f"rejected {LOG_ID_FIELD}={cid} plane={plane.label} "
+                f"local={format_endpoint(local)} "
+                f"peer={format_endpoint(peer)} "
+                f"reason='cannot start thread: {exc}'")
             self.inspection.counters.record_drop(DROP_CEILING)
             conn.close()
 
@@ -315,8 +320,9 @@ class Listener:
         # reused by the kernel after close, so it groups the wrong things
         # together and separates the right ones.
         where = Where(f"{LOG_ID_FIELD}={cid} plane={plane.label} "
-                       f"local={format_endpoint(local)} peer={format_endpoint(peer)}",
-                       cid=cid, plane=plane.label)
+                      f"local={format_endpoint(local)} "
+                      f"peer={format_endpoint(peer)}",
+                      cid=cid, plane=plane.label)
         try:
             if plane is TLS:
                 inspect_tls.serve_tls(self.inspection, conn, where)
@@ -346,7 +352,7 @@ class Listener:
         # The digest of the document THIS PROCESS loaded. It is not a
         # counter and it never moves, which is exactly why it belongs here:
         # the status file is the only channel from a running listener to the
-        # host, and the question `diagnose` cannot otherwise answer is which
+        # host, and the question a reader cannot otherwise answer is which
         # policy the process behind the socket is actually enforcing. Written
         # unconditionally, empty string included -- a key that appeared only
         # when non-empty would make "no digest" and "an older listener"
@@ -382,7 +388,8 @@ class Listener:
         try:
             write_status(self._status_path, self.status())
         except (OSError, TypeError, ValueError) as exc:
-            self.inspection.log(f"WARNING: could not write {self._status_path}: {exc}")
+            self.inspection.log(
+                f"WARNING: could not write {self._status_path}: {exc}")
 
     def log_summary(self):
         """One line, at shutdown, naming what was refused.
@@ -399,16 +406,16 @@ def build_minter(name, state_dir, policy):
 
     `state_dir` is where this workload's CA and leaf caches live, and it is
     HANDED IN rather than derived from `name`: where a workload keeps its
-    state is a fact about how workloadctl lays out a host, and this module
-    is the inspector, which is started by workloadctl but is not it. `name`
-    is still taken because the CA subject and the log lines carry it -- a
-    label, not a lookup key.
+    state is a fact about how a host is laid out, and this module is the
+    inspector, which is started by whatever lays the host out but is not
+    it. `name` is still taken because the CA subject and the log lines
+    carry it -- a label, not a lookup key.
 
     The CA is checked HERE rather than at the first mint. It is made by
-    `workload-vm-inspect up` before the listener is ever socket-activated, so
-    its absence is a provisioning failure, and a provisioning failure that
-    surfaces as one refused connection an hour after boot is a provisioning
-    failure nobody attributes.
+    whoever provisions the workload, before the listener is ever
+    socket-activated, so its absence is a provisioning failure, and a
+    provisioning failure that surfaces as one refused connection an hour
+    after boot is a provisioning failure nobody attributes.
     """
     if policy.tls != "inspect":
         return None

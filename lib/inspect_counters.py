@@ -1,13 +1,10 @@
 """inspect_counters: what the egress inspector reports about itself.
 
-The writer of `/run/workload-vm/<name>/inspect-status.json`; `inspect_figures`
-is its reader, and the two agree on the document's shape only because the
-listener writes exactly `Counters.snapshot()` and nothing composes a second
-one. `egress_status` is the substrate under both this and the resolver's own
-figures -- the bounded per-host map and the atomic replace -- and holds no
-figure of its own.
-
-Installed to /usr/libexec/workloadctl/inspect_counters.py.
+The writer of the `--status` file. Whatever reads it agrees with this on
+the document's shape only because the listener writes exactly
+`Counters.snapshot()` and nothing composes a second one. `egress_status` is
+the substrate -- the bounded per-host map and the atomic replace -- and
+holds no figure of its own.
 """
 
 import threading
@@ -22,8 +19,8 @@ from tls_hello import TLS_EXT_ECH
 class Counters:
     """What the listener reports, and the only place any of it is defined.
 
-    Emitted, not rendered: `doctor` and the exporter read these through
-    `inspect_figures` and add no figure of their own. The counter lives beside
+    Emitted, not rendered: whatever reports on a workload reads these and
+    adds no figure of its own. The counter lives beside
     the code that creates the failure it counts, not beside the code that
     displays it, so a path can be debugged from its own figures.
 
@@ -49,18 +46,18 @@ class Counters:
     WHAT `dispositions` COUNTS, AND WHY IT IS NOT ONE UNIT
 
     A TLS decision is taken once per CONNECTION -- one hello, one name, one
-    splice or one close. A cleartext decision is taken once per REQUEST, because
-    a kept-alive connection carries several and each is authorised separately.
-    So `spliced` counts connections, `forwarded` counts requests, and `dropped`
-    counts whichever the refusal was.
+    splice or one close. A cleartext decision is taken once per REQUEST,
+    because a kept-alive connection carries several and each is authorised
+    separately. So `spliced` counts connections, `forwarded` counts requests,
+    and `dropped` counts whichever the refusal was.
 
     That is not reconcilable into a single unit and is deliberately not
-    disguised as one: a listener that reported only connections would hide every
-    request after the first on a keep-alive, which is the majority of them, and
-    one that reported only requests would have nothing to say about a spliced
-    tunnel that carries no requests this process can see. Each figure is exact
-    for its own plane. Summing across the three is the operation that means
-    nothing.
+    disguised as one: a listener that reported only connections would hide
+    every request after the first on a keep-alive, which is the majority of
+    them, and one that reported only requests would have nothing to say about a
+    spliced tunnel that carries no requests this process can see. Each figure
+    is exact for its own plane. Summing across the three is the operation that
+    means nothing.
 
     `drop_reasons` reconciles with `dropped` exactly -- every drop lands in one
     reason, DROP_UNCLASSIFIED included.
@@ -69,8 +66,8 @@ class Counters:
     footing: one hello, one name, one completed handshake, after which the
     REQUESTS inside it are counted by `forwarded` exactly as the cleartext
     plane's are. A workload reading terminated=1 forwarded=40 had one HTTPS
-    connection carrying forty authorised requests, which is the reading `spliced`
-    can never produce.
+    connection carrying forty authorised requests, which is the reading
+    `spliced` can never produce.
 
     THE PER-HOST MAPS ARE A DIFFERENT KIND OF FIGURE
 
@@ -83,7 +80,7 @@ class Counters:
     candidates, which is the whole reason they are per host.
 
     `not HTTP` is TWO of those figures rather than one, split by whether a
-    [[vm.network.policy]] entry named the host. Merged, an operator reading a
+    `policy` entry named the host. Merged, an operator reading a
     single total can see that some host needs splicing but not that some OTHER
     host has method and path rules that never ran; and those two facts have
     different remedies, the second of which includes deleting the policy entry
@@ -138,12 +135,12 @@ class Counters:
         self.ech_alarm = 0
         self.per_host = {reason: BoundedCounts(top_n)
                          for reason in PER_HOST_REASONS}
-        # THE CREDENTIAL FIGURES. Two breakdowns of one total,
-        # because the two questions an operator has are different: `per_host`
-        # answers "which of my brokered hosts is the guest actually using", and
-        # `per_credential` answers "is this key being used at all" -- which is
-        # the one that catches a policy entry pointing at a credential the guest
-        # never triggers, and the one worth reading before rotating a key.
+        # THE CREDENTIAL FIGURES. Two breakdowns of one total, because the two
+        # questions an operator has are different: `per_host` answers "which of
+        # my brokered hosts is the guest actually using", and `per_credential`
+        # answers "is this key being used at all" -- which is the one that
+        # catches a policy entry pointing at a credential the guest never
+        # triggers, and the one worth reading before rotating a key.
         #
         # BoundedCounts on both, like every other per-name figure here, and the
         # bound is free rather than defensive: unlike the guest-chosen names in
@@ -151,9 +148,9 @@ class Counters:
         # already bounded by it.
         #
         # NEVER THE CREDENTIAL ITSELF, only its credstore name. The material is
-        # in the broker's process and this one has never seen it, which is the
-        # whole of ADR 007 -- a figure carrying it would put it in a file the
-        # exporter publishes.
+        # in the broker's process and this one has never seen it, which is
+        # the whole point of the broker -- a figure carrying it would put it
+        # in a file a metrics exporter publishes.
         self.credentialed = 0
         self.credentialed_hosts = BoundedCounts(top_n)
         self.per_credential = BoundedCounts(top_n)
@@ -236,7 +233,8 @@ class Counters:
             self.dispositions["spliced"] += 1
 
     def record_termination(self) -> None:
-        """One connection whose guest handshake we completed and then served."""
+        """One connection whose guest handshake we completed and then
+        served."""
         with self._lock:
             self.dispositions["terminated"] += 1
 
@@ -274,8 +272,8 @@ class Counters:
         """One refused connection or request, by reason.
 
         The reason strings are the log's, deliberately the same ones: an
-        operator who greps a reason out of `workloadctl logs` and then looks
-        for it in the status file must find the same word.
+        operator who greps a reason out of the journal and then looks for
+        it in the status file must find the same word.
         """
         with self._lock:
             self.dispositions["dropped"] += 1

@@ -1,7 +1,7 @@
 """Who owns the far end of an accepted TCP connection?
 
-Shared by `libexec/agent-broker` and `libexec/workload-inspect-listener`,
-which both need to answer the same question about a caller and had no business
+Shared by `libexec/customs-broker` and `libexec/customs-inspect`, which
+both need to answer the same question about a caller and have no business
 answering it two ways. The userns helpers at the end are the precondition for
 the answer being truthful: /proc/net translates the uid column through the
 reader's namespace, so a process that cannot map a workload's uid sees the
@@ -14,9 +14,9 @@ is recorded by the kernel and read out of /proc/net, so there is nothing for a
 caller to participate in or lie about.
 
 WHY THE UID AND NOT THE ADDRESS. The host's networking re-originates every
-workload flow -- passt for a VM, pasta for a container -- as a host socket owned
-by that workload's own user. The source address is therefore identical for all
-of them and carries no information; the uid is assigned by the host, is
+workload flow -- passt for a VM, pasta for a container -- as a host socket
+owned by that workload's own user. The source address is therefore identical
+for all of them and carries no information; the uid is assigned by the host, is
 unreachable from inside the workload, and is the same primitive the host's
 egress rules already match on.
 """
@@ -32,13 +32,15 @@ PROC_NET_TCP = ("/proc/net/tcp", "/proc/net/tcp6")
 # Two of them, one per family, and they are NOT interchangeable: the v4 option
 # lives under SOL_IP and returns a sockaddr_in, the v6 one under SOL_IPV6 and
 # returns a sockaddr_in6. Asking for the v4 one on a v6 socket does not fall
-# back, it fails -- which is how the v6 half of this lookup was silently inert.
+# back, it fails -- which is how a v6 half of this lookup goes silently
+# inert.
 SO_ORIGINAL_DST = 80
 IPV6_ORIGINAL_DST = 80
 # Asked for as socket.IPPROTO_IPV6, never socket.SOL_IPV6: Python defines no
 # such name, so writing it raises AttributeError -- which, swallowed by the
-# tolerant except around the lookup, would leave the v6 branch inert in exactly
-# the way it was written to fix. Caught by a test, not by reading it.
+# tolerant except around the lookup, would leave the v6 branch inert in
+# exactly the way it exists to prevent. Caught by a test, not by reading
+# it.
 
 
 def _norm(addr):
@@ -63,13 +65,13 @@ def _proc_addr(text):
 def local_endpoints(sock):
     """Every endpoint this connection's local end may be recorded under.
 
-    Both callers sit behind a destination rewrite, and the *client* socket keeps
-    recording the address it dialled rather than the one we ended up bound to.
-    Matching only getsockname() therefore misses precisely the traffic the
-    redirect creates -- and misses it as a refusal, which looks like a config
-    error rather than a lookup that cannot match. SO_ORIGINAL_DST recovers what
-    the caller aimed at; both are accepted so the untranslated path (local
-    testing) keeps working.
+    Both callers sit behind a destination rewrite, and the *client* socket
+    keeps recording the address it dialled rather than the one we ended up
+    bound to. Matching only getsockname() therefore misses precisely the
+    traffic the redirect creates -- and misses it as a refusal, which looks
+    like a config error rather than a lookup that cannot match. SO_ORIGINAL_DST
+    recovers what the caller aimed at; both are accepted so the untranslated
+    path (local testing) keeps working.
     """
     endpoints = [tuple(sock.getsockname()[:2])]
     try:
@@ -78,16 +80,17 @@ def local_endpoints(sock):
         endpoints.append((socket.inet_ntoa(packed), port))
     except (OSError, struct.error):
         pass  # no conntrack entry, or this is a v6 socket: try v6 below
-    # BOTH FAMILIES, and the v6 half is not symmetry for its own sake. The
-    # redirect that puts traffic here has a v6 rule of its own (`dnat ip6 to
-    # ... map @wl_inspect6`), so a v6 dial arrives translated exactly as a v4
-    # one does -- but SO_ORIGINAL_DST under SOL_IP raises on that socket, which
-    # left this list holding only getsockname(). The peer's row in
-    # /proc/net/tcp6 records the address it DIALLED, so nothing matched, the
-    # lookup returned None, and the caller was admitted and counted as
-    # unresolved. The nft guard still covered it, so the only symptom was a
-    # counter climbing: a hardening layer degrading to inert with nothing
-    # saying so, which is the shape this whole module exists to refuse.
+    # BOTH FAMILIES, and the v6 half is not symmetry for its own sake. A
+    # redirect that puts traffic here can have a v6 rule of its own, so a
+    # v6 dial arrives translated exactly as a v4 one does -- but
+    # SO_ORIGINAL_DST under SOL_IP raises on that socket, which would leave
+    # this list holding only getsockname(). The peer's row in
+    # /proc/net/tcp6 records the address it DIALLED, so nothing would
+    # match, the lookup would return None, and the caller would be admitted
+    # and counted as unresolved. The host's rules still cover it, so the
+    # only symptom would be a counter climbing: a hardening layer degrading
+    # to inert with nothing saying so, which is the shape this whole module
+    # exists to refuse.
     #
     # sockaddr_in6 is 28 bytes -- family, port, flowinfo, 16-byte address,
     # scope id -- and the scope id is dropped deliberately: it qualifies a
@@ -113,11 +116,11 @@ def peer_uid_from(rows, locals_, peer):
     The port test before the split is a filter, not a shortcut: the row we want
     carries the peer's port in its local column, so a line without that hex
     anywhere cannot be it. The peer's port is ephemeral and therefore nearly
-    unique, so `in` -- which runs in C -- rejects almost every row before Python
-    touches it. Measured over a 1638-row table: 1.188ms to split and hex-decode
-    every row, 0.034ms with the filter, same uid. 34x, and it scales with the
-    host's socket count, which is not something a caller should be able to make
-    a listener pay per connection.
+    unique, so `in` -- which runs in C -- rejects almost every row before
+    Python touches it. Measured over a 1638-row table: 1.188ms to split and
+    hex-decode every row, 0.034ms with the filter, same uid. 34x, and it scales
+    with the host's socket count, which is not something a caller should be
+    able to make a listener pay per connection.
 
     The survivors are checked exactly as before. This narrows the work without
     widening the match.
@@ -136,11 +139,12 @@ def peer_uid_from(rows, locals_, peer):
             if (_proc_addr(local_host), int(local_port, 16)) != want_local:
                 continue
             remote_host, remote_port = f[2].split(":")
-            if (_proc_addr(remote_host), int(remote_port, 16)) not in want_remotes:
+            remote = (_proc_addr(remote_host), int(remote_port, 16))
+            if remote not in want_remotes:
                 continue
-            # inode 0 is a socket with no owning process -- a TIME_WAIT remnant,
-            # which the kernel reports with uid 0. Reading that as identity
-            # would silently attribute the request to root.
+            # inode 0 is a socket with no owning process -- a TIME_WAIT
+            # remnant, which the kernel reports with uid 0. Reading that as
+            # identity would silently attribute the request to root.
             if int(f[9]) == 0:
                 continue
             return int(f[7])
@@ -184,7 +188,8 @@ def userns_ranges(uid_map):
 
 
 def userns_maps_everything(uid_map):
-    """Whether this is an unrestricted namespace -- the initial one, in practice."""
+    """Whether this is an unrestricted namespace -- the initial one, in
+    practice."""
     return any(start == 0 and count >= 0xFFFFFFFF
                for start, count in userns_ranges(uid_map))
 
@@ -199,14 +204,13 @@ def unmappable_uids(uids, uid_map):
 
     Uids, not names: the broker is told the uid of its one caller on its
     command line and never looks a workload user up, so this answers about
-    the number it was given. (It answered about workload USERS while the
-    broker read a document keyed by workload name, and the passwd lookup that
-    turned a name into a uid -- with the user-name prefix it had to know to
-    do so -- was the last workload-side fact in either daemon's process.)
+    the number it was given. A passwd lookup here would be the one
+    workload-side fact in either daemon's process.
     """
     ranges = userns_ranges(uid_map)
     return [uid for uid in uids
-            if not any(start <= uid < start + count for start, count in ranges)]
+            if not any(start <= uid < start + count
+                       for start, count in ranges)]
 
 
 def overflow_uid():

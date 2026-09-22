@@ -1,5 +1,6 @@
 """
-http_target: what a request target and an authority NAME, in one canonical form.
+http_target: what a request target and an authority NAME, in one canonical
+form.
 
 The request target the inspect listener acts on IS normalised here --
 percent-decoding, dot-segment resolution, duplicate-slash collapsing -- and
@@ -29,12 +30,12 @@ class Scheme(NamedTuple):
     """Which plane a request is being read on, for the two parsers that care.
 
     The request parser is shared by the cleartext plane and the terminated TLS
-    one, and two of its refusals are plane-specific: the absolute-form scheme it
-    accepts, and the port an authority may name. Both are refusals about
+    one, and two of its refusals are plane-specific: the absolute-form scheme
+    it accepts, and the port an authority may name. Both are refusals about
     reaching a destination neither end is on, so both have to know which port
     this end IS -- hard-coding 80 in a parser the terminated plane also uses
-    would refuse `Host: example.com:443` as a misdirected request when it is the
-    ordinary spelling there.
+    would refuse `Host: example.com:443` as a misdirected request when it is
+    the ordinary spelling there.
     """
 
     name: str
@@ -58,20 +59,20 @@ def _decode_unreserved(path):
     """A path with unreserved percent-encodings decoded and the rest kept.
 
     THE ENCODED SLASH IS REFUSED, and that is the whole reason this function is
-    not three lines of urllib. `%2f` has two readings -- an opaque byte inside a
-    segment, or a separator -- and real origins are split between them. Decode
-    it and `..%2f..%2f` becomes a traversal we then resolve on the guest's
-    behalf; keep it opaque and we match a pattern against a path the origin will
-    read as one segment deeper. Neither is a reading this listener is entitled
-    to pick, so the request is declined, in the same voice as the framing
-    refusals above: a message two parsers on the path read differently is not
-    one we relay.
+    not three lines of urllib. `%2f` has two readings -- an opaque byte inside
+    a segment, or a separator -- and real origins are split between them.
+    Decode it and `..%2f..%2f` becomes a traversal we then resolve on the
+    guest's behalf; keep it opaque and we match a pattern against a path the
+    origin will read as one segment deeper. Neither is a reading this listener
+    is entitled to pick, so the request is declined, in the same voice as the
+    framing refusals above: a message two parsers on the path read differently
+    is not one we relay.
 
-    `%2e` is a different case and IS decoded: `.` is unreserved, the decoding is
-    equivalence rather than a choice, and the dot-segment resolution downstream
-    is then applied to the same path the origin will resolve. That is the
-    `%2e%2e%2f` case closed, from the other end -- the dots become dots, and the
-    slash that would have joined them is gone before them.
+    `%2e` is a different case and IS decoded: `.` is unreserved, the decoding
+    is equivalence rather than a choice, and the dot-segment resolution
+    downstream is then applied to the same path the origin will resolve. That
+    is the `%2e%2e%2f` case closed, from the other end -- the dots become dots,
+    and the slash that would have joined them is gone before them.
 
     Everything else percent-encoded stays encoded, spelled in UPPERCASE hex so
     one path has one form. Non-ASCII travels as the bytes it was written as.
@@ -109,10 +110,10 @@ def _resolve_dot_segments(path):
     """A path with `.` and `..` resolved and empty segments collapsed.
 
     The motivating case is a matcher that does not exist yet:
-    `/repos/myorg/../../secret` matches `paths = ["/repos/myorg/*"]` and arrives
-    at the origin as `/secret`. Resolving BEFORE the match, and sending what was
-    resolved, is what makes the string a policy is written against the string
-    the origin acts on.
+    `/repos/myorg/../../secret` matches `paths = ["/repos/myorg/*"]` and
+    arrives at the origin as `/secret`. Resolving BEFORE the match, and sending
+    what was resolved, is what makes the string a policy is written against the
+    string the origin acts on.
 
     A `..` at the root is discarded rather than refused, which is what RFC 3986
     prescribes and what every origin does. TRAILING SLASH IS SIGNIFICANT and is
@@ -139,9 +140,9 @@ def normalise_path(path):
 
     ONE PLACE, on purpose. A path that is decoded here, resolved there and
     matched somewhere else is a path with three forms, and the gap between any
-    two of them is where a traversal lives. Everything that has an opinion about
-    what this request addresses -- the `paths` matcher, the log line, and the
-    bytes sent upstream -- reads the string this returns.
+    two of them is where a traversal lives. Everything that has an opinion
+    about what this request addresses -- the `paths` matcher, the log line, and
+    the bytes sent upstream -- reads the string this returns.
 
     THE QUERY IS NOT PART OF IT and is carried through untouched. Both readings
     are defensible and silence picks the worse one: matching the full target
@@ -209,7 +210,8 @@ def normalise_target(method, target, scheme=SCHEME_HTTP):
 
 
 class Authority(NamedTuple):
-    """An authority split into the name policy matches and the port it named."""
+    """An authority split into the name policy matches and the port it
+    named."""
 
     host: str
     port: str          # "" when the authority carried none
@@ -256,8 +258,8 @@ def redirect_target(location, scheme=SCHEME_HTTP):
 
     A relative Location -- the common case -- names no host and is not a
     redirect off this origin, so it is None rather than a refusal. So is
-    anything this cannot read: the only thing built on the answer is a log line,
-    and a parse failure there must never become a failed response.
+    anything this cannot read: the only thing built on the answer is a log
+    line, and a parse failure there must never become a failed response.
 
     Any scheme is read, not just this plane's: a redirect from http to https is
     ordinary, and the name is the question, not the scheme it is reached over.

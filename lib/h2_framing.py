@@ -29,19 +29,19 @@ H2_FRAME_SETTINGS = 0x4
 
 
 class NotH2(Exception):
-    """A connection on an [[vm.network.http2]] host is not speaking h2."""
+    """A connection on an `http2` host is not speaking h2."""
 
 
 class H2Framing:
     """Whether a guest's byte stream continues to look like HTTP/2 framing.
 
-    WHAT THIS IS FOR, and it is one thing. `[[vm.network.http2]]` names a host
-    whose stream is relayed without being decoded, so without this the key
+    WHAT THIS IS FOR, and it is one thing. The policy's `http2` list names a
+    host whose stream is relayed without being decoded, so without this the key
     means EXEMPT rather than SPEAKS H2: a guest reaches a full policy opt-out
     on any host an operator listed for performance, by writing different first
-    bytes. That is the same shape as the non-HTTP fallback HLD §8 removed, and
-    it was missed the first time for the same reason -- the entry reads as
-    naming a protocol when what it names is a hole.
+    bytes. That is the same shape as a non-HTTP fallback, and it is easy to
+    miss for the same reason -- the entry reads as naming a protocol when what
+    it names is a hole.
 
     WHAT ACTUALLY BINDS, stated plainly because the ratio is not obvious and a
     later reader will otherwise trust this further than it goes:
@@ -59,12 +59,13 @@ class H2Framing:
       ALIGNMENT AT CLOSE, not refusal in flight -- the connection is counted
       and named, and the bytes have already been relayed. This is not a
       conformance checker and must not be described as one; closing that
-      residual means decoding frames properly, which is §16's work.
+      residual means decoding frames properly, which is a later piece of
+      work.
 
     Nothing is decoded, nothing is rewritten, stream ids are untouched and the
-    dynamic table stays end-to-end -- so §16's HPACK decoder lands on top of
-    this rather than replacing it, and the relay stays exactly what §8 says it
-    is.
+    dynamic table stays end-to-end -- so an HPACK decoder, when one comes,
+    lands on top of this rather than replacing it, and the relay stays an
+    opaque relay.
     """
 
     def __init__(self):
@@ -97,9 +98,9 @@ class H2Framing:
                 self._first = False
                 if kind != H2_FRAME_SETTINGS or stream != 0:
                     raise NotH2(
-                        f"the first frame after the preface is type {kind:#04x} "
-                        f"on stream {stream}, and RFC 9113 requires SETTINGS on "
-                        f"stream 0")
+                        f"the first frame after the preface is type "
+                        f"{kind:#04x} on stream {stream}, and RFC 9113 "
+                        f"requires SETTINGS on stream 0")
                 if length % 6:
                     raise NotH2(
                         f"the opening SETTINGS frame is {length} bytes, which "

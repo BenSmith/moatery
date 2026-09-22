@@ -3,12 +3,12 @@
 The broker's request path as free functions: which of a caller's headers go
 upstream and which are replaced, how a request is framed before any of it is
 forwarded, and how an upstream response is re-framed on the way back. None
-of it needs a connection to be decided, and as methods on the handler it was
-reachable only by standing up a server with a TLS upstream -- which is how
-the whole request path goes untested while config and identity are covered
-three ways.
+of it needs a connection to be decided, and as free functions none of it
+needs a server with a TLS upstream to be tested -- which, as methods on the
+handler, is what it would take, and how a whole request path goes untested
+while config and identity are covered three ways.
 
-Used by `libexec/agent-broker`. Installed to /usr/libexec/workloadctl/broker_request.py.
+Used by `libexec/customs-broker`.
 """
 
 # Headers that are meaningful only for a single transport hop and must never be
@@ -55,7 +55,8 @@ MAX_REQUEST_BYTES = 64 * 1024 * 1024
 def forwarded_headers(incoming, profile):
     """The headers to send upstream, given the ones the caller sent.
 
-    The configured auth header is stripped by name as well as by the fixed list.
+    The configured auth header is stripped by name as well as by the fixed
+    list.
     STRIP_FROM_REQUEST is matched case-insensitively but the outgoing dict is
     keyed by whatever case the *caller* used, so with a custom auth_header a
     caller sending `x-custom-key` and a broker adding `X-Custom-Key` produced
@@ -77,10 +78,11 @@ def request_framing(path, headers):
     each means the body is either unread or unreadable and the stream can no
     longer be framed -- see _fail.
 
-    The chunked case is the reason this exists. Transfer-Encoding is hop-by-hop
-    and was stripped, and no Content-Length meant length 0, so a chunked request
-    body was silently dropped and forwarded as empty: 200 OK, nothing logged,
-    the provider seeing a request the caller did not send. Measured.
+    The chunked case is the reason this exists. Transfer-Encoding is
+    hop-by-hop and is stripped, so without the refusal a chunked request has
+    no Content-Length, reads as length 0, and is forwarded with its body
+    silently dropped: 200 OK, nothing logged, the provider seeing a request
+    the caller did not send.
     """
     if not path.startswith("/"):
         # Absolute-form targets ("GET https://elsewhere/...") are how a client
@@ -95,11 +97,11 @@ def request_framing(path, headers):
 
     declared = headers.get_all("Content-Length") or []
     if len(declared) > 1:
-        # Two lengths frame two different messages. Picking one (get() takes the
-        # first) leaves the rest of the other in the socket, to be read as the
-        # next request line -- the same desynchronisation the chunked case
-        # produced, arrived at from the other direction. RFC 9112 §6.3 says
-        # reject, and there is no legitimate sender to accommodate.
+        # Two lengths frame two different messages. Picking one (get() takes
+        # the first) leaves the rest of the other in the socket, to be read
+        # as the next request line -- the chunked case's desynchronisation,
+        # arrived at from the other direction. RFC 9112 §6.3 says reject,
+        # and there is no legitimate sender to accommodate.
         return 0, (400, "duplicate-content-length",
                    "Content-Length appears more than once\n")
 
@@ -112,9 +114,9 @@ def request_framing(path, headers):
         return 0, (400, "bad-content-length",
                    "Content-Length is not a number\n")
     if length < 0:
-        # int("-1") is not a size. Left unchecked it reached rfile.read(-1),
-        # which reads to EOF -- so the handler blocked until the caller chose to
-        # close, holding a slot for as long as it liked.
+        # int("-1") is not a size. Unchecked, it reaches rfile.read(-1),
+        # which reads to EOF -- so the handler blocks until the caller
+        # chooses to close, holding a slot for as long as it likes.
         return 0, (400, "bad-content-length",
                    "Content-Length is negative\n")
     if length > MAX_REQUEST_BYTES:
@@ -126,7 +128,8 @@ def response_framing(status, headers):
     """(headers to pass back, declared length, whether a body is forbidden)."""
     passthrough = [(k, v) for k, v in headers
                    if k.lower() not in DROP_FROM_RESPONSE]
-    declared = next((v for k, v in headers if k.lower() == "content-length"), None)
-    # 204 and 304 must not carry a body; framing them as chunked (even as a bare
-    # terminator) is a protocol violation that strict clients reject.
+    declared = next((v for k, v in headers
+                     if k.lower() == "content-length"), None)
+    # 204 and 304 must not carry a body; framing them as chunked (even as a
+    # bare terminator) is a protocol violation that strict clients reject.
     return passthrough, declared, status in (204, 304)

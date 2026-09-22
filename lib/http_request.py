@@ -35,14 +35,15 @@ class Request(NamedTuple):
     framing: Framing
     expects_continue: bool
     wants_close: bool
-    upgrade: str = ""   # the Upgrade value to re-emit, "" for an ordinary request
+    # The Upgrade value to re-emit; "" for an ordinary request.
+    upgrade: str = ""
 
     @property
     def path(self) -> str:
         """The target's path ALONE, which is what `paths` is matched against.
 
-        The query is deliberately not part of it (§3, and normalise_path says
-        so at length): matching the full target makes `paths = ["/v1/messages"]`
+        The query is deliberately not part of it (normalise_path says so at
+        length): matching the full target makes `paths = ["/v1/messages"]`
         fail on `/v1/messages?stream=true`, a legitimate request denied for a
         reason the operator cannot see anywhere in their config.
         """
@@ -54,15 +55,15 @@ class Request(NamedTuple):
 # the name we authorised.
 #
 # A FIXED LIST, NOT RFC 9110 §7.6.1's. That section says the names to drop are
-# the ones the message's own `Connection` header lists, which is a set the GUEST
-# writes; this is the standing set those names are drawn from in practice. The
-# difference is real and is accepted: a guest sending `Connection: x-custom`
-# has `x-custom` forwarded rather than stripped. It buys nothing here -- every
-# framing decision on this path is recomputed by request_framing and re-emitted
-# by rebuild_request, so a header the origin does not recognise is a header the
-# origin ignores -- and honouring the dynamic list would mean letting guest
-# input decide which of OUR headers survive. Named so the citation cannot be
-# read as a claim this implements it.
+# the ones the message's own `Connection` header lists, which is a set the
+# GUEST writes; this is the standing set those names are drawn from in
+# practice. The difference is real and is accepted: a guest sending
+# `Connection: x-custom` has `x-custom` forwarded rather than stripped. It buys
+# nothing here -- every framing decision on this path is recomputed by
+# request_framing and re-emitted by rebuild_request, so a header the origin
+# does not recognise is a header the origin ignores -- and honouring the
+# dynamic list would mean letting guest input decide which of OUR headers
+# survive. Named so the citation cannot be read as a claim this implements it.
 _NOT_FORWARDED = frozenset((
     "host", "content-length", "transfer-encoding", "connection",
     "proxy-connection", "keep-alive", "te", "trailer", "upgrade", "expect",
@@ -73,7 +74,7 @@ _NOT_FORWARDED = frozenset((
 # rest of the connection onto HTTP/2, whose requests are HPACK-compressed
 # frames this relay cannot read -- so forwarding one would hand the guest a
 # way to opt out of per-request authorisation entirely, which is the property
-# the terminating plane exists to provide. ADR 008 leaves HTTP/2 open as a
+# the terminating plane exists to provide. HTTP/2 on this plane is a
 # capability to buy deliberately, and this is the line that keeps it from
 # arriving by accident in the meantime.
 _UPGRADE_REFUSED = frozenset(("h2", "h2c"))
@@ -155,10 +156,10 @@ def rebuild_request(req):
     them for its own comparisons. Field names are case-insensitive, so this is
     legal and nothing that reads HTTP properly can tell -- but an origin with a
     hand-rolled parser that string-matches `Content-Type` can, and the symptom
-    is a request that works direct and fails inspected. Named here and in
-    docs/vm-egress-walkthrough.md rather than repaired: preserving the guest's
-    spelling would mean carrying a second copy of every name purely to write it
-    back, and the case where that matters is an origin already outside the spec.
+    is a request that works direct and fails inspected. Named rather than
+    repaired: preserving the guest's spelling would mean carrying a second
+    copy of every name purely to write it back, and the case where that
+    matters is an origin already outside the spec.
     """
     lines = [f"{req.method} {req.target} {req.version}",
              f"Host: {req.authority}"]
@@ -168,17 +169,16 @@ def rebuild_request(req):
         lines.append(f"Content-Length: {req.framing.length}")
     elif req.framing.kind == "chunked":
         lines.append("Transfer-Encoding: chunked")
-    # AN UPGRADE OFFER IS RE-EMITTED, NOT DROPPED, and this is the one place the
-    # strip-and-recompute rule reaches past framing. `Upgrade` and `Connection`
-    # are both in _NOT_FORWARDED -- correctly, since a guest must not choose
-    # which of our headers survive -- and for one rung that meant every upgrade
-    # request reached the origin with the offer removed, so no origin could
-    # ever answer 101 and the whole relay-after-101 path below it was
-    # unreachable. ADR 008 records upgrades as SUPPORTED behaviour (police the
-    # request as ordinary HTTP, relay opaquely afterwards), so the offer is put
-    # back here -- from the value _upgrade_offer recognised, never from the
-    # guest's own bytes, which is what keeps this a recompute rather than a
-    # forward.
+    # AN UPGRADE OFFER IS RE-EMITTED, NOT DROPPED, and this is the one place
+    # the strip-and-recompute rule reaches past framing. `Upgrade` and
+    # `Connection` are both in _NOT_FORWARDED -- correctly, since a guest must
+    # not choose which of our headers survive -- so without this line every
+    # upgrade request reaches the origin with the offer removed, no origin can
+    # ever answer 101, and the whole relay-after-101 path below is unreachable.
+    # Upgrades are SUPPORTED behaviour (police the request as ordinary HTTP,
+    # relay opaquely afterwards), so the offer is put back here -- from the
+    # value _upgrade_offer recognised, never from the guest's own bytes, which
+    # is what keeps this a recompute rather than a forward.
     if req.upgrade:
         lines.append(f"Upgrade: {req.upgrade}")
         lines.append("Connection: upgrade")

@@ -1,20 +1,18 @@
 """egress_plane: the two ports the egress redirect catches, and what each is.
 
-A plane is which port the guest dialled. The `workload-filter` output chain
-redirects a filtered workload's dials to 80 and 443 onto its own inspector and
-nothing else, so there are exactly two, fixed before the inspector does
-anything and unchanged by what it does next (terminate, splice, h2, forward).
-Each carries three facts that are spelled at both ends of the redirect: the
-port the guest dialled, which the nft map keys on; the port the redirect lands
-it on, which the socket unit binds and the inspector recognises by
-getsockname(); and the label a record and `workloadctl egress --plane` name it
-by. One row per plane, so the three cannot drift apart.
+A plane is which port the guest dialled. The redirect sends a workload's
+dials to 80 and 443 onto its own inspector and nothing else, so there are
+exactly two, fixed before the inspector does anything and unchanged by what
+it does next (terminate, splice, h2, forward). Each carries three facts
+that are spelled at both ends of the redirect: the port the guest dialled,
+which the redirect rule keys on; the port the redirect lands it on, which
+the socket unit binds and the inspector recognises by getsockname(); and
+the label a record names it by. One row per plane, so the three cannot
+drift apart.
 
-Below everything: the parser refuses `[vm.network].ports` on a guest port, the
-generator binds the inspect ports, the element builder writes both into the
-map, and the listener labels a connection from the port that accepted it.
-
-Installed to /usr/libexec/workloadctl/egress_plane.py.
+Below everything: whoever writes the socket unit binds the inspect ports,
+whoever writes the redirect names both, and the listener labels a
+connection from the port that accepted it.
 """
 
 from typing import NamedTuple

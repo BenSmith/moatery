@@ -30,7 +30,9 @@ from egress_record import (
 )
 from egress_relay import relay
 import egress_relay
-from egress_upstream import BROKER_UPSTREAM_KEY, dial_failure_reason, tls_failure
+from egress_upstream import (
+    BROKER_UPSTREAM_KEY, dial_failure_reason, tls_failure,
+)
 from http_framing import (
     ReadTimedOut, RequestUnreadable, _Stream, _get_all, _is_count,
     _split_response_head, copy_body, drain, response_framing, send_response,
@@ -54,9 +56,10 @@ INTERIM_MAX = 32
 # per-request record's `reason` -- but a guest has no business learning it, or
 # even that there is a policy to be on the wrong side of. A body that named the
 # allowlist, the egress policy, or the tool would turn a single refused request
-# into a reliable "you are sandboxed" oracle, answerable before the guest looked
-# at one certificate; a bare status does not. See http_framing.send_response for the same reasoning
-# applied to a tool-name prefix.
+# into a reliable "you are sandboxed" oracle, answerable before the guest
+# looked at one certificate; a bare status does not. See
+# http_framing.send_response for the same reasoning applied to a tool-name
+# prefix.
 POLICY_REFUSAL_BODY = "Forbidden"
 
 
@@ -243,10 +246,10 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
     # and is not put in the map for the next one to find.
     transient = req.version == "HTTP/1.0"
     rec.request(req)
-    # THE BROKER BRANCH (ADR 007). An authorised request to a host whose
-    # policy entry names a credential goes to this workload's own broker
-    # instance instead of to the origin -- and that is the whole of the
-    # difference, because `Upstream.connection_for` takes the dial as an argument.
+    # THE BROKER BRANCH. An authorised request to a host whose policy
+    # entry names a credential goes to this workload's own broker instance
+    # instead of to the origin -- and that is the whole of the difference,
+    # because `Upstream.connection_for` takes the dial as an argument.
     # Everything downstream is the same: the head that goes up is
     # the same `rebuild_request(req)`, carrying the same `Host`, which is
     # half of the broker's `(uid, Host)` key. The other half is the uid on
@@ -305,10 +308,10 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
             reason = DROP_BROKER_UNREACHABLE
             text = (f"{req.host} is brokered and this workload's "
                     f"credential broker did not answer ({exc}). The "
-                    f"request was NOT sent to {req.host}: check "
-                    f"workload-<name>-broker.service on the host, and "
-                    f"check audit.log -- a missing SELinux rule on this "
-                    f"dial presents exactly like a broker that is down.")
+                    f"request was NOT sent to {req.host}: check the "
+                    f"broker's unit on the host, and check audit.log -- a "
+                    f"missing SELinux rule on this dial presents exactly "
+                    f"like a broker that is down.")
         else:
             reason = dial_failure_reason(
                 req.host, insp.policy.internal)
@@ -331,7 +334,7 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
     # number where it is opened, and the TLS plane's splice sets both.
     conn.settimeout(egress_relay.RELAY_IDLE_TIMEOUT)
     # The address a policy NAME became, resolved by this process and known
-    # to nobody else -- §11's other half of the join.
+    # to nobody else -- the other half of the join.
     rec.dialled(up.sock)
     try:
         try:
@@ -349,15 +352,15 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
             # held precisely so it can be told.
             #
             # IT IS ALSO WHERE A CLIENT-CERTIFICATE ORIGIN LANDS, SOMETIMES,
-            # and that is why the body names the possibility. Under TLS 1.3
-            # a CertificateRequest is answered after the handshake
-            # completes, so the same origin either fails at the dial with
+            # and that is why the body names the possibility. Under TLS 1.3 a
+            # CertificateRequest is answered after the handshake completes, so
+            # the same origin either fails at the dial with
             # `CERTIFICATE_REQUIRED` -- named exactly, by
-            # egress_upstream.tls_failure -- or resets the connection here, with
-            # nothing left to read the reason from. Which one happens is
+            # egress_upstream.tls_failure -- or resets the connection here,
+            # with nothing left to read the reason from. Which one happens is
             # decided inside the peer's stack and is not ours to make
-            # deterministic. It presents as a flaky test rather than as a
-            # guest being told nothing.
+            # deterministic. It presents as a flaky test rather than as a guest
+            # being told nothing.
             #
             # The COUNTER stays `relay failed`. A bare reset is genuinely
             # ambiguous -- an origin that crashed or closed an idle socket
@@ -369,8 +372,8 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
             insp.counters.record_drop(DROP_RELAY_FAILED, req.host)
             rec.set(decision="drop", reason=DROP_RELAY_FAILED, status=502)
             insp.log(f"drop {where} host={req.host} "
-                                f"reason='relay failed before the head was sent: "
-                                f"{exc}'")
+                     f"reason='relay failed before the head was sent: "
+                     f"{exc}'")
             return _refuse(
                 client, conn, req, 502, "Bad Gateway",
                 f"the request to {req.host} was not delivered: the "
@@ -404,7 +407,7 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
         insp.log(f"forward {where} host={req.host} method={req.method}")
         keep = _relay_response(insp, up, client, conn, req, where, rec)
         if credential and rec.fields.get("status") in (401, 403):
-            # §11's second named failure, and the reason it is counted
+            # The second named failure, and the reason it is counted
             # rather than merely documented: every layer of ours succeeded.
             # The policy admitted the host, the broker attached material,
             # the origin answered -- and it answered "no". Read from the
@@ -484,8 +487,8 @@ def _relay_response(insp, up, client, conn, req, where="", rec=None):
             # here" is not something an operator should have to infer from
             # a byte count.
             insp.log(f"upgrade {where} host={req.host} "
-                                f"reason='switched protocols; per-request policy no "
-                                f"longer applies to this connection'")
+                     f"reason='switched protocols; per-request policy "
+                     f"no longer applies to this connection'")
             # Anything EITHER side read past the message boundary belongs
             # to the tunnel and goes across before the relay starts, or the
             # stream is delivered out of order. Both directions: a guest
@@ -563,8 +566,9 @@ def _note_policy_redirect(insp, status, target, path, req, where):
     """Log a redirect an allowlisted target's own policy will refuse.
 
     The second half of the same diagnosability problem: the operator
-    allowlisted the target, so the note above stays silent, and the guest's next connection ends in
-    `not permitted by policy` naming a host and a path with nothing
+    allowlisted the target, so the note above stays silent, and the guest's
+    next connection ends in `not permitted by policy` naming a host and a
+    path with nothing
     connecting either to the site that sent it there. This is still the
     only point where both names are known together.
 
@@ -597,19 +601,18 @@ def _note_policy_redirect(insp, status, target, path, req, where):
            for method in set(methods)):
         return
     insp.log(f"note {where} host={req.host} reason='redirected to "
-                        f"{target}{path}, which its [[vm.network.policy]] entry does "
-                        f"not permit'")
+             f"{target}{path}, which its policy entry does not permit'")
 
 
 def _binding_reason(insp, host):
-    """Which of the two §4 binding figures a mismatched name lands in.
+    """Which of the two binding figures a mismatched name lands in.
 
     `admits` decides only WHICH FIGURE; it does not admit the request,
     which is refused either way and refused BEFORE the allowlist is
     consulted. The two answers are the attack and the ordinary client --
     a guest reusing a session it was granted to reach a name it never was,
-    against a client coalescing two names it was given -- and §4 asks for a
-    count an operator can read at a glance, which one bucket for both is
+    against a client coalescing two names it was given -- and an operator
+    needs a count they can read at a glance, which one bucket for both is
     not.
 
     Asked here rather than left to whoever reads the figure: by then the

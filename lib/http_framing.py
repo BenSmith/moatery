@@ -129,8 +129,8 @@ class _Stream:
         # `prefill` is bytes already taken off this socket before the stream
         # existed -- the one non-blocking read the terminated plane makes after
         # an upstream handshake, looking for a TLS 1.3 alert. On the ordinary
-        # path it comes back empty; when it does not, the bytes are the origin's
-        # and must be read in order, not dropped.
+        # path it comes back empty; when it does not, the bytes are the
+        # origin's and must be read in order, not dropped.
         self._buf = prefill
         self.eof = False
 
@@ -164,9 +164,9 @@ class _Stream:
             # BEFORE the OSError arm: socket.timeout is TimeoutError and
             # TimeoutError is an OSError, so a generic arm first would swallow
             # every timeout into `read failed`.
+            waited = timeout if timeout is not None else self.sock.gettimeout()
             raise ReadTimedOut(
-                f"nothing was readable within "
-                f"{timeout if timeout is not None else self.sock.gettimeout()}s",
+                f"nothing was readable within {waited}s",
                 idle=timeout is not None) from None
         except OSError as exc:
             raise RequestUnreadable(f"read failed: {exc}") from None
@@ -202,7 +202,8 @@ class _Stream:
                 return head
             if len(self._buf) > max_bytes:
                 raise RequestUnreadable(
-                    f"a message head over {max_bytes} bytes is not one we read")
+                    f"a message head over {max_bytes} bytes is not one we "
+                    f"read")
             if not self._fill(idle_timeout if not self._buf else None):
                 if not self._buf:
                     return b""
@@ -294,9 +295,9 @@ def _reject_controls(text, what, *, tab_ok):
             continue
         if ch < " " or ch == "\x7f":
             raise RequestUnreadable(
-                f"{what} carries the control character {ch!r}: a field with a "
-                "line ending inside it is read as one field here and as two by "
-                "anything that accepts bare LF")
+                f"{what} carries the control character {ch!r}: a field with "
+                "a line ending inside it is read as one field here and as two "
+                "by anything that accepts bare LF")
 
 
 def _split_head(head):
@@ -388,10 +389,11 @@ def _is_count(text):
     response path. That head is decoded latin-1 -- deliberately, so a raw byte
     in a filename cannot kill an authorised exchange -- and latin-1 carries the
     superscripts. `"\u00b2".isdigit()` is True and `int("\u00b2")` raises, so a
-    `Content-Length: \u00b2` or a status line of `\u00b200` passed the guard and
-    then raised ValueError out of a call site that catches RequestUnreadable and
-    OSError: the connection thread died with a traceback and no counter moved,
-    in a file whose whole discipline is that every disposition is counted.
+    `Content-Length: \u00b2` or a status line of `\u00b200` passed the guard
+    and then raised ValueError out of a call site that catches
+    RequestUnreadable and OSError: the connection thread died with a traceback
+    and no counter moved, in a file whose whole discipline is that every
+    disposition is counted.
 
     The request side never had the hole -- that head is decoded ASCII, so a
     non-ASCII byte is refused several steps earlier -- and uses this anyway.
@@ -493,8 +495,8 @@ def response_framing(status, method, headers):
     if encodings:
         if len(encodings) > 1 or encodings[0].strip().lower() != "chunked":
             raise RequestUnreadable(
-                f"response Transfer-Encoding {', '.join(encodings)!r} is not a "
-                "single 'chunked'")
+                f"response Transfer-Encoding {', '.join(encodings)!r} is not "
+                "a single 'chunked'")
         return Framing("chunked")
     if lengths:
         if len(lengths) > 1 or not _is_count(lengths[0]):
@@ -616,7 +618,7 @@ def drain(client, framing):
 
 
 def send_response(conn, status, reason, text, *, close):
-    # NO TOOL NAME IN A GUEST-FACING BODY. A `workloadctl: ` prefix here
+    # NO TOOL NAME IN A GUEST-FACING BODY. A `customs: ` prefix here
     # would ride every refusal and announce -- in one refused request,
     # before the guest inspected a single certificate -- that its egress
     # is mediated and by what. The status line is an ordinary origin

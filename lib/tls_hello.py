@@ -46,9 +46,9 @@ CLIENTHELLO_MAX = 16384
 PEEK_ATTEMPTS_MAX = 16
 
 # How much a consuming (non-peek) read asks for at a time. Only the splice path
-# consumes, and whatever lands past the end of the hello is the guest's own next
-# bytes in order, replayed upstream unchanged -- so the size only sets how much
-# of that surplus one read may pull in.
+# consumes, and whatever lands past the end of the hello is the guest's own
+# next bytes in order, replayed upstream unchanged -- so the size only sets how
+# much of that surplus one read may pull in.
 READ_CHUNK = 65536
 
 TLS_HANDSHAKE = 0x16
@@ -109,7 +109,8 @@ class _Reader:
     def take(self, n: int) -> bytes:
         if n < 0 or self.remaining() < n:
             raise HelloUnreadable(
-                f"a length field claims {n} bytes with {self.remaining()} left")
+                f"a length field claims {n} bytes with {self.remaining()} "
+                f"left")
         out = self._buf[self._pos:self._pos + n]
         self._pos += n
         return out
@@ -207,9 +208,9 @@ def read_client_hello(conn, max_bytes=CLIENTHELLO_MAX, *, peek=False):
     `raw` is every byte read off the socket, record headers included and
     unmodified — that is what gets replayed upstream, and it is returned rather
     than rebuilt because a re-serialised hello is a different hello. It may run
-    slightly past the end of the ClientHello if the peer coalesced more into the
-    same segment; replaying the surplus is correct, since it is the guest's own
-    next bytes in order.
+    slightly past the end of the ClientHello if the peer coalesced more into
+    the same segment; replaying the surplus is correct, since it is the guest's
+    own next bytes in order.
 
     The handshake message is reassembled across records: a large hello (a
     post-quantum key share, say) legitimately spans more than one TLS record,

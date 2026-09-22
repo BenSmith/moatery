@@ -81,6 +81,13 @@ Gate: 295 green; `test_closure.py` unchanged; a check that `lib/` and
 was". Then `ruff check` with `E4,E7,E9,F,E501` at 79 columns becomes
 `just lint`.
 
+Done 2026-09-22. Also renamed, beyond the list: `AGENT_BROKER_SECRET` →
+`CUSTOMS_BROKER_SECRET` (the dev-only fallback), the broker's `Server:`
+header and `prog`, `CA_BUNDLE_PATH`'s file name (`customs.crt`), the CA
+subject (`customs egress CA`), and every log line that named a
+workloadctl TOML table (`[[vm.network.splice]]` → "the `splice` list").
+Five tests that pinned those strings were re-derived. "Guest" stays.
+
 ## 3. Bring `test_inspect_listener.py` across
 
 229 tests, blocked only on fixtures: a small `tests/fixtures.py` that

@@ -4,16 +4,15 @@ egress_mint — minting leaf certificates for a filtered VM's egress inspector.
 The back half of bump-then-403. The inspector reads a name out of a ClientHello
 without answering it, decides what the name deserves, and then -- for both
 dispositions -- completes the handshake with a certificate this workload's own
-CA signed, because a guest that gets a certificate ERROR learns nothing, while a
-guest that gets a clean TLS session and a `403` learns exactly which host was
+CA signed, because a guest that gets a certificate ERROR learns nothing, while
+a guest that gets a clean TLS session and a `403` learns exactly which host was
 refused and why.
 
 WHAT IS IN HERE AND WHY IT IS THREE THINGS RATHER THAN ONE
 
-Minting is a subprocess (~20 ms, against ~0.1 ms in-process -- but `lib/` has no
-third-party dependencies and stdlib cannot sign a certificate, so `openssl` it
-is; tests/test_stdlib_only.py enforces the constraint). That cost is what shapes
-everything else:
+Minting is a subprocess (~20 ms, against ~0.1 ms in-process -- but `lib/`
+has no third-party dependencies and stdlib cannot sign a certificate, so
+`openssl` it is). That cost is what shapes everything else:
 
 - A WORKING-SET CACHE, persisted, so a guest's usual hosts cost one mint each
   ever, not one per connection and not one per listener restart.
@@ -22,16 +21,17 @@ everything else:
   LRUs, never one shared one -- with a shared cache, "flood the cache" is a
   denial of service against the workload's real destinations, spelled in
   ordinary traffic.
-- A TOKEN BUCKET over all minting, because a cache miss is attacker-reachable by
-  construction: the guest picks the names.
+- A TOKEN BUCKET over all minting, because a cache miss is
+  attacker-reachable by construction: the guest picks the names.
 
 WHAT IS NOT VIABLE, RECORDED BECAUSE IT IS THE OBVIOUS FIRST IDEA
 
 One shared certificate for every denial, minted once. The client validates the
 SAN against the name it asked for and aborts on mismatch, so the guest gets a
 certificate error instead of the `403` -- which is the entire benefit
-bump-then-403 exists to buy. The denials must each be minted for their own name,
-which is why they need a cache and a bucket of their own rather than a constant.
+bump-then-403 exists to buy. The denials must each be minted for their own
+name, which is why they need a cache and a bucket of their own rather than a
+constant.
 """
 
 from __future__ import annotations
@@ -83,9 +83,9 @@ LEAF_CACHE_MAX = 1024
 # was a handshake that died on a missing file and was reported as the guest not
 # trusting the CA -- a wrong diagnosis pointing at a re-provision. Doubled, so
 # the margin is a factor rather than an off-by-one, and asserted against the
-# listener's ceiling by tests/test_mint.py, since the two numbers live in
-# different files and nothing else makes them meet. The working set was always
-# clear of this (1024 against 128) and is unchanged.
+# listener's ceiling by the mint tests, since the two numbers live in
+# different files and nothing else makes them meet. The working set is well
+# clear of it (1024 against 128).
 DENIAL_CACHE_MAX = 256
 
 # The bucket. 256 tokens refilling at 1/s: a cold VM contacting fifty hosts
@@ -115,8 +115,8 @@ class MintThrottled(Exception):
     A type of its own rather than a `None` return, because the two callers do
     opposite things with it -- an allowlisted name that cannot be minted for is
     an incident to log, a denied one is the connection closing -- and a caller
-    that forgets to check a sentinel gets a certificate-shaped `None` instead of
-    an error.
+    that forgets to check a sentinel gets a certificate-shaped `None` instead
+    of an error.
     """
 
     def __init__(self, name: str, *, denied: bool):
@@ -219,12 +219,13 @@ class LeafCache:
     cold-start cost on every VM restart.
 
     EVERY CACHE OWNS A DIRECTORY, AND THAT IS WHAT MAKES THE TWO SETS SEPARATE.
-    A leaf is a file, because completing a handshake means handing openssl-signed
-    PEM to `ssl.SSLContext.load_cert_chain` -- so "memory-only" is not available
-    to the denial set, and the separation has to be structural instead: eviction
-    unlinks a path this cache minted, and two caches sharing a directory would
-    make a flood of refusals evict the working set by deleting its files. Two
-    directories, and the class cannot be constructed without one.
+    A leaf is a file, because completing a handshake means handing
+    openssl-signed PEM to `ssl.SSLContext.load_cert_chain` -- so "memory-only"
+    is not available to the denial set, and the separation has to be structural
+    instead: eviction unlinks a path this cache minted, and two caches sharing
+    a directory would make a flood of refusals evict the working set by
+    deleting its files. Two directories, and the class cannot be constructed
+    without one.
     """
 
     def __init__(self, capacity: int, directory: Path):
@@ -241,8 +242,8 @@ class LeafCache:
         The in-memory LRU starts empty on every restart, so eviction alone
         cannot bound the directory across restarts -- files evicted in a
         previous process were never in this one's LRU to evict. Oldest-first by
-        mtime is a coarse stand-in for least-recently-used and only ever runs at
-        construction, where being coarse costs a re-mint and nothing else.
+        mtime is a coarse stand-in for least-recently-used and only ever runs
+        at construction, where being coarse costs a re-mint and nothing else.
         """
         try:
             pems = sorted(self.directory.glob("*.pem"),
@@ -325,8 +326,8 @@ class LeafCache:
 def pem_fingerprint(path: Path) -> str | None:
     """The SHA-256 fingerprint of the certificate in a PEM, or None.
 
-    Public, and it was not always: `diagnose` compares the CA a running
-    listener is minting with against the one on disk, and a second
+    Public, because anything that compares the CA a running listener is
+    minting with against the one on disk must use THIS spelling: a second
     implementation of "the fingerprint of a PEM" is the one thing that
     comparison cannot survive -- two spellings of the same certificate report
     a mismatch forever, on every workload.
@@ -390,15 +391,12 @@ class Minter:
     NOTHING HERE ASKS ABOUT THE GUEST. A leaf is backdated an hour, and a
     guest whose clock is further out than that rejects every leaf this class
     signs -- but that is a fact about the guest, repaired on the guest's
-    behalf by whatever owns the guest (on a VM, workload-<name>-clock.timer
-    once a minute, see lib/vm_clock.py), and not something a minter can
-    learn from the name it was asked to sign. An earlier shape ran a
-    caller-supplied "remedy" on every cache miss to close the timer's
-    one-minute window; it closed a window only a fresh mint could fall into,
-    for one retryable handshake, at the price of the minter carrying a seam
-    whose only implementation dialled a QEMU socket. The window is the
-    keeper's period, and a guest that lands in it gets one certificate error
-    and a working retry.
+    behalf by whatever owns the guest, and not something a minter can learn
+    from the name it was asked to sign. A minter that ran a caller-supplied
+    "remedy" on a cache miss would close a window only a fresh mint can fall
+    into, for one retryable handshake, at the price of carrying a seam into
+    whatever owns the guest. A guest whose clock is being stepped gets one
+    certificate error and a working retry.
     """
 
     def __init__(self, name: str, state_dir, *,
@@ -435,9 +433,9 @@ class Minter:
         """Add one to each named counter, under the lock `snapshot` reads with.
 
         `d[k] += 1` is a read and a write rather than one operation, and every
-        call site here runs on a per-connection thread. Unlocked, increments are
-        lost under exactly the concurrency the figures exist to describe -- a
-        workload under sustained abuse is read by `throttled` and
+        call site here runs on a per-connection thread. Unlocked, increments
+        are lost under exactly the concurrency the figures exist to describe --
+        a workload under sustained abuse is read by `throttled` and
         `denied_mints`, and those are the counters a flood drives in parallel.
         The lock was already taken by `snapshot`; it simply was not taken by
         anything that WROTE, which made it a lock over nothing.
@@ -547,29 +545,28 @@ class Minter:
     def _mint(self, name: str, cache: LeafCache, *, denied: bool) -> Leaf:
         """Sign one leaf and land it as a single PEM, atomically.
 
-        Minted into a temporary directory and moved into place, so a reader that
-        finds the PEM finds a whole one. `os.replace` on the same filesystem is
-        the atomic step; the temp directory is inside the cache directory to
-        guarantee that.
+        Minted into a temporary directory and moved into place, so a reader
+        that finds the PEM finds a whole one. `os.replace` on the same
+        filesystem is the atomic step; the temp directory is inside the cache
+        directory to guarantee that.
         """
-        # The certificate a denial gets is identical to the one an allow gets --
-        # same name, same CA -- and the disposition lives in what the inspector
-        # does AFTER the handshake. What differs is which cache owns the file,
-        # so the same name minted under both dispositions lands twice, once per
-        # directory. That duplication IS the isolation.
+        # The certificate a denial gets is identical to the one an allow gets
+        # -- same name, same CA -- and the disposition lives in what the
+        # inspector does AFTER the handshake. What differs is which cache owns
+        # the file, so the same name minted under both dispositions lands
+        # twice, once per directory. That duplication IS the isolation.
         target = cache.path_for(name)
         argv_dir = cache.directory
 
         now = self._clock()
-        # EVERY filesystem step is inside this, and the reason is measured. A
-        # cache directory the process cannot write raises OSError from the
-        # TemporaryDirectory below -- which used to be OUTSIDE any handler here,
-        # so it left as an OSError, and the inspector's per-connection handler
-        # swallows OSError by design. Outside a handler it produces the worst
+        # EVERY filesystem step is inside this. A cache directory the
+        # process cannot write raises OSError from the TemporaryDirectory
+        # below, and the inspector's per-connection handler swallows OSError
+        # by design -- so outside a handler here it would produce the worst
         # failure shape this component has: the guest's connection reset, no
-        # journal line, no counter, and a warm cache hiding it entirely -- the
-        # first request to a host fails and the second
-        # succeeded. MintFailed is logged, counted and named; an OSError
+        # journal line, no counter, and a warm cache hiding it entirely, the
+        # first request to a host failing and the second succeeding.
+        # MintFailed is logged, counted and named; an OSError
         # escaping this function is not.
         try:
             with tempfile.TemporaryDirectory(dir=argv_dir) as tmp:
@@ -592,7 +589,8 @@ class Minter:
                     detail = ((result.stderr or "")
                               + (result.stdout or "")).strip()
                     raise MintFailed(
-                        f"openssl refused to mint a leaf for {name!r}: {detail}")
+                        f"openssl refused to mint a leaf for {name!r}: "
+                        f"{detail}")
                 staged = Path(tmp) / "leaf.pem"
                 staged.write_text(cert_path.read_text() + key_path.read_text())
                 os.chmod(staged, 0o600)

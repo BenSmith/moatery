@@ -4,25 +4,18 @@ The refusals and the per-Host profile table: `build_profiles` resolves each
 `--host HOST=CREDENTIAL` against the material that credential id names and
 the `--placeholder`/`--auth-header`/`--auth-format` flags that describe it,
 and `normalise_host` is the one spelling of a `Host` the table is keyed by
-and the server looks up. The generator side -- how broker_config spells the
-flags this reads -- and this reader are pinned against each other by
-tests/test_broker_closure.py, because a flag emitted at one end and not
-taken at the other is a broker that refuses to start, which for a generated
-unit is a restart loop.
+and the server looks up. A flag the unit emits and this reader does not
+take is a broker that refuses to start, which under a manager is a restart
+loop; tests/test_closure.py holds the flag set this reads.
 
-THERE IS NO DOCUMENT. The broker took a broker.toml until the flags: a file
-workload-broker-config rendered into the unit's RuntimeDirectory at every
-start, from the workload TOML, as the unit's DynamicUser. Every value in it
-was a pure function of the workload TOML and the uid -- which is exactly
-what the generator holds when it writes the unit -- so the file was a second
-rendering of facts the ExecStart= line could carry itself, plus a TOML
-reader, a key vocabulary, a writer, an ExecStartPre and a RuntimeDirectory=
-to keep the two in step. The property the file was chosen for (never serving
-a previous boot's credential set) was never the file's: it holds no
-material, and LoadCredentialEncrypted= decrypts the material afresh at every
-start with or without it.
-
-Installed to /usr/libexec/workloadctl/broker_profiles.py.
+THERE IS NO DOCUMENT. Every value the broker needs is a pure function of
+what the writer of its unit already knows -- the caller's uid, the listen
+address, the credential ids -- so a config file would be a second
+rendering of facts the ExecStart= line carries itself, plus a reader, a key
+vocabulary, a writer and an ExecStartPre= to keep the two in step. Nor
+would a file buy freshness: it would hold no material, and
+LoadCredentialEncrypted= decrypts the material afresh at every start with
+or without one.
 """
 
 import dataclasses
@@ -30,9 +23,9 @@ import os
 from pathlib import Path
 
 # The auth convention a credential gets when its block states none: the
-# Anthropic one. Defined HERE, in the reader that applies them, and quoted
-# by credential_entries at an operator -- the generator emits no flag for
-# an absent key, so the broker is the one place the default is in force.
+# Anthropic one. Defined HERE, in the reader that applies them: a unit
+# that names no --auth-header or --auth-format for a credential gets these,
+# so the broker is the one place the default is in force.
 BROKER_DEFAULT_AUTH_HEADER = "x-api-key"
 BROKER_DEFAULT_AUTH_FORMAT = "{secret}"
 
@@ -40,7 +33,7 @@ BROKER_DEFAULT_AUTH_FORMAT = "{secret}"
 class BrokerConfigError(ValueError):
     """The command line, or the credential it names, cannot be used. Raised
     by the reader and turned into an exit by the program: the library raises,
-    the leaf ends the process (tests/test_layering.py)."""
+    the entrypoint ends the process."""
 
 
 # The port an upstream is dialled on. Not a flag: `--host` names a host and
@@ -55,10 +48,10 @@ class Profile:
     """Everything a request needs, resolved per Host.
 
     `auth_value` is the finished header value, rendered once at startup rather
-    than per request. auth_format is operator-written and `str.format` raises on
-    a typo like "Bearer {token}"; rendering it here makes that a refusal to
-    start, which is how every other config error here behaves, instead of a
-    500 on every request from a broker that came up clean.
+    than per request. auth_format is operator-written and `str.format` raises
+    on a typo like "Bearer {token}"; rendering it here makes that a refusal to
+    start, which is how every other config error here behaves, instead of a 500
+    on every request from a broker that came up clean.
     """
     name: str
     host: str
@@ -73,9 +66,9 @@ def normalise_host(value):
     """One `Host` header or flag key as the string the table is keyed by.
 
     Lowercased, port stripped, trailing root dot stripped. All three arrive in
-    practice -- `API.GitHub.com`, `api.github.com:443` and `api.github.com.` are
-    the same host to every resolver and to the inspector's own allowlist, and a
-    table keyed by the raw string would refuse two of the three while the
+    practice -- `API.GitHub.com`, `api.github.com:443` and `api.github.com.`
+    are the same host to every resolver and to the inspector's own allowlist,
+    and a table keyed by the raw string would refuse two of the three while the
     config looked right.
 
     Returns None for anything that is not a usable host, which is a REFUSAL and
@@ -120,12 +113,11 @@ def listen_endpoint(value):
     """(address, port) of the `--listen` flag.
 
     NOT defaulted, unlike the timeouts. An instance must bind the address
-    derived for ITS workload (ADR 007's first detail that will bite): a
-    default of 127.0.0.1 puts one workload's broker at an address every other
-    workload's inspector also dials, which grows the hole decision 6 closes.
-    So the flag is required by the parser, and 0.0.0.0 -- which is worse,
-    since it binds the derived address AND every other one -- is refused by
-    name here.
+    chosen for ITS workload: a default of 127.0.0.1 puts one workload's
+    broker at an address every other workload's inspector also dials, and
+    an instance serving one caller is the whole design. So the flag is
+    required by the parser, and 0.0.0.0 -- which is worse, since it binds
+    the chosen address AND every other one -- is refused by name here.
     """
     address, sep, port = value.rpartition(":")
     if not sep or not address:
@@ -134,13 +126,15 @@ def listen_endpoint(value):
         raise BrokerConfigError(
             f"--listen {value!r} binds every address on the host, including "
             f"the ones other workloads' brokers listen on. Bind this "
-            f"workload's derived address alone (ADR 007 decision 6)")
+            f"workload's own address alone")
     try:
         port = int(port)
     except ValueError:
-        raise BrokerConfigError(f"--listen {value!r}: the port is not a number")
+        raise BrokerConfigError(
+            f"--listen {value!r}: the port is not a number")
     if not 0 <= port <= 65535:
-        raise BrokerConfigError(f"--listen {value!r}: the port is out of range")
+        raise BrokerConfigError(
+            f"--listen {value!r}: the port is out of range")
     return address, port
 
 
@@ -183,10 +177,9 @@ def build_profiles(name, hosts, placeholders=(), auth_headers=(),
     rewrites `Host` from the resolved profile, so a request whose body claims
     a different destination than its header goes to the header's.
 
-    The other dimension the table used to have -- the workload -- is gone
-    with the document. An instance serves one caller (ADR 007 decision 6),
-    identified by the uid on the ExecStart= line, so the caller half of the
-    key is an assertion the server makes before this table is consulted.
+    Keyed by host alone. An instance serves one caller, identified by the
+    uid on the ExecStart= line, so the caller half of the key is an
+    assertion the server makes before this table is consulted.
 
     Returns {host: Profile}, the host through normalise_host.
     """
@@ -207,7 +200,8 @@ def build_profiles(name, hosts, placeholders=(), auth_headers=(),
         where = f"--host {raw}"
         host = normalise_host(raw_host)
         if host is None:
-            raise BrokerConfigError(f"{where}: {raw_host!r} is not a usable Host")
+            raise BrokerConfigError(
+                f"{where}: {raw_host!r} is not a usable Host")
         if host in profiles:
             # Two spellings of one host -- "API.Example" and "api.example:443"
             # normalise together. Refused rather than last-wins, because
@@ -259,10 +253,9 @@ def build_profiles(name, hosts, placeholders=(), auth_headers=(),
             auth_value=auth_value,
         )
 
-    # A credential described but never selected is a flag the generator does
-    # not emit, so its presence means a hand-edited unit -- refused rather
-    # than ignored, because the description that went unapplied may have
-    # been meant for a host spelled wrong on another flag.
+    # A credential described but never selected is refused rather than
+    # ignored: the description that went unapplied may have been meant for
+    # a host spelled wrong on another flag.
     for flag, table in (("--placeholder", placeholders),
                         ("--auth-header", auth_headers),
                         ("--auth-format", auth_formats)):
@@ -294,8 +287,9 @@ def load_credential(name):
         if not secret:
             raise BrokerConfigError(f"credential '{name}' is empty")
         return secret
-    env = os.environ.get("AGENT_BROKER_SECRET")
+    env = os.environ.get("CUSTOMS_BROKER_SECRET")
     if env:
         return env.strip()
-    raise BrokerConfigError("no credential: run under systemd with LoadCredentialEncrypted=, "
-                            "or set AGENT_BROKER_SECRET for local testing")
+    raise BrokerConfigError(
+        "no credential: run under systemd with LoadCredentialEncrypted=, "
+        "or set CUSTOMS_BROKER_SECRET for local testing")

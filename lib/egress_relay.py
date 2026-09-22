@@ -30,8 +30,6 @@ read.
 The upstream dials (`egress_upstream`) and the listener read both numbers
 through this module by attribute, so a test that shortens a wait has one
 place to patch.
-
-Installed to /usr/libexec/workloadctl/egress_relay.py.
 """
 
 import selectors
@@ -46,10 +44,10 @@ from http_framing import RELAY_CHUNK
 # MAX_CONNECTIONS slots for nothing.
 CONNECTION_TIMEOUT = 5.0
 
-# The timeout both sockets carry once a connection is spliced, in seconds. It is
-# an IDLE bound, not a lifetime: the relay loop rearms it on every direction of
-# traffic, so a long download is fine and a tunnel nobody is using is not. It
-# must be larger than CONNECTION_TIMEOUT — the module docstring says why the
+# The timeout both sockets carry once a connection is spliced, in seconds. It
+# is an IDLE bound, not a lifetime: the relay loop rearms it on every direction
+# of traffic, so a long download is fine and a tunnel nobody is using is not.
+# It must be larger than CONNECTION_TIMEOUT — the module docstring says why the
 # two cannot be one number.
 RELAY_IDLE_TIMEOUT = 120.0
 
@@ -86,7 +84,7 @@ def relay(client, upstream, on_client_bytes=None):
             # would sit idle holding a complete frame until the idle timeout
             # cut it. Reachable on the terminated plane in two ways: a
             # `101` handing an upgraded TLS connection to this loop, and an
-            # [[vm.network.http2]] host, where BOTH legs are TLS and every
+            # `http2` host, where BOTH legs are TLS and every
             # frame arrives through an engine.
             buffered = [s for s in (client, upstream)
                         if getattr(s, "pending", None) and s.pending()]

@@ -8,15 +8,15 @@ names, and every decision is made against the workload's Inspection
 
 TWO TLS MODES, AND THE PEEK IS THE SAME PEEK
 
-`tls = "splice"` decrypts nothing: the bytes read to find the name are the bytes
-replayed upstream, verbatim, headers included. A ClientHello reconstructed from
-a parse is a different ClientHello — different extension order, different
-GREASE, a different JA3 — so the raw buffer is what travels and the parse is
-only ever consulted for a decision.
+`tls = "splice"` decrypts nothing: the bytes read to find the name are the
+bytes replayed upstream, verbatim, headers included. A ClientHello
+reconstructed from a parse is a different ClientHello — different extension
+order, different GREASE, a different JA3 — so the raw buffer is what travels
+and the parse is only ever consulted for a decision.
 
-`tls = "inspect"` (the default) TERMINATES. The same peek takes the
-same decision, and then this process completes the guest's handshake itself with
-a leaf minted by the workload's own CA, opens a separately verified session to
+`tls = "inspect"` (the default) TERMINATES. The same peek takes the same
+decision, and then this process completes the guest's handshake itself with a
+leaf minted by the workload's own CA, opens a separately verified session to
 the origin, and authorises every REQUEST inside on the same matcher the
 cleartext plane uses. The allowlist means the same thing on both planes only
 under termination: spliced, a name is checked once at the front of a connection
@@ -30,8 +30,8 @@ BUMP-THEN-ANSWER
 Every refusal a terminated connection carries is delivered THROUGH a completed
 handshake, denials included: mint, complete the guest's handshake, then answer
 403 or 502 in plain HTTP. Failing the handshake instead gives the guest an
-opaque certificate error indistinguishable from the host being down, and the one
-place a reason can reach a guest inside a TLS session is a response body.
+opaque certificate error indistinguishable from the host being down, and the
+one place a reason can reach a guest inside a TLS session is a response body.
 """
 
 import socket
@@ -118,7 +118,7 @@ def serve_tls(insp, conn, where):
                             f"ClientHello carries no server_name extension'")
         return
     host = normalise_hostname(hello.server_name)
-    # `admits`, not a bare `hosts` match: a [[vm.network.policy]] entry
+    # `admits`, not a bare `hosts` match: a `policy` entry
     # allowlists its own host, so a workload whose entire allowlist is
     # written as policy entries would otherwise lose every connection at
     # the front, before the request its rules were written about exists.
@@ -142,7 +142,7 @@ def serve_tls(insp, conn, where):
                                           reason=DROP_NOT_ALLOWLISTED)
         insp.log(f"drop {where} host={host} reason='not allowlisted'")
         return
-    # Dial the NAME, never an address (§7.4). The address the guest aimed
+    # Dial the NAME, never an address. The address the guest aimed
     # at is this inspector's own listener anyway -- the redirect already
     # rewrote it -- so there is nothing to forward even if forwarding one
     # were wanted, and resolving here is what makes the destination the one
@@ -218,13 +218,13 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
     upstream = None
     refusal = None            # (drop reason, status, phrase, body text)
     # THE OFFER IS CHOSEN FROM CONFIGURATION, BEFORE EITHER HANDSHAKE, and
-    # §6 is why there is no alternative: the upstream leg must be up before
-    # a leaf is minted, so nothing here can sniff the guest and then speak
-    # whatever came back. With the non-HTTP fallback gone there is also
-    # nothing to sniff -- the only thing that ever needed a protocol
-    # discovered after the fact was the relay path §8 deleted.
+    # there is no alternative: the upstream leg must be up before a leaf is
+    # minted, so nothing here can sniff the guest and then speak whatever
+    # came back. There is also nothing to sniff -- the only thing that
+    # would need a protocol discovered after the fact is a non-HTTP relay
+    # fallback, and there is none.
     h2 = insp.policy.speaks_h2(host)
-    # A BROKERED HOST IS NOT DIALLED HERE AT ALL, and the §6 invariant above
+    # A BROKERED HOST IS NOT DIALLED HERE AT ALL, and the invariant above
     # survives that: the offer is still chosen from configuration, it is
     # simply always `http/1.1` -- the broker leg is cleartext HTTP/1.1, and
     # `credential` with `http2` on one host is a validation error, so there
@@ -279,7 +279,7 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
             #
             # The guest half of this key is checked exhaustively -- preface,
             # first frame, framing, alignment -- precisely so that
-            # [[vm.network.http2]] means SPEAKS H2 rather than EXEMPT.
+            # an `http2` entry means SPEAKS H2 rather than EXEMPT.
             # Leaving the origin half unchecked settles that question on one
             # side of a relay whose entire content is the other side's
             # protocol, and hands the operator a broken host with no figure
@@ -297,12 +297,12 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
                 upstream = None
                 refusal = (
                     DROP_NOT_H2, 502, "Bad Gateway",
-                    f"{host} is in [[vm.network.http2]] but did not select "
+                    f"{host} is in the `http2` list but did not select "
                     f"h2 for this connection, so there is no HTTP/2 session "
                     f"to relay. Either it does not speak h2 -- drop the "
                     f"entry and let it be inspected as HTTP/1.1 -- or it "
-                    f"cannot take this workload's CA, and belongs in "
-                    f"[[vm.network.splice]]")
+                    f"cannot take this workload's CA, and belongs in the "
+                    f"`splice` list")
     leaf = None
     try:
         # `denied` picks the CACHE, not the disposition: an allowlisted host
@@ -317,16 +317,16 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
         # the bucket has been emptied, which honest traffic does not do.
         insp.counters.record_drop(DROP_THROTTLED, host)
         insp.connection_record(where, "terminate", host=host,
-                                          decision="drop", reason=DROP_THROTTLED)
+                               decision="drop", reason=DROP_THROTTLED)
         insp.log(f"drop {where} host={host} reason='mint rationed: the "
-                            f"leaf bucket is empty'")
+                 f"leaf bucket is empty'")
         return
     except (LeafRefused, MintFailed) as exc:
         insp.counters.record_drop(DROP_MINT_FAILED, host)
         insp.connection_record(where, "terminate", host=host,
-                                          decision="drop", reason=DROP_MINT_FAILED)
+                               decision="drop", reason=DROP_MINT_FAILED)
         insp.log(f"drop {where} host={host} "
-                            f"reason='could not mint a leaf: {exc}'")
+                 f"reason='could not mint a leaf: {exc}'")
         return
     finally:
         # The upstream leg is open by now on the allowed path -- except a
@@ -365,52 +365,49 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
         if not leaf.path.exists():
             insp.counters.record_drop(DROP_MINT_FAILED, host)
             insp.connection_record(where, "terminate", host=host,
-                                              decision="drop",
-                                              reason=DROP_MINT_FAILED)
+                                   decision="drop",
+                                   reason=DROP_MINT_FAILED)
             insp.log(f"drop {where} host={host} reason='the leaf minted "
-                                f"for this connection was evicted before it could be "
-                                f"presented: {exc}. This is a cache-sizing fault, "
-                                f"not a trust one -- the leaf cache must hold more "
-                                f"entries than there are connection slots'")
+                     f"for this connection was evicted before it could be "
+                     f"presented: {exc}. This is a cache-sizing fault, "
+                     f"not a trust one -- the leaf cache must hold more "
+                     f"entries than there are connection slots'")
             if upstream is not None:
                 upstream.sock.close()
             return
         insp.counters.record_drop(DROP_RELAY_FAILED, host)
         insp.connection_record(where, "terminate", host=host,
-                                          decision="drop", reason=DROP_RELAY_FAILED)
-        # NAMES BOTH SHAPES. "A guest provisioned before this workload had
-        # a CA does not trust it and must be re-seeded" is true for a VM
-        # instance whose seed predates the CA, and actively misleading for
-        # the other case, which has no seed to revisit and no CA route to
-        # repair; a sentence naming only the first is wrong half the time.
-        # A JVM image is the standing example: `ca_delivery = "env"` delivers all five variables, every
-        # one readable inside the container, and the JVM still refuses the
-        # leaf -- because its anchors are
+                               decision="drop", reason=DROP_RELAY_FAILED)
+        # NAMES BOTH SHAPES. "The workload was provisioned before it had a
+        # CA and must be re-provisioned" is true for one, and actively
+        # misleading for the other, which has nothing to re-provision and
+        # no CA route to repair; a sentence naming only the first is wrong
+        # half the time. A JVM image is the standing example: all five
+        # variables delivered, every one readable inside the workload, and
+        # the JVM still refuses the leaf -- because its anchors are
         # `cacerts` INSIDE THE IMAGE and no environment variable adds to
-        # them, so telling that operator to re-seed names a guest that does
-        # not exist. Anything with an embedded store is in this class: a JVM,
+        # them. Anything with an embedded store is in this class: a JVM,
         # anything built on rustls with webpki-roots, a statically linked
         # client that never consults the system store.
         #
         # The listener cannot tell the two apart -- it sees a handshake
         # that did not complete and nothing about how the client was built
         # -- so it names both and the remedy each one needs, rather than
-        # guessing and being confidently wrong for one substrate.
+        # guessing and being confidently wrong for one of them.
         insp.log(f"drop {where} host={host} reason='the client did not "
-                            f"complete the handshake: {exc}. It did not trust the "
-                            f"leaf this workload minted, which has two shapes and "
-                            f"they need different remedies. (1) A client that COULD "
-                            f"be given the CA and was not: a VM instance seeded "
-                            f"before this workload had one, which cloud-init will "
-                            f"not revisit and which must be re-seeded; or a "
-                            f"container whose ca_delivery route is absent or wrong. "
-                            f"(2) A client that CANNOT be given it at all because "
-                            f"its trust store is embedded in the image and it reads "
-                            f"none of the CA environment variables -- a JVM, or "
-                            f"anything on rustls. For (2) there is no CA route to "
-                            f"fix: add {host} to [[network.splice]] "
-                            f"([[vm.network.splice]] for a VM) so the connection is "
-                            f"spliced rather than terminated, or change the image'")
+                 f"complete the handshake: {exc}. It did not trust the "
+                 f"leaf this workload minted, which has two shapes and "
+                 f"they need different remedies. (1) A client that COULD "
+                 f"be given the CA and was not: a workload provisioned "
+                 f"before it had one, or one whose CA bundle or CA "
+                 f"environment variables are absent or wrong -- "
+                 f"re-provision it. (2) A client that CANNOT be given it "
+                 f"at all because its trust store is embedded in the image "
+                 f"and it reads none of the CA environment variables -- a "
+                 f"JVM, or anything on rustls. For (2) there is no CA "
+                 f"route to fix: add {host} to the `splice` list "
+                 f"so the connection is spliced rather than terminated, or "
+                 f"change the image'")
         if upstream is not None:
             upstream.sock.close()
         return
@@ -424,8 +421,9 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
             insp.counters.record_drop(reason, host)
             insp.counters.record_bump()
             # THE MOST COMMON DENIAL ON THIS PLANE, and it never reaches
-            # inspect_http.serve_request: the decision was taken from the server name
-            # before the guest's handshake completed, so there is no
+            # inspect_http.serve_request: the decision was taken from the
+            # server name before the guest's handshake completed, so there
+            # is no
             # request to hang it on. Without this the record's terminated
             # plane holds every allowed request and no refused one.
             insp.connection_record(where, "terminate", host=host,
@@ -486,7 +484,7 @@ def _serve_h2(insp, tls_conn, where, host, upstream):
     """Relay one h2 session at the frame level, refusing what is not h2.
 
     THE POINT OF THE CHECK IS WHAT THE KEY MEANS. Without it
-    [[vm.network.http2]] names a byte relay -- no Host binding, no `paths`,
+    An `http2` entry names a byte relay -- no Host binding, no `paths`,
     no `methods`, and nothing establishing that the bytes are h2 at all --
     so a guest reaches a full policy opt-out on any host somebody listed
     for performance. With it the key means what it says: this host speaks
@@ -496,9 +494,9 @@ def _serve_h2(insp, tls_conn, where, host, upstream):
 
     NOTHING IS DECODED. The preface is checked, frame headers are counted,
     and every byte is passed through unaltered -- stream ids untouched, the
-    HPACK dynamic table end to end. §16's decoder is an increment on this,
-    not a rewrite of it, because frame-header parsing is the half of that
-    decoder which lands here.
+    HPACK dynamic table end to end. A decoder, when one comes, is an
+    increment on this, not a rewrite of it, because frame-header parsing is
+    the half of that decoder which lands here.
 
     THE REMEDY IS THE ONE THE NON-HTTP REFUSAL NAMES, deliberately, because
     it is the same situation one key along: a session this design cannot
@@ -512,7 +510,7 @@ def _serve_h2(insp, tls_conn, where, host, upstream):
     # assertion about frames and counters passes while it does, because
     # nothing in the exchange is wrong.
     # ONE RECORD FOR THE WHOLE SESSION, because nothing inside it is
-    # decoded -- that is what [[vm.network.http2]] means, and §11 names it
+    # decoded -- that is what the `http2` list means, and it is named
     # rather than letting the file be silent about a connection that
     # carried requests. `h2_unrecorded` beside it is the count a reader
     # needs before concluding a guest made no requests.
@@ -527,19 +525,19 @@ def _serve_h2(insp, tls_conn, where, host, upstream):
             insp.counters.record_drop(DROP_NOT_H2, host)
             rec.set(decision="drop", reason=DROP_NOT_H2)
             insp.log(f"drop {where} host={host} reason='not HTTP/2: the "
-                                f"connection preface never arrived ({exc}); drop the "
-                                f"[[vm.network.http2]] entry for {host}, or move it "
-                                f"to [[vm.network.splice]]'")
+                     f"connection preface never arrived ({exc}); drop "
+                     f"{host} from the `http2` list, or move it "
+                     f"to the splice list'")
             return
         if preface != H2_PREFACE:
             insp.counters.record_drop(DROP_NOT_H2, host)
             rec.set(decision="drop", reason=DROP_NOT_H2)
             insp.log(f"drop {where} host={host} reason='not HTTP/2: "
-                                f"{preface[:8]!r} is not the connection preface, and "
-                                f"{host} is in [[vm.network.http2]]. Either it does not "
-                                f"speak h2 -- drop the entry -- or it speaks something "
-                                f"this cannot police, and belongs in "
-                                f"[[vm.network.splice]] instead'")
+                     f"{preface[:8]!r} is not the connection preface, and "
+                     f"{host} is in the `http2` list. Either it "
+                     f"does not speak h2 -- drop the entry -- or it speaks "
+                     f"something this cannot police, and belongs in the "
+                     f"splice list instead'")
             return
         framing = H2Framing()
         # Everything the preface read pulled in past its own 24 bytes. It is
@@ -556,10 +554,11 @@ def _serve_h2(insp, tls_conn, where, host, upstream):
         try:
             upstream.sock.sendall(preface + surplus)
             # And anything the ORIGIN sent before we asked. On h2 a server
-            # opens with its own SETTINGS immediately, so the client-certificate
-            # probe in egress_upstream.early_bytes routinely catches it; stranded in
-            # that buffer it would stall the session rather than break it,
-            # which is the harder failure to read.
+            # opens with its own SETTINGS immediately, so the
+            # client-certificate probe in egress_upstream.early_bytes
+            # routinely catches it; stranded in that buffer it would stall
+            # the session rather than break it, which is the harder failure
+            # to read.
             early = upstream.take_buffered()
             if early:
                 tls_conn.sendall(early)
@@ -603,9 +602,9 @@ def _serve_h2(insp, tls_conn, where, host, upstream):
 def _drop_not_h2(insp, where, host, exc):
     insp.counters.record_drop(DROP_NOT_H2, host)
     insp.log(f"drop {where} host={host} reason='not HTTP/2: {exc}. "
-                        f"{host} is in [[vm.network.http2]] and this session did not "
-                        f"speak h2; drop the entry, or move the host to "
-                        f"[[vm.network.splice]]'")
+             f"{host} is in the `http2` list and this session did "
+             f"not speak h2; drop the entry, or move the host to the "
+             f"splice list'")
 
 
 def serve_terminated(insp, tls_conn, where, host, upstream):
@@ -656,19 +655,18 @@ def _is_http(insp, client, conn, where, host):
     speaks something other than HTTP over 443 stops working the moment a
     workload terminates, and nothing before the connection could have
     predicted it -- which is why the remedy is written into the line rather
-    than left for a doc. The remedy is a per-host [[vm.network.splice]]
-    entry (HLD §11 hatch 2): the host keeps end-to-end TLS while every
-    other name on the workload stays inspected. Whole-workload
-    `tls = "splice"` is hatch 3 and gives up far more than the one host
-    asked for.
+    than left for a doc. The remedy is a per-host `splice` entry: the host
+    keeps end-to-end TLS while every other name on the workload stays
+    inspected. Whole-workload `"tls": "splice"` gives up far more than the
+    one host asked for.
 
-    AND THE TWO REFUSALS ARE COUNTED APART. A host a [[vm.network.policy]]
-    entry names is the same wire failure with a different remedy: the
-    entry's `methods` and `paths` never ran and never can, so splicing the
-    host is only half of it -- the entry has to go too, because `validate`
+    AND THE TWO REFUSALS ARE COUNTED APART. A host a `policy` entry names
+    is the same wire failure with a different remedy: the entry's `methods`
+    and `paths` never ran and never can, so splicing the host is only half
+    of it -- the entry has to go too, because a writer that validates
     refuses a host that is in `splice` and `policy` both. Reporting one
     merged figure would leave that operator with a number they cannot act
-    on, and the split is the entire reason §11 asked for this counter.
+    on, and the split is the entire reason the counter exists.
     """
     conn.settimeout(egress_relay.CONNECTION_TIMEOUT)
     start = client.peek_start(
@@ -689,17 +687,16 @@ def _is_http(insp, client, conn, where, host):
         insp.log(
             f"drop {where} host={host} reason='not HTTP (policy entry): "
             f"this session was terminated and {start[:8]!r} does not begin "
-            f"a request line, so the [[vm.network.policy]] entry for "
-            f"{host} never ran and never will. Either the host does not "
-            f"belong in policy at all, or it needs a [[vm.network.splice]] "
-            f"entry AND that policy entry deleted -- validate refuses both "
-            f"on one host'")
+            f"a request line, so the `policy` entry for {host} never ran "
+            f"and never will. Either the host does not belong in `policy` "
+            f"at all, or it needs a `splice` entry AND that `policy` entry "
+            f"deleted -- a host cannot be in both'")
         return False
     insp.counters.record_drop(DROP_NOT_HTTP, host)
     insp.connection_record(where, "terminate", host=host,
                                       decision="drop", reason=DROP_NOT_HTTP)
     insp.log(f"drop {where} host={host} reason='not HTTP: this session "
-                        f"was terminated and {start[:8]!r} does not begin a request "
-                        f"line. Add {host} to [[vm.network.splice]] if it needs to "
-                        f"keep end-to-end TLS'")
+             f"was terminated and {start[:8]!r} does not begin a request "
+             f"line. Add {host} to the `splice` list if it needs "
+             f"to keep end-to-end TLS'")
     return False
