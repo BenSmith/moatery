@@ -60,8 +60,12 @@ below — present-tense reasons, no "used to be".
   control arms in measures nothing.
 - **Tracked files name hosts by role, never by name or LAN IP.** This
   repo may be published.
-- **Never push, publish, or open a PR without being asked.** Commit when
-  asked and stop; no unsolicited git-logistics commentary.
+- **Never push, publish, or open a PR without being asked.** Commit
+  freely and often; no unsolicited git-logistics commentary.
+- **A fix that goes to both trees is mirrored.** The workloadctl side
+  is committed on a new branch in the hypervisor repo, never its
+  `main`, with the same change and the same message; merging it there
+  is a separate decision.
 
 ## Commands
 
