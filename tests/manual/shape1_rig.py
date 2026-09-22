@@ -62,171 +62,38 @@ recipe here is what worked:
 import argparse
 import json
 import os
-import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-HERE = Path(__file__).resolve().parent
-CHECKOUT = HERE.parent.parent
-sys.path.insert(0, str(CHECKOUT / "lib"))
-
-from egress_ca import ca_cert_path, ca_key_path, ca_openssl_argv  # noqa
+import riglib  # noqa
+from riglib import (  # noqa
+    CA_BUNDLE_IN_CONTAINER, CHECKOUT, CREDENTIAL, IMAGE, INSPECT_CLEARTEXT,
+    INSPECT_TLS, LOOPBACK_MAP, NAME, PLACEHOLDER, PROVIDER, PROVIDER_ADDR,
+    RIG, STUB_CERT, UNLISTED, UNLISTED_ADDR, row, run, say,
+)
+from egress_ca import ca_cert_path  # noqa
 from egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
 
-NAME = "rig"
-PROVIDER = "provider.test"
-UNLISTED = "unlisted.test"
-CREDENTIAL = "example"
-PLACEHOLDER = "sk-placeholder"
-# TEST-NET addresses: the container has to resolve both names to something
-# that is not its own loopback, or `oif lo accept` admits the dial and the
-# redirect never sees it. Neither address is ever reached: the DNAT rewrites
-# the destination before routing, and the inspector keys on the SNI.
-PROVIDER_ADDR = "203.0.113.1"
-UNLISTED_ADDR = "203.0.113.2"
-# What the container dials to reach the host's 127.0.0.1. pasta maps it;
-# nothing else on the host's loopback is reachable from inside by any name.
-LOOPBACK_MAP = "169.254.1.3"
 BROKER_ADDR = "127.129.0.1"
 BROKER_PORT = 8081
-INSPECT_TLS, INSPECT_CLEARTEXT = 8443, 8080
-PROVIDER_PORT = 443
-IMAGE = "registry.fedoraproject.org/fedora:44"
 CONTAINER = "customs-rig"
 UNIT = "customs-rig"
-HOSTS_MARK = "# customs-shape1-rig, removed at teardown"
-SYSCTL = "net.ipv4.ip_unprivileged_port_start"
-CA_BUNDLE_IN_CONTAINER = "/usr/local/share/ca-certificates/customs.crt"
-# Where the host keeps its own trust store, first one found.
-SYSTEM_BUNDLES = ("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
-                  "/etc/pki/tls/certs/ca-bundle.crt",
-                  "/etc/ssl/certs/ca-certificates.crt")
+HOSTS_MARK = "customs-shape1-rig"
 
-HOME = Path.home()
-RIG = HOME / ".local" / "state" / "customs-rig"
-UNITS = HOME / ".config" / "systemd" / "user"
+UNITS = riglib.HOME / ".config" / "systemd" / "user"
 STATE = RIG / "state"
 POLICY = RIG / "inspect.json"
 STATUS = RIG / "inspect-status.json"
 RECORD = RIG / "egress.jsonl"
 BUNDLE = RIG / "bundle.pem"
-STUB_CERT, STUB_KEY = RIG / "stub-cert.pem", RIG / "stub-key.pem"
 CRED = RIG / f"{CREDENTIAL}.cred"
 
-results = []
-children = []
-hosts_line_written = False
-sysctl_before = None
 
-
-def say(msg):
-    print(msg, flush=True)
-
-
-def run(argv, *, check=True, timeout=60, **kw):
-    kw.setdefault("capture_output", True)
-    kw.setdefault("text", True)
-    return subprocess.run(argv, check=check, timeout=timeout, **kw)
-
-
-def sudo(argv, **kw):
-    return run(["sudo", "-n", *argv], **kw)
-
-
-def row(label, ok, detail):
-    results.append((label, ok, detail))
-    say(f"  [{'ok' if ok else 'FAIL'}] {label}: {detail}")
-
-
-# --- preflight ---------------------------------------------------------------
-
-def preflight():
-    for tool in ("podman", "pasta", "nft", "openssl", "curl", "ss",
-                 "systemctl", "systemd-creds", "nsenter"):
-        if shutil.which(tool) is None:
-            sys.exit(f"{tool} not found")
-    if os.getuid() == 0:
-        sys.exit("run this as the user, not root: the shape under test is "
-                 "the one with no root in it")
-    if sudo(["true"], check=False).returncode != 0:
-        sys.exit("needs passwordless sudo for /etc/hosts and one sysctl")
-    state = run(["systemctl", "--user", "is-system-running"],
-                check=False).stdout.strip()
-    if state not in ("running", "degraded"):
-        sys.exit(f"user manager is {state or 'absent'}; log in with a "
-                 "session (ssh is one)")
-    for port in (INSPECT_TLS, INSPECT_CLEARTEXT, BROKER_PORT,
-                 PROVIDER_PORT):
-        held = run(["ss", "-lntH", f"sport = :{port}"], check=False).stdout
-        if held.strip():
-            sys.exit(f"something already listens on :{port}:\n{held}")
-
-
-# --- material ----------------------------------------------------------------
-
-def mint_ca():
-    """The per-workload CA, once. Under workloadctl `workload-vm-inspect up`
-    does this before the socket is ever activated; here the operator does,
-    with the same openssl argv, and there is no second copy of the argv."""
-    key, cert = ca_key_path(STATE), ca_cert_path(STATE)
-    if key.exists() and cert.exists():
-        say(f"  CA present: {cert}")
-        return
-    key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    run(ca_openssl_argv(NAME, key, cert, now=time.time()))
-    say(f"  CA minted: {cert}")
-
-
-def write_bundle():
-    """The CA over the system store. The five variables REPLACE a client's
-    trust store, so a bundle without the system CAs breaks every host the
-    policy splices."""
-    system = next((Path(p) for p in SYSTEM_BUNDLES if Path(p).exists()),
-                  None)
-    if system is None:
-        sys.exit("no system CA bundle found at any of "
-                 + ", ".join(SYSTEM_BUNDLES))
-    BUNDLE.write_text(ca_cert_path(STATE).read_text() + system.read_text())
-    BUNDLE.chmod(0o644)
-
-
-def make_stub_cert():
-    """A self-signed CA-and-leaf for the stub, valid two days. Both programs
-    verify their upstream with no way to skip it, so the stub needs a
-    certificate that passes VERIFY_X509_STRICT: basicConstraints and
-    keyUsage are what Python 3.13+ demands of a trust anchor."""
-    if STUB_CERT.exists() and STUB_KEY.exists():
-        fresh = run(["openssl", "x509", "-checkend", "3600", "-noout",
-                     "-in", str(STUB_CERT)], check=False)
-        if fresh.returncode == 0:
-            return
-        say("  stub certificate expired — regenerating")
-    run(["openssl", "req", "-x509", "-newkey", "ec",
-         "-pkeyopt", "ec_paramgen_curve:P-256", "-noenc",
-         "-keyout", str(STUB_KEY), "-out", str(STUB_CERT), "-days", "2",
-         "-subj", f"/CN={PROVIDER}",
-         "-addext", f"subjectAltName=DNS:{PROVIDER}",
-         "-addext", "basicConstraints=critical,CA:TRUE",
-         "-addext", "keyUsage=critical,keyCertSign,digitalSignature"])
-    STUB_CERT.chmod(0o644)
-    say(f"  stub certificate for {PROVIDER}: {STUB_CERT}")
-
-
-def write_policy():
-    POLICY.write_text(json.dumps({
-        "tls": "inspect",
-        "hosts": [PROVIDER],
-        "internal": [],
-        "splice": [],
-        "http2": [],
-        "policy": [{"host": PROVIDER, "methods": None, "paths": None,
-                    "credential": CREDENTIAL}],
-    }, indent=2) + "\n")
-
+# --- the host side: units ----------------------------------------------------
 
 def seal_credential(secret):
     """`systemd-creds --user encrypt`: sealed to this user on this host,
@@ -234,59 +101,6 @@ def seal_credential(secret):
     run(["systemd-creds", "--user", "encrypt", f"--name={CREDENTIAL}",
          "-", str(CRED)], input=secret + "\n")
     CRED.chmod(0o600)
-
-
-# --- the host side: stub, name, units ----------------------------------------
-
-def lower_privileged_ports():
-    global sysctl_before
-    sysctl_before = run(["sysctl", "-n", SYSCTL]).stdout.strip()
-    if int(sysctl_before) > PROVIDER_PORT:
-        sudo(["sysctl", "-q", "-w", f"{SYSCTL}={PROVIDER_PORT}"])
-        say(f"  {SYSCTL}: {sysctl_before} -> {PROVIDER_PORT}")
-
-
-def restore_privileged_ports():
-    if sysctl_before is not None and int(sysctl_before) > PROVIDER_PORT:
-        sudo(["sysctl", "-q", "-w", f"{SYSCTL}={sysctl_before}"],
-             check=False)
-        say(f"  {SYSCTL}: restored to {sysctl_before}")
-
-
-def write_hosts_entry():
-    """For the two host-side dials only: the broker resolves its upstream
-    itself, and the inspector dials the origin over verified TLS before it
-    reads the request even on a host it will send to the broker. The
-    container never consults this file; it has --add-host."""
-    global hosts_line_written
-    sudo(["sh", "-c", f"printf '%s\\n' '127.0.0.1 {PROVIDER} {HOSTS_MARK}'"
-                      " >> /etc/hosts"])
-    hosts_line_written = True
-
-
-def remove_hosts_entry():
-    if hosts_line_written:
-        sudo(["sed", "-i", "/customs-shape1-rig/d", "/etc/hosts"],
-             check=False)
-
-
-def start_stub(secret):
-    log = open(RIG / "stub.log", "w")
-    stub = subprocess.Popen(
-        [sys.executable, str(HERE / "stub_provider.py"), str(PROVIDER_PORT),
-         str(STUB_CERT), str(STUB_KEY)],
-        stdout=log, stderr=log, env={**os.environ, "STUB_SECRET": secret})
-    children.append(stub)
-    for _ in range(50):
-        if stub.poll() is not None:
-            sys.exit("stub provider died:\n"
-                     + (RIG / "stub.log").read_text()[-2000:])
-        held = run(["ss", "-lntpH", f"sport = :{PROVIDER_PORT}"]).stdout
-        if f"pid={stub.pid}," in held:
-            say(f"  stub provider on :{PROVIDER_PORT} (pid {stub.pid})")
-            return
-        time.sleep(0.2)
-    sys.exit("stub provider never listened")
 
 
 def write_units():
@@ -445,21 +259,7 @@ def curl_in(url, *extra, timeout=15):
 def records():
     if not RECORD.exists():
         return []
-    return [json.loads(ln) for ln in RECORD.read_text().splitlines() if ln]
-
-
-def await_status(after):
-    """The inspector writes its counters every 30 s; wait for a write that
-    postdates the probes rather than reading the one from start-up."""
-    for _ in range(40 * 5):
-        try:
-            body = json.loads(STATUS.read_text())
-            if body.get("written_at", 0) > after:
-                return body
-        except (OSError, ValueError):
-            pass
-        time.sleep(0.2)
-    return None
+    return riglib.parse_records(RECORD.read_text())
 
 
 def probe(pid, secret):
@@ -539,22 +339,10 @@ def probe(pid, secret):
     row("unlisted: the record says dropped, 'not allowlisted', no upstream",
         hit is not None, f"{hit}" if hit else f"records: {dropped}")
 
-    say("no key")
-    r = run(["curl", "-s", "--max-time", "10", "--cacert", str(STUB_CERT),
-             "-o", "/dev/null", "-w", "%{http_code}",
-             "-H", f"Authorization: Bearer {PLACEHOLDER}",
-             f"https://{PROVIDER}/v1/probe"], check=False)
-    row("no key: the origin gives the placeholder 401",
-        r.stdout.strip() == "401", f"http={r.stdout.strip()!r}")
-    r = run(["curl", "-s", "--max-time", "10", "--cacert", str(STUB_CERT),
-             "-o", "/dev/null", "-w", "%{http_code}",
-             "-H", f"Authorization: Bearer {secret}",
-             f"https://{PROVIDER}/v1/probe"], check=False)
-    row("no key (control): the origin gives the real key 200",
-        r.stdout.strip() == "200", f"http={r.stdout.strip()!r}")
+    riglib.origin_rows(secret)
 
     say("counters (waiting for the inspector's next status write)")
-    status = await_status(after=probe_started)
+    status = riglib.await_status(STATUS.read_text, after=probe_started)
     if status is None:
         row("counters: the inspector wrote its status", False,
             f"{STATUS} not updated within 40 s")
@@ -574,14 +362,9 @@ def teardown(keep):
     if not keep:
         run(["podman", "rm", "-f", CONTAINER], check=False)
     stop_units()
-    for child in children:
-        child.terminate()
-        try:
-            child.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            child.kill()
-    restore_privileged_ports()
-    remove_hosts_entry()
+    riglib.stop_children()
+    riglib.restore_privileged_ports()
+    riglib.remove_hosts_entry()
 
 
 # --- main --------------------------------------------------------------------
@@ -599,23 +382,31 @@ def main():
                          "go red")
     args = ap.parse_args()
 
-    preflight()
+    riglib.preflight(
+        ("podman", "pasta", "nft", "openssl", "curl", "ss", "systemctl",
+         "systemd-creds", "nsenter"),
+        (INSPECT_TLS, INSPECT_CLEARTEXT, BROKER_PORT, riglib.PROVIDER_PORT))
+    state = run(["systemctl", "--user", "is-system-running"],
+                check=False).stdout.strip()
+    if state not in ("running", "degraded"):
+        sys.exit(f"user manager is {state or 'absent'}; log in with a "
+                 "session (ssh is one)")
     RIG.mkdir(parents=True, exist_ok=True)
     for stale in (STATUS, RECORD, Path(f"{STATUS}.tmp")):
         stale.unlink(missing_ok=True)
     secret = "sk-real-" + os.urandom(12).hex()
 
     say("material")
-    mint_ca()
-    write_bundle()
-    make_stub_cert()
-    write_policy()
+    riglib.mint_ca(STATE)
+    riglib.write_bundle(ca_cert_path(STATE).read_text(), BUNDLE)
+    riglib.make_stub_cert()
+    riglib.write_policy(POLICY)
     seal_credential(secret)
     try:
         say("host side")
-        lower_privileged_ports()
-        write_hosts_entry()
-        start_stub(secret)
+        riglib.lower_privileged_ports()
+        riglib.write_hosts_entry(HOSTS_MARK)
+        riglib.start_stub(secret)
         write_units()
         start_units()
         say("container")
@@ -630,16 +421,13 @@ def main():
     finally:
         teardown(args.keep)
 
-    failed = [r for r in results if not r[1]]
-    say(f"\n{len(results) - len(failed)}/{len(results)} rows green")
-    if args.without_rules:
-        say("(--without-rules: premise and request are expected red)")
-    for label, _, detail in failed:
-        say(f"  FAIL {label}: {detail}")
-    if failed:
+    rc = riglib.report(
+        "--without-rules: premise and request are expected red"
+        if args.without_rules else None)
+    if rc:
         say(f"journal: journalctl --user -u {UNIT}-inspect.service"
             f" -u {UNIT}-broker.service -b")
-    return 1 if failed else 0
+    return rc
 
 
 if __name__ == "__main__":

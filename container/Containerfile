@@ -1,0 +1,27 @@
+# The sidecar image: both programs, lib/ beside them, and customs-sidecar
+# as the entrypoint. Build from the checkout root:
+#
+#   podman build -t customs-sidecar -f container/Containerfile .
+#
+# Two users, one group. The inspector (uid 200) parses what the workload
+# sends and owns the state volume; the broker (uid 201) holds the key and
+# owns the socket directory; the group is how the inspector reaches the
+# socket and nothing else of the broker's. The numbers are fixed so that
+# `--secret ...,uid=201` and the pod's `meta skuid` rules can name them.
+
+FROM registry.fedoraproject.org/fedora-minimal:44
+
+RUN dnf -y --setopt=install_weak_deps=False install \
+        python3 openssl shadow-utils \
+    && dnf clean all \
+    && groupadd -r -g 200 customs \
+    && useradd -r -u 200 -g customs -d /var/lib/customs -M \
+        -s /usr/sbin/nologin inspect \
+    && useradd -r -u 201 -g customs -d /nonexistent -M \
+        -s /usr/sbin/nologin broker \
+    && mkdir -p /etc/customs /var/lib/customs
+
+COPY lib/ libexec/ container/customs-sidecar /usr/libexec/customs/
+
+VOLUME /var/lib/customs
+ENTRYPOINT ["/usr/libexec/customs/customs-sidecar"]

@@ -897,6 +897,24 @@ class TestTheBrokerLegOverASocketPath(unittest.TestCase):
             upstream.dial_broker("api.example")
         self.assertIn("without a broker endpoint", str(caught.exception))
 
+    def test_the_record_names_the_path_the_request_went_to(self):
+        """`upstream` is the other half of the join; a request that went
+        to the broker over a path and recorded null would read as never
+        forwarded. Spelled as the flag spells it."""
+        path = self._path()
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(srv.close)
+        srv.bind(path)
+        srv.listen(1)
+        stream = egress_upstream.Upstream(
+            broker_endpoint=path).dial_broker("api.example")
+        self.addCleanup(stream.sock.close)
+        record = egress_record.Record(
+            egress_record.RequestLog(None),
+            egress_record.Where("t", cid="c0", plane="tls"), "terminate")
+        record.dialled(stream.sock)
+        self.assertEqual(record.fields["upstream"], f"unix:{path}")
+
 
 class TestEntrypointWiring(unittest.TestCase):
     """main() past the argv check, with a real Listener and no sockets.

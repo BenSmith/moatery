@@ -367,12 +367,17 @@ class Record:
         """
         try:
             peer = sock.getpeername()
+            if isinstance(peer, str) and peer:
+                # A path socket: the broker's, dialled AF_UNIX. Spelled as the
+                # flag spells it, so the record and the unit line agree.
+                self.set(upstream=f"unix:{peer}")
+                return
             if not isinstance(peer, (tuple, list)) or len(peer) < 2:
-                # A unix socket, or anything that is not an address pair. The
-                # shape is checked rather than assumed because THE DIAGNOSTIC
-                # MAY NOT KILL THE REQUEST -- the standing rule for every
-                # diagnostic in the listener, and the except below is as wide
-                # as that claim for the same reason.
+                # An unnamed socket, or anything else that is not an address
+                # pair. The shape is checked rather than assumed because THE
+                # DIAGNOSTIC MAY NOT KILL THE REQUEST -- the standing rule
+                # for every diagnostic in the listener, and the except below
+                # is as wide as that claim for the same reason.
                 return
             self.set(upstream=format_endpoint(peer))
         except Exception:

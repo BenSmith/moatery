@@ -127,6 +127,19 @@ probes plus one more — from the workload container, `connect()` to the
 broker's socket path (must be ENOENT, not ECONNREFUSED). Expect the
 substrate's seam defect; every substrate so far has had one.
 
+Done 2026-09-22, in two commits: the three flags (each with a wiring
+test broken on purpose), then `container/` and
+`tests/manual/shape1b_rig.py`, 18 rows green and red without the rules.
+The seam defect was the pair's: `peer_identity.userns_ranges` read the
+outside column of `uid_map`, which every earlier layout had equal to the
+inside one; a rootless container does not, and the broker refused its
+own uid. Fixed here and mirrored to workloadctl on a branch. Two more
+findings in the pair: SO_PEERCRED on a TCP socket answers uid -1 rather
+than failing, and the record's `upstream` was null for a path socket;
+both fixed in the flags commit. `systemd-socket-activate` is not used:
+the entrypoint binds as root and hands the fds down, then drops uid.
+The rigs now share `tests/manual/riglib.py`.
+
 ## 5. Decide copy versus dependency
 
 After step 4, not before. Steps 1 and 4 will have shown how many fixes

@@ -1,0 +1,262 @@
+#!/usr/bin/python3
+"""
+customs-sidecar: the entrypoint of the sidecar image. It is the unit file
+for both programs, written as the one process a container starts with.
+
+The image carries customs-broker and customs-inspect side by side with
+lib/. This process, as the container's root, does what the two units and
+the socket unit do on a host, and nothing the programs do themselves:
+
+  - binds the inspector's two planes on the pod's loopback and hands them
+    down as inherited fds, LISTEN_PID/LISTEN_FDS style. The inspector
+    never binds; here the bind is root's, before any privilege is dropped,
+    which is the same property the socket unit holds on a host.
+  - starts the broker as its own uid, listening on a socket path under
+    /run/customs that the workload container has no mount for. The
+    broker's caller is the inspector's uid, and no other.
+  - mints the egress CA into the state volume on the first start, so the
+    workload's trust bundle can be built from it, and hands the volume to
+    the inspector's uid.
+  - drops to the inspector's uid and execs the inspector, told the
+    workload's uid so that it serves the one caller the pod's rules
+    redirect into it.
+
+Two uids in one container is the privilege boundary: the inspector parses
+what the workload sends and holds no key; the broker holds the key and
+parses only what the inspector forwards. Dropping to a uid clears every
+capability, so no DAC_OVERRIDE bridges them.
+
+EVERYTHING ELSE IS TOLD. The two flags this takes are the two facts the
+image cannot know -- the workload's label and its uid -- and every flag
+after them is the broker's, passed through untouched: which hosts, which
+credential ids, which placeholders. The credential material is mounted at
+/run/secrets by whoever runs the container, which is the pod's
+LoadCredentialEncrypted=.
+
+Usage:
+  customs-sidecar --name NAME --caller-uid UID [BROKER FLAGS...]
+
+  podman run --pod POD --init \\
+      --cap-drop all --cap-add chown,dac_override,setgid,setuid \\
+      -v policy.json:/etc/customs/policy.json:ro,Z \\
+      -v customs-state:/var/lib/customs:Z \\
+      --secret KEY,target=CRED,uid=201,mode=0400 \\
+      IMAGE --name NAME --caller-uid UID --host HOST=CRED ...
+
+The four capabilities are this process's, for the chown, the mint into a
+directory it then hands over, and the two drops; setuid() clears them
+all, so neither program holds one. Under --init the broker is reaped if
+it dies; the inspector's brokered dials then fail legibly at the socket.
+Nothing here restarts it: a container is restarted whole.
+"""
+
+import argparse
+import grp
+import os
+import pwd
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+
+from egress_ca import ca_cert_path, ca_key_path, ca_openssl_argv
+from egress_plane import CLEARTEXT, TLS
+
+HERE = Path(__file__).resolve().parent
+BROKER = HERE / "customs-broker"
+INSPECTOR = HERE / "customs-inspect"
+
+INSPECT_USER = "inspect"
+BROKER_USER = "broker"
+GROUP = "customs"
+
+POLICY = "/etc/customs/policy.json"
+STATE = "/var/lib/customs"
+STATUS = f"{STATE}/status.json"
+RECORD = f"{STATE}/egress.jsonl"
+RUN_DIR = "/run/customs"
+SOCKET = f"{RUN_DIR}/broker.sock"
+SECRETS = "/run/secrets"
+
+LOOPBACK = "127.0.0.1"
+PLANES = (TLS.inspect_port, CLEARTEXT.inspect_port)
+# The first inherited fd, by the activation convention the inspector reads.
+LISTEN_FDS_START = 3
+
+# How long the broker gets to put its socket at the path before the
+# inspector is started; past it the container fails rather than serving a
+# workload whose brokered requests all 502.
+BROKER_START_TIMEOUT = 10.0
+
+
+def parse_args(argv):
+    """The two facts the image cannot know, and the broker's flags after.
+
+    parse_known_args so the broker's vocabulary is not repeated here: a
+    flag the broker grows is passed through without this file changing.
+    The broker's own --listen and --caller-uid are this file's to set and
+    are refused if given, since a second --listen would win the parser and
+    put the broker on an address the pod can reach.
+    """
+    p = argparse.ArgumentParser(
+        prog="customs-sidecar",
+        description="the pair, as a pod sidecar")
+    p.add_argument("--name", required=True,
+                   help="the workload's label, for both programs")
+    p.add_argument("--caller-uid", required=True, type=int, metavar="UID",
+                   help="the workload's uid in the pod: the one caller the "
+                        "inspector serves")
+    args, broker_flags = p.parse_known_args(argv[1:])
+    for flag in ("--listen", "--caller-uid", "--name"):
+        if any(f == flag or f.startswith(flag + "=") for f in broker_flags):
+            p.error(f"{flag} is this entrypoint's to set, not the broker's")
+    if not broker_flags:
+        p.error("the broker's flags follow: at least one --host HOST=CRED")
+    return args, broker_flags
+
+
+def broker_argv(name, flags):
+    return [sys.executable, str(BROKER), "--name", name,
+            "--listen", f"unix:{SOCKET}",
+            "--caller-uid", str(pwd.getpwnam(INSPECT_USER).pw_uid),
+            *flags]
+
+
+def inspector_argv(name, caller_uid):
+    return [sys.executable, str(INSPECTOR), "--name", name,
+            "--policy", POLICY, "--state-dir", STATE,
+            "--status", STATUS, "--record", RECORD,
+            "--broker", f"unix:{SOCKET}",
+            "--caller-uid", str(caller_uid)]
+
+
+def bind_planes():
+    """The two listeners, bound here as root and handed down as fds 3 and
+    4. Non-blocking is not set: the inspector's accept loop selects on
+    them and expects a blocking accept."""
+    sockets = []
+    for port in PLANES:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((LOOPBACK, port))
+        s.listen(128)
+        sockets.append(s)
+    return sockets
+
+
+def prepare_dirs(inspect, broker, group):
+    """The run directory for the socket and the state volume for the CA
+    and the caches, each owned by the uid that writes there. The socket
+    directory is the broker's and the inspector traverses it by group,
+    which is how a path can be dialled but not created or removed by the
+    side that parses the workload's bytes."""
+    for path, owner in ((Path(RUN_DIR), broker), (Path(STATE), inspect)):
+        path.mkdir(mode=0o750, exist_ok=True)
+        # chmod before chown: once the directory is another uid's, chmod
+        # needs CAP_FOWNER, which the container need not hold.
+        path.chmod(0o750)
+        os.chown(path, owner.pw_uid, group.gr_gid)
+
+
+def mint_ca(name, inspect, group):
+    """Once, into the volume, on the first start. The inspector refuses to
+    start under a policy that inspects with no CA to mint from, and a
+    volume that starts empty is the ordinary first run."""
+    key, cert = ca_key_path(STATE), ca_cert_path(STATE)
+    if key.exists() and cert.exists():
+        return False
+    key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    subprocess.run(ca_openssl_argv(name, key, cert, now=time.time()),
+                   check=True, capture_output=True)
+    for path in (key.parent, key, cert):
+        os.chown(path, inspect.pw_uid, group.gr_gid)
+    return True
+
+
+def become(user, group):
+    """Drop to `user`, with `group` as the primary group and nothing
+    supplementary. Order matters: groups first, while still root."""
+    os.setgroups([])
+    os.setgid(group.gr_gid)
+    os.setuid(user.pw_uid)
+
+
+def start_broker(name, flags, broker, group, sockets):
+    """Fork the broker as its uid. The child closes the planes before it
+    execs: they are the inspector's, and a broker holding them open would
+    keep the ports bound after the inspector went away."""
+    pid = os.fork()
+    if pid == 0:
+        try:
+            for s in sockets:
+                s.close()
+            become(broker, group)
+            env = {**os.environ, "CREDENTIALS_DIRECTORY": SECRETS}
+            os.execve(sys.executable, broker_argv(name, flags), env)
+        finally:
+            os._exit(127)
+    return pid
+
+
+def await_socket(pid):
+    """The broker's socket at its path, or its exit status if it died."""
+    deadline = time.monotonic() + BROKER_START_TIMEOUT
+    while time.monotonic() < deadline:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return False, os.waitstatus_to_exitcode(status)
+        if Path(SOCKET).is_socket():
+            return True, None
+        time.sleep(0.05)
+    return False, None
+
+
+def exec_inspector(name, caller_uid, inspect, group, sockets):
+    """Replace this process with the inspector: fds moved to 3.., made
+    inheritable, LISTEN_PID naming this pid, which exec keeps."""
+    for i, s in enumerate(sockets):
+        fd = LISTEN_FDS_START + i
+        if s.fileno() != fd:
+            os.dup2(s.fileno(), fd)
+        os.set_inheritable(fd, True)
+    become(inspect, group)
+    env = {**os.environ, "LISTEN_PID": str(os.getpid()),
+           "LISTEN_FDS": str(len(sockets))}
+    os.execve(sys.executable, inspector_argv(name, caller_uid), env)
+
+
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
+    args, broker_flags = parse_args(argv)
+    if os.getuid() != 0:
+        sys.exit("customs-sidecar starts as the container's root and drops "
+                 "to the image's two users; run the container as root")
+    try:
+        inspect = pwd.getpwnam(INSPECT_USER)
+        broker = pwd.getpwnam(BROKER_USER)
+        group = grp.getgrnam(GROUP)
+    except KeyError as exc:
+        sys.exit(f"the image lacks its user: {exc}")
+    if not Path(POLICY).exists():
+        sys.exit(f"no policy at {POLICY}; mount one (ro)")
+
+    prepare_dirs(inspect, broker, group)
+    if mint_ca(args.name, inspect, group):
+        print(f"egress CA minted into {STATE}", file=sys.stderr, flush=True)
+    sockets = bind_planes()
+    pid = start_broker(args.name, broker_flags, broker, group, sockets)
+    up, status = await_socket(pid)
+    if not up:
+        if status is None:
+            sys.exit(f"the broker did not listen at {SOCKET} within "
+                     f"{BROKER_START_TIMEOUT:.0f}s")
+        sys.exit(f"the broker exited with status {status} before "
+                 "listening; its reason is above")
+    exec_inspector(args.name, args.caller_uid, inspect, group, sockets)
+
+
+if __name__ == "__main__":
+    main()

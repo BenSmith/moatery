@@ -48,6 +48,11 @@ a working filter. A drop presents as `EPERM` or a timeout.
 the control it is about, and the rows that depend on it must fail under
 that flag. A rig that has only ever passed has not been shown to measure.
 
+`riglib.py` is the fixture both rigs share: the provider and unlisted
+names on TEST-NET, the stub, the CA and bundle, the policy, the two sudo
+facts and their teardown, and the rows every shape has (the origin's 401
+and 200). A rig owns its shape and its rows.
+
 ## shape1_rig.py — the pair with nothing but a normal user
 
 `docs/DESIGN.md` shape 1: one rootless podman container under pasta,
@@ -108,3 +113,56 @@ puts them side by side); and nothing here mints the CA — under workloadctl
 `SO_ORIGINAL_DST` on a host socket whose DNAT happened a namespace away
 falls back to `getsockname()` cleanly: `caller_unresolved` is 0 and the
 caller check admitted every connection as the user's.
+
+## shape1b_rig.py — the pair as a sidecar, with no host install
+
+`docs/DESIGN.md` shape 1b: a podman pod under pasta, the sidecar image
+(`container/`: both programs, one container, two uids) beside a workload
+container running as a third uid with no capabilities, the nft rules in
+the pod's netns keyed on `meta skuid`, the broker on a socket path under
+the sidecar's own `/run`, the key as a podman secret, and one real request
+that reaches the provider carrying it.
+
+```bash
+python3 tests/manual/shape1b_rig.py                  # 18 rows; builds the image
+python3 tests/manual/shape1b_rig.py --without-rules  # must go red
+python3 tests/manual/shape1b_rig.py --no-build       # reuse the last image
+```
+
+The image is built from the checkout on each run; the state volume and
+the secret are removed at teardown, so the CA is the sidecar's and is
+minted afresh each run. `--keep` leaves the pod, the volume and the
+secret.
+
+**Rows.** Premise (the workload holds neither `CAP_NET_ADMIN` nor
+`CAP_SETUID`; the table is in the pod's netns; `podman top` shows the two
+programs as the two image users). The request (200; the real key arrived;
+the workload's environment holds the placeholder only; the broker's log
+grew by one; the record says `forward` under the credential with
+`upstream` naming the socket path). The broker's path is ENOENT from the
+workload -- `stat` says "No such file or directory", which curl alone
+cannot distinguish from a refusal -- and nothing but the two planes
+listens on TCP in the pod, so there is no address to spell; its log did
+not grow. An unlisted host gets the 403 and the record. The origin's two
+rows. The counters name every caller and dropped none as foreign, with
+the workload being another uid.
+
+**What it found, first run, 2026-09-22.** One defect in the pair, the
+seam kind: `peer_identity.userns_ranges` read the *outside* column of
+`/proc/self/uid_map`. The uid the broker is told and the uids the kernel
+reports to it are both inside values, and every layout the pair had run
+under -- the initial namespace, `PrivateUsers=` -- had the two columns
+equal, so the check passed everywhere it was tried and refused every uid
+the first rootless broker had ("this user namespace cannot represent uid
+200"). Fixed to the inside column; a unit test with a rootless map now
+holds it, and the same check runs in the inspector under `--caller-uid`.
+
+Two facts for the design, both now in `DESIGN.md`: nothing in the sidecar
+needs `systemd-socket-activate` -- the entrypoint binds the planes as
+root and hands them down as fds 3 and 4 with `LISTEN_PID`/`LISTEN_FDS`
+set, then drops to the inspector's uid and execs, which is the socket
+unit's property (the bind is not the inspector's) by a different route;
+and the entrypoint needs exactly `chown,dac_override,setgid,setuid` on
+top of `--cap-drop all`, all of which `setuid()` clears before either
+program runs. `SO_ORIGINAL_DST` answers in the pod rather than falling
+back, since the DNAT is in the same netns: `caller_unresolved` is 0.

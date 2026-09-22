@@ -40,8 +40,17 @@ The prose is renamed: nothing under `lib/` or `libexec/` says
 "workloadctl", cites its docs, or narrates history. Module names and
 every identifier workloadctl imports are unchanged (`docs/PLAN.md` lists
 the boundary). "Guest" and "workload" remain as the words for the thing
-behind the inspector. Diffing against workloadctl is now a diff of prose
-plus the two entrypoints' names; code lines are the same.
+behind the inspector. Diffing against workloadctl is a diff of prose,
+the two entrypoints' names, and what step 4 of the plan added: the
+broker's `--listen unix:PATH` (`UnixServer`, `peer_uid_unix`), the
+inspector's `--broker unix:PATH` and `--caller-uid`, the record naming a
+unix upstream, and the `userns_ranges` column fix (mirrored to
+workloadctl on a branch; the flags are customs-only until the
+copy-vs-dependency decision).
+
+`container/` is the shape-1b sidecar image: `Containerfile` and
+`customs-sidecar`, the entrypoint that is the unit file as a process.
+It is customs-only and has no workloadctl counterpart.
 
 ## Conventions carried over from workloadctl
 
@@ -72,10 +81,11 @@ plus the two entrypoints' names; code lines are the same.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 545)
+just test     # all unit tests (unittest discover; 554)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user
+python3 tests/manual/shape1b_rig.py         # same; builds container/ first
 ```
 
 `tests/__init__.py` puts `lib/` on `sys.path`; test modules import as

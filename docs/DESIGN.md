@@ -162,12 +162,17 @@ Two things the host-side placement got for free have to be handled again:
    broker as a third container in the pod behind a `skuid`-keyed rule;
    the broker on the host, listening on an AF_UNIX socket bind-mounted
    into the sidecar alone; or the broker inside the same sidecar
-   container as the inspector, which is the one to take and is described
+   container as the inspector, which is the one taken and is described
    next. The two AF_UNIX placements share an advantage: `SO_PEERCRED` is
    a stronger caller check than `/proc/net/tcp`, and the workload has no
-   path to a socket it was never given. Either costs the broker a
-   `--listen unix:PATH` it does not have today, and the inspector the
-   matching `--broker`.
+   path to a socket it was never given. Both use the broker's
+   `--listen unix:PATH` and the inspector's matching `--broker unix:PATH`.
+
+There is a third thing, which the host placement also got for free: the
+inspector serves connections from its own uid, and here the workload is
+another uid *by design*. The inspector's `--caller-uid`, mirroring the
+broker's, names it; without the flag every connection is dropped as
+foreign.
 
 **Both programs in one sidecar container.** The pod shares the network
 namespace, not the mount namespace, so the broker can listen on a
@@ -180,21 +185,75 @@ one.) This is the "unmapped address" property back by a different
 mechanism, without a second image or a host install.
 
 The privilege boundary between the two programs survives inside one
-container as two uids: the broker as uid B owning the key file `0400` and
-the socket `0660` under a shared group, the inspector as uid A,
-`--cap-drop all` so no `DAC_OVERRIDE` bridges them. The inspector is the
-exposed surface (it parses workload-controlled ClientHellos and HTTP/1
-and /2 framing); the broker holds the key; the socket hop is the line.
+container as two uids: the broker as uid 201 owning the key file `0400`
+and the socket `0660` under the shared group 200, the inspector as uid
+200. The inspector is the exposed surface (it parses workload-controlled
+ClientHellos and HTTP/1 and /2 framing); the broker holds the key; the
+socket hop is the line. `setuid()` clears every capability, so no
+`DAC_OVERRIDE` bridges them whatever the container was started with.
 
-The programs need only the `--listen unix:PATH` / `--broker` pair above.
-The rest is packaging: `podman run --secret` mounts the key at
-`/run/secrets/NAME`, and `CREDENTIALS_DIRECTORY=/run/secrets` lets the
-broker's existing loader find it; `systemd-socket-activate -l
-127.0.0.1:8443 -l 127.0.0.1:8080 customs-inspect …` sets `LISTEN_FDS`
-without systemd; an entrypoint starts the broker as B and execs the
-activator as A. The netns rules exempt both uids from the redirect (the
-broker's upstream dials leave through the same netns), and the workload
-container holds no `CAP_SETUID`.
+The image is `container/Containerfile`, built from the checkout root, and
+its entrypoint `container/customs-sidecar` is the unit file as a process.
+As the container's root it binds the two planes on the pod's loopback,
+starts the broker as 201 on `unix:/run/customs/broker.sock` with
+`CREDENTIALS_DIRECTORY=/run/secrets`, mints the egress CA into the state
+volume on the first start, then drops to 200 and execs the inspector with
+the listeners as fds 3 and 4 and `LISTEN_PID`/`LISTEN_FDS` set. No
+`systemd-socket-activate`, no systemd in the image: the bind is still not
+the inspector's, and it is root's before any privilege is dropped, which
+is the socket unit's property by a different route. The entrypoint takes
+the two facts the image cannot know -- the workload's label and its uid
+-- and passes every other flag to the broker untouched:
+
+```
+podman pod create --name POD
+podman run -d --pod POD --name sidecar --init \
+    --cap-drop all --cap-add chown,dac_override,setgid,setuid \
+    -v policy.json:/etc/customs/policy.json:ro,Z \
+    -v customs-state:/var/lib/customs \
+    --secret KEY,target=CRED,uid=201,gid=200,mode=0400 \
+    customs-sidecar --name NAME --caller-uid 1000 \
+    --host api.example.com=CRED --placeholder CRED=sk-placeholder
+podman unshare nsenter -t $(podman inspect -f '{{.State.Pid}}' sidecar) -n \
+    nft -f - <<'RULES'
+table inet customs {
+  chain out {
+    type nat hook output priority -100
+    meta skuid { 200, 201 } accept
+    tcp dport 443 dnat ip to 127.0.0.1:8443
+    tcp dport 80  dnat ip to 127.0.0.1:8080
+  }
+  chain filter {
+    type filter hook output priority 0; policy drop
+    meta skuid { 200, 201 } accept
+    oif lo accept
+    ip daddr 169.254.1.1 udp dport 53 accept
+    ip daddr 169.254.1.1 tcp dport 53 accept
+  }
+}
+RULES
+podman run -d --pod POD --name workload --user 1000:1000 --cap-drop all \
+    -v bundle.pem:/usr/local/share/ca-certificates/customs.crt:ro,Z \
+    -e SSL_CERT_FILE=/usr/local/share/ca-certificates/customs.crt … \
+    IMAGE
+```
+
+The four capabilities are the entrypoint's: the chown of the two
+directories it hands over, the mint into one of them, and the two drops.
+The rules go in after the sidecar starts (the pod's netns exists from
+then) and before the workload does. Both image uids are exempt from the
+redirect and the drop, since their dials are the upstream legs and leave
+through the same netns; the workload holds no `CAP_SETUID`, so it cannot
+become one of them. The bundle the workload trusts is built from the CA
+the sidecar minted (`podman exec sidecar cat
+/var/lib/customs/ca/egress-ca.crt`) over the system store. The record's
+`upstream` for a brokered request reads `unix:/run/customs/broker.sock`.
+
+The pod's `/proc/self/uid_map` is a rootless one, with the inside and
+outside columns different, and that is what found the pair's one seam
+defect here: the namespace check compared the told uid against the
+outside column, and refused uid 200. Every earlier layout had the columns
+equal. `peer_identity.userns_ranges` now reads the inside column.
 
 What the sidecar buys is distribution: the pair becomes an image, not a
 host install. That is the cosy-shaped requirement — cosy is one script
@@ -202,6 +261,12 @@ that installs nothing. On a host that already carries the RPM, shape 1
 is strictly simpler. In either sidecar variant the CA private key lives
 in the pod; a workload-container escape is a host escape, so this is not
 a new exposure, but it is worth saying.
+
+Proved 2026-09-22 by `tests/manual/shape1b_rig.py`: 18 rows, red without
+the rules. The probe that is new here: from the workload, the broker's
+socket path is ENOENT -- not ECONNREFUSED, which would mean the path
+exists and the mount is shared -- and nothing but the two planes listens
+on TCP in the pod.
 
 ## Shape 2: a VM
 
