@@ -115,6 +115,41 @@ wrapper or a user unit with `ExecStartPre=` makes it persistent.
 IPv6: pasta maps the v6 gateway too. Either rule both families or run
 pasta `-4`.
 
+## Shape 1b: the inspector as a sidecar in a pod
+
+Same container, but the inspector is a second container in a `podman
+pod` rather than a host process. `podman pod create` starts the infra
+container, so the netns exists before any workload process does — rules
+go in, then the sidecar starts, then the workload. The redirect is plain
+`tcp dport 443 redirect to :8443` on loopback; no gateway mapping.
+
+Two things come back that the host-side placement got for free:
+
+1. **A discriminator.** The inspector's re-originated traffic now leaves
+   through the same netns as the workload's, so the rules must tell them
+   apart or the inspector redirects itself. workloadctl solves this with
+   a cgroup. Cheapest here: run the sidecar as a different in-pod uid
+   and key on `meta skuid` — which requires the workload container to
+   hold no `CAP_SETUID`, or workload root simply becomes that uid. Only
+   one uid can be the selector. `socket cgroupv2` also works and cannot
+   be forged from inside; it is fiddlier.
+2. **Broker reachability.** The host's `127.129.0.1` is unmapped from the
+   pod, so "the workload cannot name the broker" is no longer a property
+   of the address family. Either the broker is a third container behind
+   a `skuid`-keyed rule, or — better — it stays on the host listening on
+   an AF_UNIX socket bind-mounted into the sidecar alone. `SO_PEERCRED`
+   is a stronger caller check than `/proc/net/tcp`, and the workload has
+   no path to a socket it was never given. This costs the broker a
+   `--listen unix:PATH` it does not have today, and the inspector the
+   matching `--broker`.
+
+What it buys is distribution: the inspector becomes an image, not a host
+install. That is the cosy-shaped requirement — cosy is one script that
+installs nothing. On a host that already carries the RPM, shape 1 is
+strictly simpler. The CA private key lives in the pod either way the
+sidecar is used; a workload-container escape is a host escape, so this
+is not a new exposure, but it is worth saying.
+
 ## Shape 2: a VM
 
 Run qemu inside the shape-1 container with `--device /dev/kvm` and
@@ -153,7 +188,7 @@ boundary the rules hang on.
 
 ## Shape 3: a cosy container
 
-[cosy](../../cosy) is shape 1 with a home directory and a display. Its
+[cosy](../../cosy) is shape 1 — or, for an install-nothing distribution, shape 1b — with a home directory and a display. Its
 `cosy network` subcommand already enters the container's netns from the
 host via `podman unshare nsenter`, so the rule step has a place to live,
 and cosy passes `--volume`/`--env` through to podman. What cosy would
