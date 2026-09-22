@@ -1,0 +1,183 @@
+# Applying customs outside workloadctl
+
+workloadctl runs the pair as root on a hypervisor with a dedicated uid per
+workload. This is what it looks like with nothing but a normal user, for
+each of the three shapes that matter.
+
+## What carries over unchanged
+
+- Both programs. Flags only, no TOML, stdlib. The inspector is
+  socket-activated (`LISTEN_FDS`), so where it listens is the `.socket`
+  unit's business, not the program's.
+- The policy document the inspector reads (`--policy`):
+
+  ```json
+  {
+    "tls": "terminate",
+    "hosts": ["api.example.com"],
+    "internal": [],
+    "splice": [],
+    "http2": [],
+    "policy": [
+      {"host": "api.example.com", "methods": null, "paths": null,
+       "credential": "example"}
+    ]
+  }
+  ```
+
+- Trust injection: the inspector's CA, concatenated with the system CAs,
+  mounted into the workload and pointed at by `SSL_CERT_FILE`,
+  `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, `PIP_CERT`.
+  These variables *replace* the trust store, so the bundle must carry the
+  system CAs too, and it must exist before the workload is created.
+- The broker's key material via `$CREDENTIALS_DIRECTORY`.
+  `LoadCredentialEncrypted=` works in user units on systemd ≥ 256;
+  `systemd-creds --user encrypt` seals it.
+- The broker's `--caller-uid` check. Under a single user it degenerates to
+  "is me", which is fine: the sandbox line is the namespace, and the user
+  is on the trusted side of it.
+
+## What changes: the selector
+
+workloadctl selects a workload's sockets with `meta skuid <uid>` on the
+host. Without root, every socket — pasta's, the inspector's, the
+broker's, the user's IDE — is the same uid, and it selects nothing.
+
+The replacement is the network namespace. A rootless container's netns is
+owned by the user's userns; `podman unshare` is root there, so `nft` loads
+into it; the container's processes have no `CAP_NET_ADMIN` in their
+bounding set, so they cannot touch what was loaded. The rules see only
+the container's traffic, so the cgroup exemption workloadctl needs to
+separate the inspector's own re-originated traffic from the workload's
+disappears — the inspector is a namespace out.
+
+Reachability follows from pasta's loopback mapping:
+
+- pasta maps the container's **gateway address** to host `127.0.0.1`, and
+  only that. The inspector binds `127.0.0.1:<port>`; the netns rule DNATs
+  443 to `<gateway>:<port>`.
+- The broker binds any `127.x.y.z ≠ 127.0.0.1`. pasta does not map it,
+  so the container cannot dial it at all. That is the whole
+  "cannot name the broker" property, done by address family.
+- Two containers each get their own inspector port; each netns rule pins
+  its own port, so neither reaches the other's.
+- DNS goes gateway → host resolver as usual. No synthesising responder is
+  needed: the redirect keys on the port and the match is on SNI.
+
+`--network host` and `--network none` are out of scope, exactly as
+workloadctl excludes host mode.
+
+## Shape 1: a rootless podman container
+
+```
+# 1. CA + bundle + inspect.json (above)
+# 2. broker, user unit
+ExecStart=customs-broker --name x --listen 127.129.0.1:8081 --caller-uid %U \
+    --host api.example.com=example --placeholder example=sk-placeholder \
+    --auth-header example=Authorization --auth-format example=Bearer
+LoadCredentialEncrypted=example:%h/.config/customs/example.cred
+# 3. inspector, user .socket + .service
+ListenStream=127.0.0.1:8443
+ListenStream=127.0.0.1:8080
+ExecStart=customs-inspect --name x --policy … --state-dir … --status … \
+    --record … --broker 127.129.0.1:8081
+# 4. the container, created but not started
+podman create --network pasta \
+  -v bundle.pem:/usr/local/share/ca-certificates/customs.crt:ro \
+  -e SSL_CERT_FILE=/usr/local/share/ca-certificates/customs.crt \
+  -e NODE_EXTRA_CA_CERTS=… -e REQUESTS_CA_BUNDLE=… \
+  -e EXAMPLE_API_KEY=sk-placeholder  IMAGE
+podman init NAME          # netns exists, entrypoint not yet running
+# 5. rules into the netns — this replaces meta skuid
+podman unshare nsenter -t "$(podman inspect -f '{{.State.Pid}}' NAME)" -n nft -f - <<'NFT'
+table inet customs {
+  chain out {
+    type nat hook output priority -100
+    tcp dport 443 dnat ip to GW:8443
+    tcp dport 80  dnat ip to GW:8080
+  }
+  chain filter {
+    type filter hook output priority 0; policy drop
+    oif lo accept
+    ip daddr GW tcp dport { 8443, 8080 } accept
+    ip daddr GW udp dport 53 accept
+    ip daddr GW tcp dport 53 accept
+  }
+}
+NFT
+podman start NAME
+```
+
+`create → init → rules → start` closes the first-packet window the same
+way workloadctl's `ExecStartPre` filter does. Step 5 is per-start; a
+wrapper or a user unit with `ExecStartPre=` makes it persistent.
+
+IPv6: pasta maps the v6 gateway too. Either rule both families or run
+pasta `-4`.
+
+## Shape 2: a VM
+
+Run qemu inside the shape-1 container with `--device /dev/kvm` and
+`-netdev passt` (or `passt --socket` + `-netdev stream`). The guest's
+egress is now the container's egress and the recipe applies verbatim.
+Guest root can rewrite the guest's own nft all day; the rules that matter
+are one namespace out, where qemu and passt hold no `CAP_NET_ADMIN`.
+
+Guest-side touches, both via the cloud-init seed: the CA bundle plus the
+env vars, and the placeholder in the agent's environment.
+
+Friction to expect: SELinux on `/dev/kvm` inside `container_t`
+(`container_use_devices` or a label opt-out); virtiofs/9p if a shared
+directory is wanted.
+
+The other two VM shapes, for the record:
+
+- **Session libvirt / user-run qemu with passt on the host.** No selector
+  exists: passt re-originates as the user, the guest owns its own netns,
+  and there is no namespace of the user's to hold rules. Wrapping
+  qemu+passt in a hand-made `pasta` netns is shape 2 without the image.
+- **System libvirt on a bridge (root).** Selector is the tap or the
+  bridge, rules in `prerouting`/`forward` on the host from a libvirt hook,
+  inspector bound on the bridge address. Works, needs root, and it is the
+  design workloadctl walked away from (its ADR 006): forwarded packets
+  have no owning uid, so isolation is a per-tap rule set to maintain
+  rather than a property to inherit. Only for a VM that must have a LAN
+  identity.
+
+This looks backwards — a VM in a container to filter it — but it is the
+move ADR 006 already made: turn forwarded packets into originated sockets
+so something outside the guest owns them. On the hypervisor the owner is
+a uid; without root it has to be a namespace, and the container is just
+the cheapest one to get. It contributes no isolation of its own, only the
+boundary the rules hang on.
+
+## Shape 3: a cosy container
+
+[cosy](../../cosy) is shape 1 with a home directory and a display. Its
+`cosy network` subcommand already enters the container's netns from the
+host via `podman unshare nsenter`, so the rule step has a place to live,
+and cosy passes `--volume`/`--env` through to podman. What cosy would
+need to grow: a way to say the policy (`cosy network policy NAME
+--allow HOST --credential HOST=CRED` writing the JSON) and the four unit
+files. Base cosy containers hold 5 capabilities, none of them
+`NET_ADMIN`; a cosy container on a custom network gains `NET_ADMIN` and
+is out of scope.
+
+## What workloadctl has that this does not, on purpose
+
+No dedicated uid, no cgroup discriminator, no generator, no drift/status
+run-files, no SELinux domain for the inspector, no clock keeper after a
+VM pause, no QMP-driven guest checks, no resolver oracle. None of those
+were the pair's; they were host management, which is why the closure
+tests could fence them out.
+
+## Proving it
+
+The same discipline that found every real defect in workloadctl's
+versions: one container (or one VM in one) on a KVM host, hand-written
+user units, the netns rules, a placeholder in the workload's environment,
+and one real request that reaches the provider carrying the sealed key.
+Plus the negative probes: dial the broker's address from inside (must
+refuse to connect); dial an unlisted host (must be refused by the
+inspector); the origin with no key (401). Expect a seam defect of the
+"unit green, packet never arrives" kind; every substrate so far had one.
