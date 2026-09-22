@@ -98,6 +98,11 @@ behavioural suite is here before the listener changes.
 
 Gate: the suite passes here unmodified apart from its imports.
 
+Done 2026-09-22: 228 of 229 (the RPM-spec test has no spec to read);
+`tests/policy_document.py` is the writer. Two rows re-derived: the
+bare-name one now expects argparse's line, and the union-of-writers one
+pins the document's vocabulary against one writer. 523 green.
+
 ## 4. Shape 1b: three flags, then the image
 
 Flags first, each with a unit test and a wiring test that can be broken

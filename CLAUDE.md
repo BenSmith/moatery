@@ -72,7 +72,7 @@ plus the two entrypoints' names; code lines are the same.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 295 on arrival)
+just test     # all unit tests (unittest discover; 523)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user

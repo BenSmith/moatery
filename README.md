@@ -68,7 +68,7 @@ point at it, the socket-activated inspector, the broker's flags and
 
 The code is here as a copy of the workloadctl modules (2026-09-22):
 `libexec/customs-broker`, `libexec/customs-inspect`, the 24-module closure
-under `lib/`, and the unit tests that import only that closure (295,
+under `lib/`, and the unit tests that import only that closure (523,
 green). Shape 1 is proved on a host by `tests/manual/shape1_rig.py`. The
 prose is renamed; module names and imported identifiers are not. No
 sidecar image yet.

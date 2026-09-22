@@ -52,12 +52,12 @@ whose lib imports lie entirely inside the closure:
 `test_inspect_terminate`, `test_mint`, `test_vm_status`. workloadctl's
 two closure tests were replaced by `test_closure.py`.
 
-Not yet copied, because it imports the workloadctl side for fixtures:
-`test_inspect_listener.py` (229 tests) needs `egress_policy`'s two
-TOML-to-JSON renderers and `workload_addr.INSPECT_LISTENER_BIN`. Bringing
-it means a small fixtures module here that builds the same documents by
-hand. The other twelve partial modules are workloadctl's own (arming,
-diagnose, units, generator) and stay.
+`test_inspect_listener.py` (228 tests) came across with
+`tests/policy_document.py` standing in for `egress_policy`'s renderers --
+a hand-written writer of the document, since customs ships only its
+reader -- and the one test that read the RPM spec dropped. The other
+twelve partial modules are workloadctl's own (arming, diagnose, units,
+generator) and stay.
 
 ## Open decision
 
