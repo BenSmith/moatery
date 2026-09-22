@@ -91,16 +91,19 @@ class Upstream:
         # gives a host the offer another host asked for.
         self._ctx_h2 = ssl.create_default_context()
         self._ctx_h2.set_alpn_protocols(list(ALPN_H2))
-        # The (address, port) of THIS workload's credential broker instance,
-        # handed in by whoever started the listener, or None for a listener
-        # started without one. Handed in rather than derived: which address
-        # a workload's broker binds is a fact about how a host is laid out,
-        # and the inspector has no business knowing it -- whoever writes
-        # both units chooses the pair once and writes it onto each
-        # ExecStart=. A None here makes a brokered dial a legible refusal
-        # rather than a guess.
+        # Where THIS workload's credential broker instance listens: an
+        # (address, port) pair, or the path of its socket, handed in by
+        # whoever started the listener, or None for a listener started
+        # without one. Handed in rather than derived: where a workload's
+        # broker binds is a fact about how a host is laid out, and the
+        # inspector has no business knowing it -- whoever writes both units
+        # chooses the endpoint once and writes it onto each ExecStart=. A
+        # None here makes a brokered dial a legible refusal rather than a
+        # guess.
         self._broker_endpoint = (
-            None if broker_endpoint is None else tuple(broker_endpoint))
+            None if broker_endpoint is None
+            else broker_endpoint if isinstance(broker_endpoint, str)
+            else tuple(broker_endpoint))
 
     def dial_cleartext(self, host):
         """A plain connection to an authorised name, as a _Stream."""
@@ -139,14 +142,22 @@ class Upstream:
     def dial_broker(self, host):
         """A plain connection to THIS workload's credential broker instance.
 
-        Cleartext, and on loopback, which is not a downgrade: the leg the guest
-        cares about is the broker's own, which is TLS to the provider and
-        verified there. This hop never leaves the host, and the endpoint it
-        goes to was handed to this process on its command line, chosen per
-        workload -- so a second workload's inspector, handed its own, reaches
-        its own broker and finds nothing here. One broker per workload at an
-        address of its own is the whole point: a single broker on 127.0.0.1
-        would be reachable by every workload on the box.
+        Cleartext, and on loopback or a socket path, which is not a
+        downgrade: the leg the guest cares about is the broker's own, which
+        is TLS to the provider and verified there. This hop never leaves the
+        host, and the endpoint it goes to was handed to this process on its
+        command line, chosen per workload -- so a second workload's
+        inspector, handed its own, reaches its own broker and finds nothing
+        here. One broker per workload at an endpoint of its own is the whole
+        point: a single broker on 127.0.0.1 would be reachable by every
+        workload on the box.
+
+        A path is dialled AF_UNIX. The broker behind it shares a network
+        namespace with the workload and is kept from it by the mount
+        namespace, so a path the guest cannot see is the same property the
+        unmapped address gives on a host. A path that is not there is an
+        OSError like any other failed dial, and lands in the broker arm the
+        same way.
 
         `host` is unused for ADDRESSING and is deliberately still the argument,
         because `connection_for` calls every dial the same way. It is not
@@ -163,9 +174,18 @@ class Upstream:
             raise OSError("this inspector was started without a broker "
                           "endpoint, and the policy names a credential for "
                           f"{host}")
-        sock = socket.create_connection(
-            self._broker_endpoint,
-            timeout=egress_relay.CONNECTION_TIMEOUT)
+        if isinstance(self._broker_endpoint, str):
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(egress_relay.CONNECTION_TIMEOUT)
+            try:
+                sock.connect(self._broker_endpoint)
+            except BaseException:
+                sock.close()
+                raise
+        else:
+            sock = socket.create_connection(
+                self._broker_endpoint,
+                timeout=egress_relay.CONNECTION_TIMEOUT)
         sock.settimeout(egress_relay.RELAY_IDLE_TIMEOUT)
         return _Stream(sock)
 

@@ -1,17 +1,19 @@
-"""Who owns the far end of an accepted TCP connection?
+"""Who owns the far end of an accepted connection?
 
 Shared by `libexec/customs-broker` and `libexec/customs-inspect`, which
 both need to answer the same question about a caller and have no business
 answering it two ways. The userns helpers at the end are the precondition for
-the answer being truthful: /proc/net translates the uid column through the
-reader's namespace, so a process that cannot map a workload's uid sees the
-overflow uid instead and every such caller collapses into one identity.
+the answer being truthful: the kernel translates a uid through the reader's
+namespace, so a process that cannot map a workload's uid sees the overflow
+uid instead and every such caller collapses into one identity.
 
-WHY NOT SO_PEERCRED. It is AF_UNIX-only. On a TCP socket it yields nothing
-usable, so a peer-credential check on a listener bound to an address has to go
-to the kernel's socket table instead. That is still not a handshake: the owner
-is recorded by the kernel and read out of /proc/net, so there is nothing for a
-caller to participate in or lie about.
+TWO FAMILIES, ONE QUESTION. On a listener bound to a path, SO_PEERCRED is
+the answer: the credentials the kernel recorded at connect(), read off the
+socket. On a listener bound to an address SO_PEERCRED yields nothing usable
+-- it is AF_UNIX-only -- so the check goes to the kernel's socket table
+instead, finding the peer's row in /proc/net and reading its owner. Neither
+is a handshake: the owner is recorded by the kernel and there is nothing for
+a caller to participate in or lie about.
 
 WHY THE UID AND NOT THE ADDRESS. The host's networking re-originates every
 workload flow -- passt for a VM, pasta for a container -- as a host socket
@@ -165,6 +167,34 @@ def peer_uid(locals_, peer):
         if uid is not None:
             return uid
     return None
+
+
+# The credentials of an AF_UNIX peer as the kernel hands them over: pid,
+# uid, gid, each a C int.
+SO_PEERCRED_FORMAT = "3i"
+
+
+def peer_uid_unix(sock):
+    """uid owning the far end of an accepted AF_UNIX connection, or None.
+
+    No table to scan and no row to race: the kernel recorded the peer's
+    credentials at connect() and they are read off the socket. Translated
+    through the reader's namespace like the /proc column is, so the userns
+    helpers below apply to this answer too.
+
+    Asked of a socket that is not AF_UNIX, the kernel does not refuse: it
+    answers pid 0, uid -1, gid -1, which a comparison would turn into a
+    refusal of every caller with nothing saying why. So the family is
+    checked here and the wrong one raises, and a -1 -- no credentials on
+    the socket -- is None like an unfindable row is.
+    """
+    if sock.family != socket.AF_UNIX:
+        raise OSError(f"SO_PEERCRED answers only for AF_UNIX, not "
+                      f"{sock.family!r}")
+    raw = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                          struct.calcsize(SO_PEERCRED_FORMAT))
+    _pid, uid, _gid = struct.unpack(SO_PEERCRED_FORMAT, raw)
+    return None if uid == -1 else uid
 
 
 def userns_ranges(uid_map):

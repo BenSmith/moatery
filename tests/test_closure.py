@@ -13,7 +13,10 @@ functions would not show up as an import.
 
 The flags each entrypoint takes are pinned too. They are the interface a
 unit file or a container entrypoint writes against; a flag appearing or
-disappearing here is a change to that contract.
+disappearing here is a change to that contract. The one change so far is
+the inspector's `--caller-uid`, mirroring the broker's: a sidecar's
+workload is another uid by design, and an inspector that served only its
+own uid refused every connection there as foreign.
 """
 
 import ast
@@ -33,6 +36,7 @@ BROKER_FLAGS = frozenset({
 })
 INSPECTOR_FLAGS = frozenset({
     "--name", "--policy", "--state-dir", "--status", "--record", "--broker",
+    "--caller-uid",
 })
 
 # Functions whose presence would mean a program derives a value it is meant

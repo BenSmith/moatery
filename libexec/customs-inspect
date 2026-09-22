@@ -9,15 +9,26 @@ WHAT THIS FILE IS, AND WHAT IT IS NOT
 
 This is the inspector's entrypoint, and it is not a launcher for it. The
 inspector (inspect_listener and everything it imports, this file included)
-takes a policy document, a state directory, a status file, a record file
-and a broker endpoint, and knows nothing about workloads: not any config
-grammar, not where a workload keeps its state, not how a uid becomes a
-loopback address, not what substrate the guest on the other end is. Every
-one of those is a fact about how a host is laid out, and every one is
-chosen by whoever writes the unit and put on its ExecStart= as an
-argument. This file derives nothing; it parses. tests/test_closure.py holds
-that line, so the inspector stays startable on any host by writing a unit
-that answers the same five questions.
+takes a policy document, a state directory, a status file, a record file,
+a broker endpoint and the uid it serves, and knows nothing about
+workloads: not any config grammar, not where a workload keeps its state,
+not how a uid becomes a loopback address, not what substrate the guest on
+the other end is. Every one of those is a fact about how a host is laid
+out, and every one is chosen by whoever writes the unit and put on its
+ExecStart= as an argument. This file derives nothing; it parses.
+tests/test_closure.py holds that line, so the inspector stays startable on
+any host by writing a unit that answers the same questions.
+
+WHO IT SERVES
+
+Connections from one uid: this process's own unless --caller-uid names
+another. On a host the workload's traffic is re-originated as the user
+the inspector runs as, so its own uid is the workload's. In a sidecar the
+workload is another uid by design -- the uid is what tells the two apart
+in the namespace's rules -- and without the flag every connection would
+be refused as foreign. A uid this user namespace cannot represent is
+refused at start, because every connection would read as the overflow
+uid and be refused the same way, by a listener reporting itself up.
 
 The workload name is taken as a LABEL: the CA subject and the log lines
 carry it. It is a flag rather than argv[1] so that a unit written by hand
@@ -61,6 +72,7 @@ sys.dont_write_bytecode = True
 
 from inspect_policy import load_policy
 from inspect_listener import Listener, build_minter
+from peer_identity import unmappable_uids
 from sd_listen import NotSocketActivated
 from sd_listen import (
     inherited_listening_sockets as sd_inherited_listening_sockets)
@@ -80,13 +92,21 @@ def inherited_listening_sockets():
                  "domain"))
 
 
-def broker_endpoint(value):
-    """The --broker value as an (address, port) pair, or None when absent.
+# The value form that names the broker's socket path rather than its
+# address, spelled as the broker's own `--listen` spells it.
+UNIX_PREFIX = "unix:"
 
-    Handed in, not derived: whoever writes both units chooses the pair
+
+def broker_endpoint(value):
+    """The --broker value as an (address, port) pair, a socket path, or
+    None when absent.
+
+    Handed in, not derived: whoever writes both units chooses the endpoint
     once and writes it onto this unit's ExecStart= and the broker's
     `--listen`, which is what keeps the two from drifting, and that writer
-    is the side that is allowed to know what a workload's address is.
+    is the side that is allowed to know where a workload's broker is. A
+    path is absolute, for the reason the broker gives: a relative one is a
+    fact about the cwd the unit chose, not about the flag.
 
     None is a legitimate value, not an error: a unit written for a policy
     with no brokered host may leave the flag off, and the inspector turns None
@@ -95,6 +115,12 @@ def broker_endpoint(value):
     """
     if value is None:
         return None
+    if value.startswith(UNIX_PREFIX):
+        path = value[len(UNIX_PREFIX):]
+        if not path.startswith("/"):
+            raise argparse.ArgumentTypeError(
+                f"{value!r}: the socket path must be absolute")
+        return path
     address, sep, port = value.rpartition(":")
     if not sep or not address:
         raise argparse.ArgumentTypeError(
@@ -107,13 +133,15 @@ def broker_endpoint(value):
 
 
 def parse_args(argv):
-    """The five values the unit hands over, plus the label.
+    """The values the unit hands over, plus the label.
 
     Every path is required and none has a default, for the reason
     load_policy gives about the policy in particular: a default is a guess
     about how the host is laid out, and this program is the one that is not
     allowed to guess. A unit that leaves one off fails at start with a usage
-    line naming the flag, not on the guest's first dial with an ENOENT.
+    line naming the flag, not on the guest's first dial with an ENOENT. The
+    two that are optional default to a refusal (no broker) and to a fact
+    about this process (its own uid), neither of which is a guess.
     """
     parser = argparse.ArgumentParser(
         prog=os.path.basename(argv[0]),
@@ -130,10 +158,14 @@ def parse_args(argv):
     parser.add_argument("--record", required=True,
                         help="where the per-request record is appended")
     parser.add_argument("--broker", type=broker_endpoint, default=None,
-                        metavar="ADDRESS:PORT",
+                        metavar="ADDRESS:PORT|unix:PATH",
                         help="the credential broker instance brokered "
                              "requests are sent to; absent means every "
                              "brokered request is refused")
+    parser.add_argument("--caller-uid", type=int, default=None,
+                        metavar="UID",
+                        help="the one uid whose connections are served; "
+                             "absent means this process's own")
     return parser.parse_args(argv[1:])
 
 
@@ -148,6 +180,22 @@ def main(argv=None):
         return int(exc.code or 0)
     name = args.name
     policy_path = args.policy
+    if args.caller_uid is not None:
+        # Before the sockets, like every other refusal here. From a user
+        # namespace that cannot map the caller's uid every connection reads
+        # as the overflow uid and is refused as foreign, by a listener that
+        # is up and counting.
+        try:
+            uid_map = open("/proc/self/uid_map").read()
+        except OSError as exc:
+            print(f"error: cannot read /proc/self/uid_map ({exc.strerror});"
+                  " caller identification needs it", file=sys.stderr)
+            return 1
+        if unmappable_uids([args.caller_uid], uid_map):
+            print(f"error: this user namespace cannot represent uid "
+                  f"{args.caller_uid} ({name}); every connection would be "
+                  "refused as foreign", file=sys.stderr)
+            return 1
     try:
         policy = load_policy(policy_path)
     except (OSError, ValueError) as exc:
@@ -173,7 +221,8 @@ def main(argv=None):
     listener = Listener(sockets, policy=policy, minter=minter,
                         status_path=args.status,
                         record_path=args.record,
-                        broker_endpoint=args.broker)
+                        broker_endpoint=args.broker,
+                        caller_uid=args.caller_uid)
     print(f"policy loaded from {policy_path}: {policy.summary}", flush=True)
     signal.signal(signal.SIGTERM, lambda *_args: listener.stop())
     # Rotation is logrotate's, and this is the half of it that lives here:

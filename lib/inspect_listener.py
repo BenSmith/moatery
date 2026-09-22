@@ -144,10 +144,16 @@ class Listener:
 
     def __init__(self, sockets, out=None, limit=MAX_CONNECTIONS, policy=None,
                  status_path=None, minter=None, record_path=None,
-                 broker_endpoint=None):
+                 broker_endpoint=None, caller_uid=None):
         self._sockets = list(sockets)
         self._ceiling = Ceiling(limit)
         self._stop = threading.Event()
+        # The one uid whose connections are served, or None for this
+        # process's own. Told, where it is told, for the placement where
+        # the workload is another uid by design -- a sidecar, where the uid
+        # is what tells the two apart in the rules -- and every connection
+        # would otherwise be refused as foreign.
+        self._caller_uid = caller_uid
         # None means "count but never write", which is what the tests want and
         # also what a listener started without a workload name would do.
         self._status_path = status_path
@@ -248,7 +254,8 @@ class Listener:
             # would turn a hardening measure into an outage. Treated as
             # unresolved, which is handled below.
             caller = None
-        if caller is not None and caller != os.getuid():
+        own = os.getuid() if self._caller_uid is None else self._caller_uid
+        if caller is not None and caller != own:
             self.inspection.log(
                 f"rejected {LOG_ID_FIELD}={cid} plane={plane.label} "
                 f"local={format_endpoint(local)} "

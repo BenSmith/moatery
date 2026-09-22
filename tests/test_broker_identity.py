@@ -380,5 +380,139 @@ class TestIdentifyRefusals(unittest.TestCase):
         self.assertIsNone(sandbox)
 
 
+class TestPeerUidUnixLive(unittest.TestCase):
+    """SO_PEERCRED against the real kernel, on a path socket."""
+
+    def _listener(self):
+        import os
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, ignore_errors=True)
+        path = os.path.join(d, "s")
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(srv.close)
+        srv.bind(path)
+        srv.listen(1)
+        return srv, path
+
+    def test_recovers_the_uid_of_a_real_connection(self):
+        import os
+        srv, path = self._listener()
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(client.close)
+        client.connect(path)
+        conn, _peer = srv.accept()
+        self.addCleanup(conn.close)
+        self.assertEqual(peer_identity.peer_uid_unix(conn), os.getuid())
+
+    def test_no_credentials_on_the_socket_is_none_like_a_missing_row(self):
+        """The kernel's -1 is not a uid to compare. It is what a socket with
+        no recorded peer answers, and a comparison against it would refuse
+        every caller as uid:-1 with nothing saying the mechanism failed."""
+        sock = mock.Mock(family=socket.AF_UNIX)
+        sock.getsockopt.return_value = struct.pack("3i", 0, -1, -1)
+        self.assertIsNone(peer_identity.peer_uid_unix(sock))
+        sock.getsockopt.return_value = struct.pack("3i", 4242, 10000, 10000)
+        self.assertEqual(peer_identity.peer_uid_unix(sock), 10000)
+
+    def test_an_address_socket_is_a_wiring_error_not_a_caller(self):
+        """The two answers are not interchangeable: asked of a TCP socket
+        the kernel answers uid -1 rather than refusing, so the refusal is
+        this module's, and it raises rather than returning something a
+        comparison could turn into a silent refusal of everyone."""
+        srv = socket.socket()
+        self.addCleanup(srv.close)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        client = socket.create_connection(srv.getsockname())
+        self.addCleanup(client.close)
+        conn, _peer = srv.accept()
+        self.addCleanup(conn.close)
+        with self.assertRaises(OSError):
+            peer_identity.peer_uid_unix(conn)
+
+
+class TestUnixServerIdentifiesTheCaller(unittest.TestCase):
+    """A real UnixServer, driven over its socket. Nothing here asserts a
+    request succeeded: each asserts on WHICH refusal came back, because the
+    Host refusal is only reachable past the identity check and the identity
+    refusal is what a server that resolved nobody would give."""
+
+    def _server(self, workload_uid):
+        import os
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, ignore_errors=True)
+        path = os.path.join(d, "broker.sock")
+
+        class H(broker_server.Handler):
+            name = "agent"
+            profiles = {}
+            overflow = 65534
+
+        H.workload_uid = workload_uid
+        server = broker_server.UnixServer(path, H)
+        self.addCleanup(server.server_close)
+        return server, path
+
+    def _ask(self, path):
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(client.close)
+        client.settimeout(5)
+        client.connect(path)
+        client.sendall(b"GET / HTTP/1.1\r\nHost: nobody.example\r\n\r\n")
+        return client.recv(65536)
+
+    def test_the_told_uid_is_identified_and_reaches_the_host_check(self):
+        import os
+        server, path = self._server(os.getuid())
+        threading.Thread(target=server.handle_request, daemon=True).start()
+        with mock.patch.object(broker_server, "log") as log:
+            reply = self._ask(path)
+        self.assertIn(b"403", reply)
+        self.assertIn(b"no credential is configured", reply)
+        self.assertNotIn(b"caller not registered", reply)
+        log.assert_called_with("deny", reason="host-not-configured",
+                               sandbox="agent", host="nobody.example")
+
+    def test_another_uid_is_refused_by_number(self):
+        import os
+        server, path = self._server(os.getuid() + 1)
+        threading.Thread(target=server.handle_request, daemon=True).start()
+        with mock.patch.object(broker_server, "log") as log:
+            reply = self._ask(path)
+        self.assertIn(b"caller not registered", reply)
+        log.assert_called_with("deny", reason="unidentified",
+                               caller=f"uid:{os.getuid()}")
+
+    def test_the_socket_is_group_accessible_and_no_wider(self):
+        import os
+        import stat
+        _server, path = self._server(os.getuid())
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+        self.assertEqual(oct(mode), oct(broker_server.SOCKET_MODE))
+        self.assertTrue(stat.S_ISSOCK(os.stat(path).st_mode))
+
+    def test_a_stale_socket_is_replaced_and_a_file_is_not(self):
+        """A path left by an instance that died is the successor's to take;
+        anything else at the path was put there by someone and bind()
+        refuses it rather than unlinking it."""
+        import os
+        server, path = self._server(os.getuid())
+        server.server_close()
+        stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        stale.bind(path)
+        stale.close()
+        again = broker_server.UnixServer(path, server.RequestHandlerClass)
+        self.addCleanup(again.server_close)
+        again.server_close()
+        self.assertFalse(os.path.exists(path), "close did not unlink")
+        with open(path, "w") as fh:
+            fh.write("not a socket")
+        with self.assertRaises(OSError):
+            broker_server.UnixServer(path, server.RequestHandlerClass)
+        self.assertTrue(os.path.exists(path), "a plain file was unlinked")
+
+
 if __name__ == "__main__":
     unittest.main()

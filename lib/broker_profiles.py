@@ -109,8 +109,14 @@ def split_pair(value, flag):
     return key, val
 
 
+# The value form that binds a filesystem socket instead of an address, and
+# the longest path one can name: sun_path is 108 bytes with its NUL.
+UNIX_PREFIX = "unix:"
+UNIX_PATH_MAX = 107
+
+
 def listen_endpoint(value):
-    """(address, port) of the `--listen` flag.
+    """(address, port) of the `--listen` flag, or the path of `unix:PATH`.
 
     NOT defaulted, unlike the timeouts. An instance must bind the address
     chosen for ITS workload: a default of 127.0.0.1 puts one workload's
@@ -118,7 +124,17 @@ def listen_endpoint(value):
     an instance serving one caller is the whole design. So the flag is
     required by the parser, and 0.0.0.0 -- which is worse, since it binds
     the chosen address AND every other one -- is refused by name here.
+
+    `unix:PATH` binds a socket in the filesystem, for a broker that shares
+    a network namespace with the workload it must be unreachable from: a
+    path lives in the mount namespace, which a pod does not share, so the
+    workload cannot dial what it has no file for. The path is absolute,
+    because a relative one is a fact about the cwd the unit chose and not
+    about the flag; and it is never abstract, because an abstract name
+    lives in the network namespace, which is exactly the shared thing.
     """
+    if value.startswith(UNIX_PREFIX):
+        return _unix_path(value)
     address, sep, port = value.rpartition(":")
     if not sep or not address:
         raise BrokerConfigError(f"--listen takes ADDRESS:PORT, got {value!r}")
@@ -136,6 +152,22 @@ def listen_endpoint(value):
         raise BrokerConfigError(
             f"--listen {value!r}: the port is out of range")
     return address, port
+
+
+def _unix_path(value):
+    path = value[len(UNIX_PREFIX):]
+    if not path.startswith("/"):
+        raise BrokerConfigError(
+            f"--listen {value!r}: the socket path must be absolute, and "
+            "never an abstract name")
+    if "\0" in path:
+        raise BrokerConfigError(
+            f"--listen {value!r}: the socket path holds a NUL")
+    if len(path.encode()) > UNIX_PATH_MAX:
+        raise BrokerConfigError(
+            f"--listen {value!r}: the socket path is longer than "
+            f"{UNIX_PATH_MAX} bytes")
+    return path
 
 
 def _by_credential(values, flag):

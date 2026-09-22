@@ -10,6 +10,8 @@ spellings of one host -- each now asserted on the flag it moved to.
 import contextlib
 import io
 import os
+import stat
+import tempfile
 import unittest
 from unittest import mock
 
@@ -63,6 +65,41 @@ class TestTheListenAddressIsNotDefaulted(unittest.TestCase):
             broker_profiles.listen_endpoint, "127.129.0.3:http"))
         self.assertIn("out of range", refused(
             broker_profiles.listen_endpoint, "127.129.0.3:70000"))
+
+
+class TestTheListenValueMayBeAPath(unittest.TestCase):
+    """`unix:PATH` is a value form of the same flag, for a broker that shares
+    a network namespace with its workload: the workload is kept off the
+    socket by the mount namespace, so the path has to be one that lives
+    there. A relative path is the cwd's fact and an abstract name lives in
+    the network namespace, which is the shared thing -- both refused."""
+
+    def test_an_absolute_path_is_returned_bare(self):
+        self.assertEqual(
+            broker_profiles.listen_endpoint("unix:/run/customs/broker.sock"),
+            "/run/customs/broker.sock")
+
+    def test_a_relative_path_is_refused(self):
+        self.assertIn("absolute", refused(
+            broker_profiles.listen_endpoint, "unix:broker.sock"))
+
+    def test_an_abstract_name_is_refused(self):
+        self.assertIn("abstract", refused(
+            broker_profiles.listen_endpoint, "unix:@customs"))
+        self.assertIn("absolute", refused(
+            broker_profiles.listen_endpoint, "unix:"))
+
+    def test_a_path_the_kernel_cannot_hold_is_refused_at_the_flag(self):
+        """bind() would refuse it with ENAMETOOLONG; naming the limit at
+        the flag is what makes that a unit an operator can fix."""
+        self.assertIn("107", refused(
+            broker_profiles.listen_endpoint, "unix:/" + "x" * 107))
+        self.assertEqual(len(broker_profiles.listen_endpoint(
+            "unix:/" + "x" * 106)), 107)
+
+    def test_an_address_form_is_not_mistaken_for_a_path(self):
+        self.assertEqual(broker_profiles.listen_endpoint("unix.example:80"),
+                         ("unix.example", 80))
 
 
 class TestThePairFlags(unittest.TestCase):
@@ -277,7 +314,10 @@ class TestEntrypointWiring(unittest.TestCase):
         def serve_forever(server):
             seen["server"] = server
 
-        with mock.patch.object(broker_server.Server, "serve_forever", serve_forever), \
+        with mock.patch.object(broker_server.Server, "serve_forever",
+                               serve_forever), \
+                mock.patch.object(broker_server.UnixServer, "serve_forever",
+                                  serve_forever), \
                 contextlib.redirect_stderr(io.StringIO()) as err:
             for target, value in patches.items():
                 stack = mock.patch.object(self.mod, target, value)
@@ -337,6 +377,22 @@ class TestEntrypointWiring(unittest.TestCase):
                       unmappable_uids=lambda uids, uid_map: list(uids))
         self.assertIn("PrivateUsers=", str(caught.exception))
         self.assertIn("10000", str(caught.exception))
+
+    def test_a_socket_path_binds_a_unix_server(self):
+        """The whole of what `unix:` buys is decided here: the value the
+        reader returns selects the server, the server creates the file, and
+        the file's mode is what keeps other uids off it."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, ignore_errors=True)
+        path = os.path.join(d, "broker.sock")
+        argv = list(self.MINIMAL)
+        argv[argv.index("--listen") + 1] = f"unix:{path}"
+        server, err = self._run(argv)
+        self.assertIsInstance(server, broker_server.UnixServer)
+        self.assertEqual(server.server_address, path)
+        self.assertIn(f"listening url=http+unix:{path}", err)
+        self.assertFalse(os.path.exists(path),
+                         "server_close did not unlink the socket")
 
     def test_a_tls_cert_without_its_key_is_a_parser_error(self):
         with contextlib.redirect_stderr(io.StringIO()):

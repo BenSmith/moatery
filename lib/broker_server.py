@@ -3,26 +3,31 @@
 Handler settles the caller's identity once per connection, looks the request's
 Host up in the profile table, and forwards one buffered request at a time to
 the fixed upstream with the credential attached -- the decisions themselves are
-broker_request's. Server bounds the pool: a global ceiling, a per-caller
-ceiling, and an in-flight body budget, each refusing fast rather than queueing,
-because a sandbox that can make the broker hang can deny it to every other
-sandbox. The two TLS contexts at the end are the program's: verified TLS out to
-the provider, and optional TLS in from the guest.
+broker_request's. The two servers bound the pool: a global ceiling, a
+per-caller ceiling, and an in-flight body budget, each refusing fast rather
+than queueing, because a sandbox that can make the broker hang can deny it to
+every other sandbox. Server is bound to an address and identifies a caller
+through the socket table; UnixServer is bound to a path and asks the socket.
+The two TLS contexts at the end are the program's: verified TLS out to the
+provider, and optional TLS in from the guest.
 
 Used by `libexec/customs-broker`.
 """
 
+import contextlib
 import http.client
 import http.server
+import os
 import socketserver
 import ssl
+import stat
 import sys
 import threading
 import time
 
 from broker_profiles import normalise_host
 from broker_request import forwarded_headers, request_framing, response_framing
-from peer_identity import local_endpoints, peer_uid
+from peer_identity import local_endpoints, peer_uid, peer_uid_unix
 
 # At most this much request body summed over every connection at once. The
 # request is buffered whole before it is forwarded, and broker_request's
@@ -106,8 +111,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         thread the same stall costs one slot and expires on the timeout.
         """
         try:
-            self.caller_uid = peer_uid(local_endpoints(self.request),
-                                       self.client_address)
+            self.caller_uid = self.server.caller_uid(self.request,
+                                                     self.client_address)
         except OSError:
             self.caller_uid = None  # peer vanished between accept and lookup
         if not self.server.admit_caller(self.request, self.caller_uid):
@@ -376,7 +381,15 @@ class CallerCeilingExceeded(Exception):
         self.bucket = bucket
 
 
-class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
+class Pool(socketserver.ThreadingMixIn):
+    """The pool, shared by the two servers below.
+
+    What a server adds is the family: how it binds, and how a caller on an
+    accepted connection is identified, which is the one question whose
+    wrong answer is the wrong credential and so is the server's to answer
+    rather than the handler's.
+    """
+
     daemon_threads = True
     allow_reuse_address = True
     block_on_close = False
@@ -461,7 +474,8 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     def process_request(self, request, client_address):
         """Take a global slot, or refuse before there is a thread to starve."""
         if not self._slots.acquire(blocking=False):
-            log("deny", reason="too-many-connections", src=client_address[0])
+            log("deny", reason="too-many-connections",
+                src=self.peer_label(client_address))
             # Bypass our own shutdown_request: we never took a slot, and
             # releasing one we do not hold would inflate the pool for everyone.
             super().shutdown_request(request)
@@ -517,6 +531,85 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
             log("connection-error", error=type(exc).__name__)
         else:
             super().handle_error(request, client_address)
+
+
+class Server(Pool, http.server.HTTPServer):
+    """Bound to an address. The caller is the owner of the peer's row in
+    the kernel's socket table; see peer_identity for why that and not the
+    source address."""
+
+    @staticmethod
+    def caller_uid(request, client_address):
+        return peer_uid(local_endpoints(request), client_address)
+
+    @staticmethod
+    def peer_label(client_address):
+        return client_address[0]
+
+
+# What the socket file is created as: its owner and one group may connect,
+# and nobody else. The inspector beside this broker is the group's other
+# member. The workload is kept off the socket by having no path to it, not
+# by this mode; the mode is for every other uid that does share the mount.
+SOCKET_MODE = 0o660
+
+
+class UnixServer(Pool, socketserver.UnixStreamServer):
+    """Bound to a path. The caller is whatever SO_PEERCRED says, which the
+    kernel recorded at connect(); nothing is scanned and nothing can race.
+
+    The path is unlinked on close and a stale socket at it is replaced at
+    bind, so an instance that died without cleaning up does not keep its
+    successor from starting. Anything at the path that is not a socket is
+    left alone, and the bind fails on it.
+    """
+
+    @staticmethod
+    def caller_uid(request, client_address):
+        return peer_uid_unix(request)
+
+    @staticmethod
+    def peer_label(client_address):
+        return "unix"
+
+    _bound = False
+
+    def server_bind(self):
+        path = self.server_address
+        try:
+            if stat.S_ISSOCK(os.stat(path).st_mode):
+                os.unlink(path)
+        except FileNotFoundError:
+            pass
+        super().server_bind()
+        self._bound = True
+        # Before listen(), which server_activate does next: a dial that lands
+        # between the bind and this is refused for want of a listener, so no
+        # connection is ever admitted under the mode the umask gave the file.
+        os.chmod(path, SOCKET_MODE)
+
+    def server_close(self):
+        super().server_close()
+        # Only a file this instance created: a failed bind closes the server
+        # too, and what refused the bind is not this instance's to remove.
+        if self._bound:
+            with contextlib.suppress(OSError):
+                os.unlink(self.server_address)
+
+
+def make_server(endpoint, handler):
+    """The server for a listen_endpoint value: a path is a UnixServer, an
+    (address, port) pair a Server."""
+    if isinstance(endpoint, str):
+        return UnixServer(endpoint, handler)
+    return Server(endpoint, handler)
+
+
+def listening_url(endpoint, scheme):
+    """What the `listening` log line names."""
+    if isinstance(endpoint, str):
+        return f"{scheme}+unix:{endpoint}"
+    return f"{scheme}://{endpoint[0]}:{endpoint[1]}"
 
 
 def upstream_tls_context(relax_x509_strict=False):

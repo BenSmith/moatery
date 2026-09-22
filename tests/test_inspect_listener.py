@@ -833,6 +833,70 @@ class TestPolicyLoading(unittest.TestCase):
             with self.assertRaises(argparse.ArgumentTypeError, msg=bad):
                 mod.broker_endpoint(bad)
 
+    def test_the_broker_flag_takes_a_socket_path(self):
+        """`unix:PATH`, spelled as the broker's --listen spells it, is the
+        bare path; a relative one is a usage error, not a dial from
+        wherever the unit's cwd happens to be."""
+        mod = _mod()
+        self.assertEqual(mod.broker_endpoint("unix:/run/customs/broker.sock"),
+                         "/run/customs/broker.sock")
+        for bad in ("unix:broker.sock", "unix:", "unix:@customs"):
+            with self.assertRaises(argparse.ArgumentTypeError, msg=bad):
+                mod.broker_endpoint(bad)
+
+    def test_the_caller_uid_flag_is_optional_and_an_integer(self):
+        mod = _mod()
+        full = ["x", "--name", "wl", "--policy", "/p", "--state-dir", "/s",
+                "--status", "/st", "--record", "/r"]
+        self.assertIsNone(mod.parse_args(full).caller_uid)
+        self.assertEqual(
+            mod.parse_args(full + ["--caller-uid", "10007"]).caller_uid,
+            10007)
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                mod.parse_args(full + ["--caller-uid", "agent"])
+
+
+class TestTheBrokerLegOverASocketPath(unittest.TestCase):
+    """dial_broker with a path: a real AF_UNIX listener stands in for the
+    broker, so the dial that reaches it and the one that finds no file are
+    both measured on the socket and not on a mock."""
+
+    def _path(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return os.path.join(d, "broker.sock")
+
+    def test_a_path_is_dialled_af_unix_and_carries_bytes(self):
+        path = self._path()
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(srv.close)
+        srv.bind(path)
+        srv.listen(1)
+        upstream = egress_upstream.Upstream(broker_endpoint=path)
+        stream = upstream.dial_broker("api.example")
+        self.addCleanup(stream.sock.close)
+        conn, _peer = srv.accept()
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.family, socket.AF_UNIX)
+        stream.sock.sendall(b"GET / HTTP/1.1\r\n\r\n")
+        self.assertEqual(conn.recv(64), b"GET / HTTP/1.1\r\n\r\n")
+
+    def test_a_path_with_nothing_at_it_is_a_failed_dial(self):
+        """ENOENT, the same OSError family as a refused address, so it lands
+        in the broker arm as a 502 and not as a thread's traceback. This is
+        the unit half of the rig's probe: from the workload's mount
+        namespace the broker's path does not exist."""
+        upstream = egress_upstream.Upstream(broker_endpoint=self._path())
+        with self.assertRaises(FileNotFoundError):
+            upstream.dial_broker("api.example")
+
+    def test_no_endpoint_is_still_the_legible_refusal(self):
+        upstream = egress_upstream.Upstream(broker_endpoint=None)
+        with self.assertRaises(OSError) as caught:
+            upstream.dial_broker("api.example")
+        self.assertIn("without a broker endpoint", str(caught.exception))
+
 
 class TestEntrypointWiring(unittest.TestCase):
     """main() past the argv check, with a real Listener and no sockets.
@@ -886,6 +950,69 @@ class TestEntrypointWiring(unittest.TestCase):
         close.assert_called_once_with(record)
         self.assertTrue(os.path.exists(os.path.join(d, "status.json")),
                         "the exit path did not write the status file")
+
+    def _started(self, extra, **more):
+        """main() past the parser, with a Listener that does not accept."""
+        mod = _mod()
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        seen = {}
+
+        class Capture(Listener):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                seen["listener"] = self
+
+            def accept_loop(self):
+                pass
+
+        patch = unittest.mock.patch.object
+        with patch(mod, "load_policy",
+                   return_value=Policy(tls="splice", hosts=())), \
+                patch(mod, "build_minter", return_value=None), \
+                patch(mod, "inherited_listening_sockets", return_value=[]), \
+                patch(mod, "Listener", Capture), \
+                contextlib.ExitStack() as stack, \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            for target, value in more.items():
+                stack.enter_context(patch(mod, target, value))
+            rc = mod.main(["x", "--name", "wl", "--policy", "/unread",
+                           "--state-dir", d,
+                           "--status", os.path.join(d, "status.json"),
+                           "--record", os.path.join(d, "requests.log")]
+                          + extra)
+        return rc, seen.get("listener"), err.getvalue()
+
+    def test_the_caller_uid_reaches_the_listener(self):
+        """The flag is the sidecar's whole reason to exist; a value parsed
+        and not handed on is an inspector that refuses the workload it was
+        started for, with the unit looking right."""
+        rc, listener, _ = self._started(["--caller-uid", "10007"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(listener._caller_uid, 10007)
+        rc, listener, _ = self._started([])
+        self.assertEqual(rc, 0)
+        self.assertIsNone(listener._caller_uid)
+
+    def test_the_broker_path_reaches_the_upstream(self):
+        rc, listener, _ = self._started(
+            ["--broker", "unix:/run/customs/broker.sock"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(listener.inspection.upstream._broker_endpoint,
+                         "/run/customs/broker.sock")
+
+    def test_an_unmappable_caller_uid_refuses_to_start(self):
+        """The broker's refusal, for the inspector's reason: every
+        connection would read as the overflow uid and be dropped as
+        foreign, by a listener that is up and writing its status."""
+        rc, listener, err = self._started(
+            ["--caller-uid", "10007"],
+            unmappable_uids=lambda uids, uid_map: list(uids))
+        self.assertEqual(rc, 1)
+        self.assertIsNone(listener, "the listener was built anyway")
+        self.assertIn("10007", err)
+        self.assertIn("foreign", err)
 
 
 class TestTlsPlane(unittest.TestCase):
@@ -3359,11 +3486,12 @@ class TestCallerIdentity(unittest.TestCase):
     # the opposite. Pinned to a synthetic workload uid instead.
     OWN_UID = 10007
 
-    def _handled(self, mod, caller_uid, own_uid=OWN_UID):
-        """Drive one connection with the caller lookup answering `caller_uid`."""
+    def _handled(self, mod, caller_uid, own_uid=OWN_UID, told=None):
+        """Drive one connection with the caller lookup answering `caller_uid`,
+        in a listener running as `own_uid` and told to serve `told`."""
         local = ("198.18.0.1", CLEARTEXT.inspect_port)
         out = io.StringIO()
-        listener = Listener([_listener_with(local)], out)
+        listener = Listener([_listener_with(local)], out, caller_uid=told)
         conn = _mock_conn()
         with unittest.mock.patch("os.getuid", return_value=own_uid), \
                 unittest.mock.patch.object(inspect_listener, "peer_uid",
@@ -3388,6 +3516,22 @@ class TestCallerIdentity(unittest.TestCase):
         self.assertNotIn(DROP_FOREIGN_CALLER, log)
         self.assertEqual(
             listener.status()["drop_reasons"][DROP_FOREIGN_CALLER], 0)
+
+    def test_a_told_uid_is_served_in_place_of_the_listeners_own(self):
+        """The sidecar placement: the workload is another uid by design, so
+        the listener is told which. Told, the listener's own uid is a
+        foreign caller like any other -- the flag replaces the default, it
+        does not widen it."""
+        mod = _mod()
+        told = self.OWN_UID + 5
+        listener, _conn, log = self._handled(mod, told, told=told)
+        self.assertNotIn(DROP_FOREIGN_CALLER, log)
+        self.assertEqual(
+            listener.status()["drop_reasons"][DROP_FOREIGN_CALLER], 0)
+        listener, conn, log = self._handled(mod, self.OWN_UID, told=told)
+        self.assertIn(DROP_FOREIGN_CALLER, log)
+        self.assertIn(f"caller_uid={self.OWN_UID}", log)
+        conn.close.assert_called()
 
     def test_root_is_refused_even_though_nftables_exempts_it(self):
         """The nft guard exempts `meta skuid != 0` so a host-wide drop does not
