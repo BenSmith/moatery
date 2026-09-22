@@ -53,6 +53,12 @@ same message — on a new branch in the hypervisor repo, never onto its
 Gate: a rig row that is green, and that goes red when the nft rules are
 left out.
 
+Done 2026-09-22: `tests/manual/shape1_rig.py`, 16 rows green,
+`--without-rules` red. No fix to the pair, so nothing to mirror; the four
+defects were in `DESIGN.md`'s recipe (podman's `--no-map-gw`, the DNS
+forwarder address, `"terminate"` for `"inspect"`, the fixed plane ports)
+and are corrected there. `tests/manual/README.md` has the row.
+
 ## 2. Rename, prose and entrypoints only
 
 - Both entrypoint docstrings rewritten present-tense: what the program

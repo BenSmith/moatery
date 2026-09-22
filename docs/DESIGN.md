@@ -13,7 +13,7 @@ each shape that matters.
 
   ```json
   {
-    "tls": "terminate",
+    "tls": "inspect",
     "hosts": ["api.example.com"],
     "internal": [],
     "splice": [],
@@ -51,19 +51,25 @@ the container's traffic, so the cgroup exemption workloadctl needs to
 separate the inspector's own re-originated traffic from the workload's
 disappears — the inspector is a namespace out.
 
-Reachability follows from pasta's loopback mapping:
+Reachability follows from pasta's loopback mapping, which podman turns
+off (`--no-map-gw`) and so has to be asked for:
 
-- pasta maps the container's **gateway address** to host `127.0.0.1`, and
-  only that. The inspector binds `127.0.0.1:<port>`; the netns rule DNATs
-  443 to `<gateway>:<port>`.
+- `--network pasta:--map-host-loopback=169.254.1.3` maps one address in
+  the container to host `127.0.0.1`, and only that. A dedicated address
+  rather than the gateway, so the gateway stays what it is. The inspector
+  binds `127.0.0.1:8443` and `:8080`; the netns rule DNATs 443 and 80 to
+  the mapped address.
 - The broker binds any `127.x.y.z ≠ 127.0.0.1`. pasta does not map it,
   so the container cannot dial it at all. That is the whole
   "cannot name the broker" property, done by pasta's mapping rather than
   by a rule.
-- Two containers each get their own inspector port; each netns rule pins
-  its own port, so neither reaches the other's.
-- DNS goes gateway → host resolver as usual. No synthesising responder is
-  needed: the redirect keys on the port and the match is on SNI.
+- The inspector recognises exactly 8080 and 8443 as its planes
+  (`lib/egress_plane.py`), so this is one inspected container per host
+  loopback. A second needs the planes to become a flag, or a second
+  loopback address the socket unit binds and pasta maps.
+- DNS goes to pasta's forwarder (`169.254.1.1`, its `--dns-forward`),
+  which asks the host's resolver. No synthesising responder is needed:
+  the redirect keys on the port and the match is on SNI.
 
 `--network host` and `--network none` are out of scope, exactly as
 workloadctl excludes host mode.
@@ -83,27 +89,28 @@ ListenStream=127.0.0.1:8080
 ExecStart=customs-inspect --name x --policy … --state-dir … --status … \
     --record … --broker 127.129.0.1:8081
 # 4. the container, created but not started
-podman create --network pasta \
-  -v bundle.pem:/usr/local/share/ca-certificates/customs.crt:ro \
+podman create --network pasta:--map-host-loopback=169.254.1.3 \
+  -v bundle.pem:/usr/local/share/ca-certificates/customs.crt:ro,Z \
   -e SSL_CERT_FILE=/usr/local/share/ca-certificates/customs.crt \
   -e NODE_EXTRA_CA_CERTS=… -e REQUESTS_CA_BUNDLE=… \
   -e EXAMPLE_API_KEY=sk-placeholder  IMAGE
 podman init NAME          # netns exists, entrypoint not yet running
-# 5. rules into the netns — this replaces meta skuid. GW is the
-#    container's gateway address (podman inspect / ip route inside).
+# 5. rules into the netns — this replaces meta skuid. The DNS address is
+#    the first nameserver in the container's resolv.conf (podman inspect
+#    -f '{{.ResolvConfPath}}'), which is pasta's forwarder.
 podman unshare nsenter -t "$(podman inspect -f '{{.State.Pid}}' NAME)" -n nft -f - <<'NFT'
 table inet customs {
   chain out {
     type nat hook output priority -100
-    tcp dport 443 dnat ip to GW:8443
-    tcp dport 80  dnat ip to GW:8080
+    tcp dport 443 dnat ip to 169.254.1.3:8443
+    tcp dport 80  dnat ip to 169.254.1.3:8080
   }
   chain filter {
     type filter hook output priority 0; policy drop
     oif lo accept
-    ip daddr GW tcp dport { 8443, 8080 } accept
-    ip daddr GW udp dport 53 accept
-    ip daddr GW tcp dport 53 accept
+    ip daddr 169.254.1.3 tcp dport { 8443, 8080 } accept
+    ip daddr 169.254.1.1 udp dport 53 accept
+    ip daddr 169.254.1.1 tcp dport 53 accept
   }
 }
 NFT
@@ -114,8 +121,22 @@ podman start NAME
 way workloadctl's `ExecStartPre` filter does. Step 5 is per-start; a
 wrapper or a user unit with `ExecStartPre=` makes it persistent.
 
-IPv6: pasta maps the v6 gateway too. Either rule both families or run
-pasta `-4`.
+Before step 3 the CA has to exist: nothing here mints it (under
+workloadctl `workload-vm-inspect up` does), so the operator runs
+`egress_ca.ca_openssl_argv` once into the state directory. The inspector
+refuses to start without it, by name.
+
+An unlisted host is not a closed connection: under `"inspect"` the
+inspector completes the handshake under a leaf its own CA minted for the
+refused name and answers 403, so the workload's client sees a real
+refusal. The reason is in the record, not the body.
+
+`tests/manual/shape1_rig.py` is this recipe as a rig, and the rig is
+where each line above was checked.
+
+IPv6: `--map-host-loopback` takes a v6 address as well, and the filter
+chain above is `inet`, so a v6 dial with no rule for it is dropped rather
+than leaked. Either rule both families or run pasta `-4`.
 
 ## Shape 1b: a sidecar in a pod
 

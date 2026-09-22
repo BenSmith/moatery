@@ -73,6 +73,7 @@ below — present-tense reasons, no "used to be".
 just test     # all unit tests (unittest discover; 295 on arrival)
 just lint     # compiles lib/ and both entrypoints in memory
 python3 -m unittest tests.test_closure -v   # one module
+python3 tests/manual/shape1_rig.py          # on the proving host, as the user
 ```
 
 `tests/__init__.py` puts `lib/` on `sys.path`; test modules import as
