@@ -71,7 +71,7 @@ below — present-tense reasons, no "used to be".
 
 ```bash
 just test     # all unit tests (unittest discover; 295 on arrival)
-just lint     # py_compile of lib/ and both entrypoints
+just lint     # compiles lib/ and both entrypoints in memory
 python3 -m unittest tests.test_closure -v   # one module
 ```
 
