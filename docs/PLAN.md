@@ -148,3 +148,7 @@ the dependency model's: an RPM dependency, and the first fact's
 constants becoming a published interface. Shapes 2 (a VM inside the
 container) and 3 (cosy) follow from whichever is chosen; cosy's half of
 shape 3 lives in the cosy repo.
+
+Decided 2026-09-22: dependency, with the copy and the mirror rule as
+the interim until customs' first release. `EXTRACTION.md` has the
+reasoning and what the switch costs on the workloadctl side.

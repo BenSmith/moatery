@@ -6,7 +6,7 @@
 workloads, to be lifted out of workloadctl into its own project. Read
 `README.md`, then `docs/DESIGN.md` (how the pair applies to a rootless
 container, a pod sidecar, a VM, and cosy) and `docs/EXTRACTION.md` (which
-modules lift, which stay, and the open copy-vs-dependency decision).
+modules lift, which stay, and the copy-vs-dependency decision).
 
 ## Where the code came from
 
@@ -32,9 +32,11 @@ Design, threat model and operating instructions for the pair as it exists:
   tests/manual/README.md   # "Writing a row here" preamble, before any rig
 ```
 
-workloadctl still carries its own copy and is not yet a consumer of this
-one; the copy-vs-dependency decision in `docs/EXTRACTION.md` is open.
-Until it is made, a fix that matters to both goes to both.
+The decision in `docs/EXTRACTION.md` is dependency: workloadctl will
+require customs and run its entrypoints. Until customs has a first
+release there is nothing to require, so workloadctl keeps its copy and a
+fix that matters to both goes to both. At the release the copy there is
+deleted.
 
 The prose is renamed: nothing under `lib/` or `libexec/` says
 "workloadctl", cites its docs, or narrates history. Module names and
@@ -45,8 +47,8 @@ the two entrypoints' names, and what step 4 of the plan added: the
 broker's `--listen unix:PATH` (`UnixServer`, `peer_uid_unix`), the
 inspector's `--broker unix:PATH` and `--caller-uid`, the record naming a
 unix upstream, and the `userns_ranges` column fix (mirrored to
-workloadctl on a branch; the flags are customs-only until the
-copy-vs-dependency decision).
+workloadctl on a branch; the flags reach workloadctl with the
+dependency, not by mirror).
 
 `container/` is the shape-1b sidecar image: `Containerfile` and
 `customs-sidecar`, the entrypoint that is the unit file as a process.

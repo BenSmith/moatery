@@ -76,4 +76,6 @@ identifiers are not. Three flags and one fix have been added since the
 copy: the broker's `--listen unix:PATH`, the inspector's `--broker
 unix:PATH` and `--caller-uid`, and `peer_identity.userns_ranges` reading
 the inside column of `uid_map`; the fix is mirrored to workloadctl on a
-branch, the flags are not yet.
+branch, the flags are not. The lift is decided as a dependency
+(`docs/EXTRACTION.md`): workloadctl keeps its copy until customs has a
+first release, then requires this package instead.
