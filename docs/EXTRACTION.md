@@ -43,6 +43,22 @@ would come across with them; the manual rigs (`broker_rig.py`,
 `container_egress_rig.py`) are workloadctl-shaped and would be replaced
 by a customs-shaped one.
 
+## Copied
+
+All 24 modules and both entrypoints, verbatim, on 2026-09-22, plus
+`tests/__init__.py`, `tests/covhelper.py` and the six unit-test modules
+whose lib imports lie entirely inside the closure:
+`test_broker_config`, `test_broker_identity`, `test_broker_request`,
+`test_inspect_terminate`, `test_mint`, `test_vm_status`. workloadctl's
+two closure tests were replaced by `test_closure.py`.
+
+Not yet copied, because it imports the workloadctl side for fixtures:
+`test_inspect_listener.py` (229 tests) needs `egress_policy`'s two
+TOML-to-JSON renderers and `workload_addr.INSPECT_LISTENER_BIN`. Bringing
+it means a small fixtures module here that builds the same documents by
+hand. The other twelve partial modules are workloadctl's own (arming,
+diagnose, units, generator) and stay.
+
 ## Open decision
 
 Lift as a copy (two trees, workloadctl keeps its own) or lift and have

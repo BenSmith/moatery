@@ -66,4 +66,9 @@ point at it, the socket-activated inspector, the broker's flags and
 
 ## Status
 
-Design and inventory. No code has been lifted yet.
+The code is here as a verbatim copy of the workloadctl modules
+(2026-09-22): `libexec/customs-broker`, `libexec/customs-inspect`, the
+24-module closure under `lib/`, and the unit tests that import only that
+closure (295, green). Names, docstrings and comments still speak of
+workloadctl and workloads; renaming is the next job. No sidecar image, no
+units, no rig yet.

@@ -8,10 +8,10 @@ workloads, to be lifted out of workloadctl into its own project. Read
 container, a pod sidecar, a VM, and cosy) and `docs/EXTRACTION.md` (which
 modules lift, which stay, and the open copy-vs-dependency decision).
 
-## Where the source of truth is today
+## Where the code came from
 
-The code is not here yet. It lives in the hypervisor repo, which is
-checked out beside this one:
+`lib/`, `libexec/` and the tests are a verbatim copy (2026-09-22) of
+these, in the hypervisor repo checked out beside this one:
 
 ```
 ../hypervisor/workloadctl/
@@ -32,8 +32,14 @@ Design, threat model and operating instructions for the pair as it exists:
   tests/manual/README.md   # "Writing a row here" preamble, before any rig
 ```
 
-Until code is lifted, treat those as read-only references: changes to the
-programs go into workloadctl on its own terms, not here.
+workloadctl still carries its own copy and is not yet a consumer of this
+one; the copy-vs-dependency decision in `docs/EXTRACTION.md` is open.
+Until it is made, a fix that matters to both goes to both.
+
+The copy is verbatim: module names, docstrings and comments still say
+"workload", "workloadctl", "guest" and cite workloadctl docs by path.
+Renaming and rewording is owed, and it should be done in the style
+below — present-tense reasons, no "used to be".
 
 ## Conventions carried over from workloadctl
 
@@ -59,5 +65,15 @@ programs go into workloadctl on its own terms, not here.
 
 ## Commands
 
-None yet. When code lands: `just test` (unittest discover), `just lint`
-(py_compile), same shape as workloadctl.
+```bash
+just test     # all unit tests (unittest discover; 295 on arrival)
+just lint     # py_compile of lib/ and both entrypoints
+python3 -m unittest tests.test_closure -v   # one module
+```
+
+`tests/__init__.py` puts `lib/` on `sys.path`; test modules import as
+`tests.<name>`, and `load_script()` imports the extension-less
+entrypoints. `tests/test_closure.py` holds lib/ to be exactly the two
+closures, with no TOML, no passwd lookup and no derived value — it
+replaces workloadctl's two closure tests, whose other half (the generator
+handing every value across) has no counterpart here.
