@@ -15,9 +15,9 @@ never handle yourself. Same two jobs here. 🛃
 Two programs, stdlib Python, no config file, everything on the
 command line:
 
-- **customs-inspect** — a transparent egress inspector. Outbound 443 (and
-  80) from the workload is redirected into it; it reads the SNI or Host,
-  matches an allow-list, terminates TLS under a per-workload CA the
+- **customs-inspect** — a transparent egress inspector. Outbound 443
+  (and 80) from the workload is redirected into it; it reads the SNI or
+  Host, matches an allow-list, terminates TLS under a per-workload CA the
   workload trusts, re-originates the request itself, and applies
   method/path policy. The workload sees no proxy variable and no proxy
   address; an agent that ignores its whole environment is inspected anyway.
