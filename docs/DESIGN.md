@@ -143,6 +143,33 @@ Two things come back that the host-side placement got for free:
    `--listen unix:PATH` it does not have today, and the inspector the
    matching `--broker`.
 
+**Both programs in one sidecar container.** The pod shares the network
+namespace, not the mount namespace, so the broker can listen on a
+filesystem AF_UNIX socket in the sidecar's own tmpfs
+(`/run/customs/broker.sock`); the inspector beside it dials that, and the
+workload container has no path to it — not by rule, by there being no
+such file in its mount namespace. (A path socket, not an abstract one:
+abstract sockets live in the netns and the workload would see it.) This
+is the "unmapped address" property back, by a different mechanism, and
+it makes the single-image sidecar the better of the two.
+
+The privilege boundary between the two programs survives inside one
+container as two uids: the broker as uid B owning the key file `0400` and
+the socket `0660` under a shared group, the inspector as uid A,
+`--cap-drop all` so no `DAC_OVERRIDE` bridges them. The inspector is the
+exposed surface (it parses workload-controlled ClientHellos and HTTP/1
+and /2 framing); the broker holds the key; the socket hop is the line.
+
+What it costs the programs: the broker's `--listen unix:PATH` and the
+inspector's matching `--broker`, and nothing else. `podman run --secret`
+mounts the key at `/run/secrets/NAME`, and `CREDENTIALS_DIRECTORY=/run/secrets`
+lets the broker's existing loader find it. `systemd-socket-activate -l
+127.0.0.1:8443 -l 127.0.0.1:8080 customs-inspect …` sets `LISTEN_FDS`
+without systemd. An entrypoint starts the broker as B and execs the
+activator as A. The netns rules exempt both uids from the redirect (the
+broker's upstream dials leave through the same netns), and the workload
+container holds no `CAP_SETUID`.
+
 What it buys is distribution: the inspector becomes an image, not a host
 install. That is the cosy-shaped requirement — cosy is one script that
 installs nothing. On a host that already carries the RPM, shape 1 is
