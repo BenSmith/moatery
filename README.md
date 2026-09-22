@@ -12,7 +12,7 @@ never handle yourself. Same two jobs here. 🛃
 
 ## What it is
 
-Two small programs, stdlib Python, no config file, everything on the
+Two programs, stdlib Python, no config file, everything on the
 command line:
 
 - **customs-inspect** — a transparent egress inspector. Outbound 443 (and
@@ -25,8 +25,8 @@ command line:
   names a credential, the inspector sends that request to the broker
   instead of the origin. The broker discards whatever header the workload
   sent (a placeholder, so the SDK is happy), attaches the real one, and
-  dials the provider from the host. The placeholder never leaves loopback;
-  the key never enters the workload.
+  dials the provider itself, from outside the workload. The placeholder
+  never leaves loopback; the key never enters the workload.
 
 The workload cannot name the broker, cannot choose to use it, and cannot
 be pointed at another workload's. The only thing that dials the broker is
@@ -49,9 +49,10 @@ applies outside workloadctl.
 Something *outside* the workload has to own the workload's outbound
 sockets, so rules can select them without the workload's cooperation.
 
-- On the hypervisor that owner is a **dedicated uid** — passt/pasta
-  re-originate the workload's traffic as host sockets owned by it, and
-  `meta skuid` selects them. Needs root.
+- Under workloadctl, on a hypervisor host, that owner is a **dedicated
+  uid per workload** — passt/pasta re-originate the workload's traffic as
+  host sockets owned by that uid, and `meta skuid` selects them. Needs
+  root.
 - Without root there is no uid to spend, so the owner is a **network
   namespace you are root in and the workload is not**. A rootless podman
   container is the cheapest way to get one; rules go inside its netns via
@@ -61,7 +62,7 @@ sockets, so rules can select them without the workload's cooperation.
 
 Everything else — the policy document, the CA bundle and the env vars that
 point at it, the socket-activated inspector, the broker's flags and
-`$CREDENTIALS_DIRECTORY` — is the same on both.
+`$CREDENTIALS_DIRECTORY` — is the same in both placements.
 
 ## Status
 

@@ -2,7 +2,7 @@
 
 workloadctl runs the pair as root on a hypervisor with a dedicated uid per
 workload. This is what it looks like with nothing but a normal user, for
-each of the three shapes that matter.
+each shape that matters.
 
 ## What carries over unchanged
 
@@ -58,7 +58,8 @@ Reachability follows from pasta's loopback mapping:
   443 to `<gateway>:<port>`.
 - The broker binds any `127.x.y.z ≠ 127.0.0.1`. pasta does not map it,
   so the container cannot dial it at all. That is the whole
-  "cannot name the broker" property, done by address family.
+  "cannot name the broker" property, done by pasta's mapping rather than
+  by a rule.
 - Two containers each get their own inspector port; each netns rule pins
   its own port, so neither reaches the other's.
 - DNS goes gateway → host resolver as usual. No synthesising responder is
@@ -88,7 +89,8 @@ podman create --network pasta \
   -e NODE_EXTRA_CA_CERTS=… -e REQUESTS_CA_BUNDLE=… \
   -e EXAMPLE_API_KEY=sk-placeholder  IMAGE
 podman init NAME          # netns exists, entrypoint not yet running
-# 5. rules into the netns — this replaces meta skuid
+# 5. rules into the netns — this replaces meta skuid. GW is the
+#    container's gateway address (podman inspect / ip route inside).
 podman unshare nsenter -t "$(podman inspect -f '{{.State.Pid}}' NAME)" -n nft -f - <<'NFT'
 table inet customs {
   chain out {
@@ -115,7 +117,7 @@ wrapper or a user unit with `ExecStartPre=` makes it persistent.
 IPv6: pasta maps the v6 gateway too. Either rule both families or run
 pasta `-4`.
 
-## Shape 1b: the inspector as a sidecar in a pod
+## Shape 1b: a sidecar in a pod
 
 Same container, but the inspector is a second container in a `podman
 pod` rather than a host process. `podman pod create` starts the infra
@@ -123,7 +125,7 @@ container, so the netns exists before any workload process does — rules
 go in, then the sidecar starts, then the workload. The redirect is plain
 `tcp dport 443 redirect to :8443` on loopback; no gateway mapping.
 
-Two things come back that the host-side placement got for free:
+Two things the host-side placement got for free have to be handled again:
 
 1. **A discriminator.** The inspector's re-originated traffic now leaves
    through the same netns as the workload's, so the rules must tell them
@@ -134,12 +136,15 @@ Two things come back that the host-side placement got for free:
    one uid can be the selector. `socket cgroupv2` also works and cannot
    be forged from inside; it is fiddlier.
 2. **Broker reachability.** The host's `127.129.0.1` is unmapped from the
-   pod, so "the workload cannot name the broker" is no longer a property
-   of the address family. Either the broker is a third container behind
-   a `skuid`-keyed rule, or — better — it stays on the host listening on
-   an AF_UNIX socket bind-mounted into the sidecar alone. `SO_PEERCRED`
-   is a stronger caller check than `/proc/net/tcp`, and the workload has
-   no path to a socket it was never given. This costs the broker a
+   pod, so "the workload cannot name the broker" is no longer something
+   pasta's mapping gives for free. Three placements restore it: the
+   broker as a third container in the pod behind a `skuid`-keyed rule;
+   the broker on the host, listening on an AF_UNIX socket bind-mounted
+   into the sidecar alone; or the broker inside the same sidecar
+   container as the inspector, which is the one to take and is described
+   next. The two AF_UNIX placements share an advantage: `SO_PEERCRED` is
+   a stronger caller check than `/proc/net/tcp`, and the workload has no
+   path to a socket it was never given. Either costs the broker a
    `--listen unix:PATH` it does not have today, and the inspector the
    matching `--broker`.
 
@@ -149,9 +154,9 @@ filesystem AF_UNIX socket in the sidecar's own tmpfs
 (`/run/customs/broker.sock`); the inspector beside it dials that, and the
 workload container has no path to it — not by rule, by there being no
 such file in its mount namespace. (A path socket, not an abstract one:
-abstract sockets live in the netns and the workload would see it.) This
-is the "unmapped address" property back, by a different mechanism, and
-it makes the single-image sidecar the better of the two.
+abstract socket names live in the netns, and the workload could reach
+one.) This is the "unmapped address" property back by a different
+mechanism, without a second image or a host install.
 
 The privilege boundary between the two programs survives inside one
 container as two uids: the broker as uid B owning the key file `0400` and
@@ -160,26 +165,26 @@ the socket `0660` under a shared group, the inspector as uid A,
 exposed surface (it parses workload-controlled ClientHellos and HTTP/1
 and /2 framing); the broker holds the key; the socket hop is the line.
 
-What it costs the programs: the broker's `--listen unix:PATH` and the
-inspector's matching `--broker`, and nothing else. `podman run --secret`
-mounts the key at `/run/secrets/NAME`, and `CREDENTIALS_DIRECTORY=/run/secrets`
-lets the broker's existing loader find it. `systemd-socket-activate -l
+The programs need only the `--listen unix:PATH` / `--broker` pair above.
+The rest is packaging: `podman run --secret` mounts the key at
+`/run/secrets/NAME`, and `CREDENTIALS_DIRECTORY=/run/secrets` lets the
+broker's existing loader find it; `systemd-socket-activate -l
 127.0.0.1:8443 -l 127.0.0.1:8080 customs-inspect …` sets `LISTEN_FDS`
-without systemd. An entrypoint starts the broker as B and execs the
+without systemd; an entrypoint starts the broker as B and execs the
 activator as A. The netns rules exempt both uids from the redirect (the
 broker's upstream dials leave through the same netns), and the workload
 container holds no `CAP_SETUID`.
 
-What it buys is distribution: the inspector becomes an image, not a host
-install. That is the cosy-shaped requirement — cosy is one script that
-installs nothing. On a host that already carries the RPM, shape 1 is
-strictly simpler. The CA private key lives in the pod either way the
-sidecar is used; a workload-container escape is a host escape, so this
-is not a new exposure, but it is worth saying.
+What the sidecar buys is distribution: the pair becomes an image, not a
+host install. That is the cosy-shaped requirement — cosy is one script
+that installs nothing. On a host that already carries the RPM, shape 1
+is strictly simpler. In either sidecar variant the CA private key lives
+in the pod; a workload-container escape is a host escape, so this is not
+a new exposure, but it is worth saying.
 
 ## Shape 2: a VM
 
-Run qemu inside the shape-1 container with `--device /dev/kvm` and
+Run qemu inside a shape-1 container with `--device /dev/kvm` and
 `-netdev passt` (or `passt --socket` + `-netdev stream`). The guest's
 egress is now the container's egress and the recipe applies verbatim.
 Guest root can rewrite the guest's own nft all day; the rules that matter
@@ -215,15 +220,16 @@ boundary the rules hang on.
 
 ## Shape 3: a cosy container
 
-[cosy](../../cosy) is shape 1 — or, for an install-nothing distribution, shape 1b — with a home directory and a display. Its
-`cosy network` subcommand already enters the container's netns from the
-host via `podman unshare nsenter`, so the rule step has a place to live,
-and cosy passes `--volume`/`--env` through to podman. What cosy would
-need to grow: a way to say the policy (`cosy network policy NAME
---allow HOST --credential HOST=CRED` writing the JSON) and the four unit
-files. Base cosy containers hold 5 capabilities, none of them
-`NET_ADMIN`; a cosy container on a custom network gains `NET_ADMIN` and
-is out of scope.
+[cosy](https://github.com/BenSmith/cosy) is shape 1 — or, since it
+installs nothing on the host, shape 1b — with a home directory and a
+display. Its `cosy network` subcommand already enters the container's
+netns from the host via `podman unshare nsenter`, so the rule step has a
+place to live, and cosy passes `--volume`/`--env` through to podman. What
+cosy would need to grow: a way to say the policy (`cosy network policy
+NAME --allow HOST --credential HOST=CRED` writing the JSON) and either
+the user units or the sidecar. Base cosy containers hold 5 capabilities,
+none of them `NET_ADMIN`; a cosy container on a custom network gains
+`NET_ADMIN` and is out of scope.
 
 ## What workloadctl has that this does not, on purpose
 
@@ -235,8 +241,8 @@ tests could fence them out.
 
 ## Proving it
 
-The same discipline that found every real defect in workloadctl's
-versions: one container (or one VM in one) on a KVM host, hand-written
+The same discipline that found every real defect the pair had under
+workloadctl: one container (or one VM in one) on a KVM host, hand-written
 user units, the netns rules, a placeholder in the workload's environment,
 and one real request that reaches the provider carrying the sealed key.
 Plus the negative probes: dial the broker's address from inside (must
