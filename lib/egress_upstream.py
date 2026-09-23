@@ -332,10 +332,16 @@ def dial_failure_reason(host: str, internal) -> str:
 
     Two failures arrive as the same OSError. A name that resolves into
     private space with no `internal` entry -- `internal` is the
-    policy's set of the names that have one -- was refused by the
-    kernel's internal drop -- the wildcard trap firing, and an operator one
-    line from a working config. A name that resolves anywhere else, or that
-    has an entry already, is a host that is down.
+    policy's set of the names that have one -- was refused by the host's
+    private-address rule, and the operator is one line from a working
+    config. A name that resolves anywhere else, or that has an entry
+    already, is a host that is down.
+
+    The rule is the host's, not this program's: customs loads none, and
+    where none is loaded a dial into private space succeeds and this is
+    never asked (docs/DESIGN.md, "Private addresses"). A private host
+    that is simply down is reported as `internal destination` too; the
+    address is all there is to go on.
 
     This RE-RESOLVES the name rather than reading the address the failed
     dial used, because create_connection does not report which address it

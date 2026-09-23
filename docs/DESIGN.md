@@ -74,6 +74,55 @@ off (`--no-map-gw`) and so has to be asked for:
 `--network host` and `--network none` are out of scope, exactly as
 workloadctl excludes host mode.
 
+## Private addresses: the host's job, not customs'
+
+customs decides by NAME. It does not look at the address an allowed name
+resolves to, and neither program refuses a loopback, private or
+link-local destination. If an allowed name resolves to one -- a wildcard
+over a domain where anyone can register a subdomain, a DNS answer that
+changes between the check and the dial, or plain misconfiguration -- the
+inspector dials it on 443 or 80, and so does the broker for a brokered
+host. In shape 1 the programs run on the host as the user, so a name
+that resolves to `127.0.0.1` reaches whatever the user has listening on
+the host's loopback.
+
+Stopping that is a rule on the programs' own outbound sockets, and
+customs loads no rules. Whoever runs it writes one, where the shape gives
+them somewhere to put it:
+
+- **Shape 1b (sidecar):** the pod's netns holds the programs' sockets as
+  uids 200 and 201, so the rule goes in the filter chain of the recipe
+  below, before `meta skuid { 200, 201 } accept`. These lines load; the
+  shape-1b rig does not yet exercise them (its stand-in provider is on a
+  TEST-NET address, which this rule would drop):
+
+  ```
+  ct state established,related accept
+  ip daddr 169.254.1.1 udp dport 53 accept
+  ip daddr 169.254.1.1 tcp dport 53 accept
+  # one line per address an `internal` name resolves to, e.g.
+  # meta skuid { 200, 201 } ip daddr 10.0.0.5 tcp dport 443 accept
+  meta skuid { 200, 201 } ip daddr { 0.0.0.0/8, 10.0.0.0/8,
+      100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
+      192.168.0.0/16 } drop
+  meta skuid { 200, 201 } ip6 daddr { ::1, fc00::/7, fe80::/10 } drop
+  ```
+
+  `established,related` comes first because the inspector's replies to
+  the workload go out over loopback as uid 200.
+- **Shapes 1, 2 and 3 with the programs on the host:** there is no rule
+  to write without root. The programs' sockets are the user's, like
+  everything else the user runs, and the host has no namespace of theirs
+  to hold a rule. Here the allowlist is the whole control: keep wildcards
+  off domains other people can add names under.
+
+The policy document's `internal` list does not open anything. It names
+the hosts the operator has deliberately given a private address (and an
+accept line above), so that when a dial into private space fails the
+inspector can report `internal destination` -- a name with no accept
+line, one edit from working -- rather than `upstream unreachable`. With no
+rule loaded that dial succeeds, and the list only changes the report.
+
 ## Shape 1: a rootless podman container
 
 ```
@@ -244,7 +293,8 @@ The rules go in after the sidecar starts (the pod's netns exists from
 then) and before the workload does. Both image uids are exempt from the
 redirect and the drop, since their dials are the upstream legs and leave
 through the same netns; the workload holds no `CAP_SETUID`, so it cannot
-become one of them. The bundle the workload trusts is built from the CA
+become one of them. As written the exemption is total, private addresses
+included; "Private addresses" above has the lines that narrow it. The bundle the workload trusts is built from the CA
 the sidecar minted (`podman exec sidecar cat
 /var/lib/customs/ca/egress-ca.crt`) over the system store. The record's
 `upstream` for a brokered request reads `unix:/run/customs/broker.sock`.

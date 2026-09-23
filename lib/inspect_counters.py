@@ -171,9 +171,9 @@ class Counters:
         # `internal_refusals` is the per-host figure for DROP_INTERNAL under
         # the key the status document and the exporter name it by.
         self.internal_refusals = self.per_host[DROP_INTERNAL]
-        # The lists as LOADED, not as written in the file: `drift` cannot see
-        # them, and the question an operator has is what this process is
-        # actually enforcing.
+        # The lists as LOADED, not as written in the file: the file can have
+        # changed since the load, and the question an operator has is what
+        # this process is actually enforcing.
         #
         # EVERY list this process enforces, and a key added here whenever one
         # is added there. Three of these decide something on their own --

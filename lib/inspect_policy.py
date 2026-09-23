@@ -38,9 +38,11 @@ class Policy(NamedTuple):
     and the running policy unknowable from the file.
 
     `internal` is the document's `internal` host names, and it admits
-    nothing. The host's rules are the one enforcement point for private
-    address space; this copy exists so a failed dial into it can be
-    attributed to the wildcard trap rather than to a host that is down.
+    nothing. Nothing here refuses a private address: that is a rule on the
+    host, which customs does not load (docs/DESIGN.md, "Private
+    addresses"). This copy exists so a failed dial into private space can
+    be attributed to a missing accept line rather than to a host that is
+    down.
     """
 
     tls: str

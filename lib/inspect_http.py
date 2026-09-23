@@ -307,9 +307,9 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
     except OSError as exc:
         # THE BROKER LEG GETS ITS OWN REASON AND ITS OWN SENTENCE, and does
         # NOT go through dial_failure_reason: that helper re-resolves the
-        # HOST to decide whether the wildcard trap fired, and the name that
-        # failed here was never dialled -- a loopback address on this box
-        # was. Running it would attribute a dead broker to whatever
+        # HOST to decide whether a private-address rule refused it, and the
+        # name that failed here was never dialled -- a loopback address on
+        # this box was. Running it would attribute a dead broker to whatever
         # `req.host` happens to resolve to, which is the most confusing
         # possible answer, and would pay a synchronous getaddrinfo for it.
         if credential:
