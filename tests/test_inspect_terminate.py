@@ -1406,7 +1406,7 @@ class TestNonHttpInsideATerminatedSessionIsClosed(TerminationCase):
                          "a close, not an HTTP response written into a "
                          "protocol that is not HTTP")
         self.assertEqual(origin.requests, [])
-        self.assertIn("reason='not HTTP", out.getvalue())
+        self.assertIn('reason="not HTTP', out.getvalue())
 
     def test_it_is_counted_as_not_http_and_not_as_an_unreadable_request(self):
         origin = _Origin(self.origin_pem)

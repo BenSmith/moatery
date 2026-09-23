@@ -80,31 +80,22 @@ def serve_tls(insp, conn, where):
         # would fail every guest handshake with an opaque certificate error,
         # which is the one failure this whole path exists to avoid, and a
         # test that constructed one would otherwise get it silently.
-        insp.counters.record_drop(DROP_MINT_FAILED)
-        insp.connection_record(where, "terminate", decision="drop",
-                                          reason=DROP_MINT_FAILED)
-        insp.log(f"drop {where} reason='could not mint a leaf: this "
-                            f"listener has no minter'")
+        insp.drop(where, DROP_MINT_FAILED, "this listener has no minter",
+                  mode="terminate")
         return
     try:
         hello = read_client_hello(conn)
     except HelloUnreadable as exc:
-        insp.counters.record_unreadable_hello()
-        insp.counters.record_drop(DROP_NO_NAME)
-        insp.connection_record(where, "terminate", decision="drop",
-                                          reason=DROP_NO_NAME)
-        insp.log(f"drop {where} reason='no readable name: {exc}'")
+        insp.drop(where, DROP_NO_NAME, exc, mode="terminate")
         return
     if not hello.server_name:
         # The tripwire runs BEFORE the drop and with on_a_list False: a
         # hello that withholds SNI matched nothing, and if it also carried
         # ECH that is the strongest form of the signal, not an absent one.
         insp.counters.record_hello(hello, False)
-        insp.counters.record_drop(DROP_NO_NAME)
-        insp.connection_record(where, "terminate", decision="drop",
-                                          reason=DROP_NO_NAME)
-        insp.log(f"drop {where} reason='no readable name: the "
-                            f"ClientHello carries no server_name extension'")
+        insp.drop(where, DROP_NO_NAME,
+                  "the ClientHello carries no server_name extension",
+                  mode="terminate")
         return
     host = normalise_hostname(hello.server_name)
     # `admits`, not a bare `hosts` match: a `policy` entry
@@ -125,11 +116,7 @@ def serve_tls(insp, conn, where):
         _serve_tls_inspect(insp, conn, where, host, allowed)
         return
     if not allowed:
-        insp.counters.record_drop(DROP_NOT_ALLOWLISTED, host)
-        insp.connection_record(where, "splice", host=host,
-                                          decision="drop",
-                                          reason=DROP_NOT_ALLOWLISTED)
-        insp.log(f"drop {where} host={host} reason='not allowlisted'")
+        insp.drop(where, DROP_NOT_ALLOWLISTED, host=host, mode="splice")
         return
     # Dial the NAME, never an address. The address the guest aimed
     # at is this inspector's own listener anyway -- the redirect already
@@ -140,11 +127,8 @@ def serve_tls(insp, conn, where):
         upstream = socket.create_connection(
             (host, TLS.guest_port), timeout=egress_relay.CONNECTION_TIMEOUT)
     except OSError as exc:
-        reason = dial_failure_reason(host, insp.policy.internal)
-        insp.counters.record_drop(reason, host)
-        insp.connection_record(where, "splice", host=host,
-                                          decision="drop", reason=reason)
-        insp.log(f"drop {where} host={host} reason='{reason}: {exc}'")
+        insp.drop(where, dial_failure_reason(host, insp.policy.internal), exc,
+                  host=host, mode="splice")
         return
     try:
         # The hello is still on the socket, so the relay sends it first and
@@ -294,18 +278,11 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
         # Nothing legible can be delivered without a leaf, so this is the
         # one outcome that closes on the guest. It is reachable only after
         # the bucket has been emptied, which honest traffic does not do.
-        insp.counters.record_drop(DROP_THROTTLED, host)
-        insp.connection_record(where, "terminate", host=host,
-                               decision="drop", reason=DROP_THROTTLED)
-        insp.log(f"drop {where} host={host} reason='mint rationed: the "
-                 f"leaf bucket is empty'")
+        insp.drop(where, DROP_THROTTLED, "the leaf bucket is empty",
+                  host=host, mode="terminate")
         return
     except (LeafRefused, MintFailed) as exc:
-        insp.counters.record_drop(DROP_MINT_FAILED, host)
-        insp.connection_record(where, "terminate", host=host,
-                               decision="drop", reason=DROP_MINT_FAILED)
-        insp.log(f"drop {where} host={host} "
-                 f"reason='could not mint a leaf: {exc}'")
+        insp.drop(where, DROP_MINT_FAILED, exc, host=host, mode="terminate")
         return
     finally:
         # The upstream leg is open by now on the allowed path -- except a
@@ -342,21 +319,15 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
         # say so if it ever does: it means that sizing is wrong, and no
         # other line would ever tell anyone.
         if not leaf.path.exists():
-            insp.counters.record_drop(DROP_MINT_FAILED, host)
-            insp.connection_record(where, "terminate", host=host,
-                                   decision="drop",
-                                   reason=DROP_MINT_FAILED)
-            insp.log(f"drop {where} host={host} reason='the leaf minted "
-                     f"for this connection was evicted before it could be "
-                     f"presented: {exc}. This is a cache-sizing fault, "
-                     f"not a trust one -- the leaf cache must hold more "
-                     f"entries than there are connection slots'")
+            insp.drop(where, DROP_MINT_FAILED,
+                      f"the leaf minted for this connection was evicted "
+                      f"before it could be presented: {exc}. This is a "
+                      f"cache-sizing fault, not a trust one -- the leaf "
+                      f"cache must hold more entries than there are "
+                      f"connection slots", host=host, mode="terminate")
             if upstream is not None:
                 upstream.sock.close()
             return
-        insp.counters.record_drop(DROP_RELAY_FAILED, host)
-        insp.connection_record(where, "terminate", host=host,
-                               decision="drop", reason=DROP_RELAY_FAILED)
         # NAMES BOTH SHAPES. "The workload was provisioned before it had a
         # CA and must be re-provisioned" is true for one, and actively
         # misleading for the other, which has nothing to re-provision and
@@ -373,8 +344,9 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
         # that did not complete and nothing about how the client was built
         # -- so it names both and the remedy each one needs, rather than
         # guessing and being confidently wrong for one of them.
-        insp.log(f"drop {where} host={host} reason='the client did not "
-                 f"complete the handshake: {exc}. It did not trust the "
+        insp.drop(where, DROP_RELAY_FAILED,
+                 f"the client did not complete the handshake: {exc}. It "
+                 f"did not trust the "
                  f"leaf this workload minted, which has two shapes and "
                  f"they need different remedies. (1) A client that COULD "
                  f"be given the CA and was not: a workload provisioned "
@@ -386,7 +358,7 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
                  f"JVM, or anything on rustls. For (2) there is no CA "
                  f"route to fix: add {host} to the `splice` list "
                  f"so the connection is spliced rather than terminated, or "
-                 f"change the image'")
+                 f"change the image", host=host, mode="terminate")
         if upstream is not None:
             upstream.sock.close()
         return
@@ -397,19 +369,9 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
     try:
         if refusal is not None:
             reason, status, phrase, text = refusal
-            insp.counters.record_drop(reason, host)
             insp.counters.record_bump()
-            # THE MOST COMMON DENIAL ON THIS PLANE, and it never reaches
-            # inspect_http.serve_request: the decision was taken from the
-            # server name before the guest's handshake completed, so there
-            # is no
-            # request to hang it on. Without this the record's terminated
-            # plane holds every allowed request and no refused one.
-            insp.connection_record(where, "terminate", host=host,
-                                              decision="drop", reason=reason,
-                                              status=status)
-            insp.log(f"bump {where} host={host} status={status} "
-                                f"reason='{reason}: {text}'")
+            insp.drop(where, reason, text, host=host, mode="terminate",
+                      answered=status, verb="bump", status=status)
             # The text is the operator's; the guest gets the status alone.
             _bump_answer(tls_conn, status, phrase)
             return
@@ -502,22 +464,12 @@ def _serve_h2(insp, tls_conn, where, host, upstream):
         try:
             preface = client.read_exactly(len(H2_PREFACE))
         except (RequestUnreadable, OSError) as exc:
-            insp.counters.record_drop(DROP_NOT_H2, host)
-            rec.set(decision="drop", reason=DROP_NOT_H2)
-            insp.log(f"drop {where} host={host} reason='not HTTP/2: the "
-                     f"connection preface never arrived ({exc}); drop "
-                     f"{host} from the `http2` list, or move it "
-                     f"to the splice list'")
+            _drop_not_h2(insp, where, host, rec,
+                         f"the connection preface never arrived ({exc})")
             return
         if preface != H2_PREFACE:
-            insp.counters.record_drop(DROP_NOT_H2, host)
-            rec.set(decision="drop", reason=DROP_NOT_H2)
-            insp.log(f"drop {where} host={host} reason='not HTTP/2: "
-                     f"{preface[:8]!r} is not the connection preface, and "
-                     f"{host} is in the `http2` list. Either it "
-                     f"does not speak h2 -- drop the entry -- or it speaks "
-                     f"something this cannot police, and belongs in the "
-                     f"splice list instead'")
+            _drop_not_h2(insp, where, host, rec,
+                         f"{preface[:8]!r} is not the connection preface")
             return
         framing = H2Framing()
         # Everything the preface read pulled in past its own 24 bytes. It is
@@ -528,8 +480,7 @@ def _serve_h2(insp, tls_conn, where, host, upstream):
         try:
             framing.feed(surplus)
         except NotH2 as exc:
-            _drop_not_h2(insp, where, host, exc)
-            rec.set(decision="drop", reason=DROP_NOT_H2)
+            _drop_not_h2(insp, where, host, rec, exc)
             return
         try:
             upstream.sock.sendall(preface + surplus)
@@ -543,23 +494,15 @@ def _serve_h2(insp, tls_conn, where, host, upstream):
             if early:
                 tls_conn.sendall(early)
         except OSError as exc:
-            insp.counters.record_drop(DROP_RELAY_FAILED, host)
-            rec.set(decision="drop", reason=DROP_RELAY_FAILED)
-            insp.log(f"drop {where} host={host} "
-                                f"reason='relay failed: {exc}'")
+            insp.drop(where, DROP_RELAY_FAILED, exc, host=host, rec=rec)
             return
         try:
-            relay(tls_conn, upstream.sock,
-                        on_client_bytes=framing.feed)
+            relay(tls_conn, upstream.sock, on_client_bytes=framing.feed)
         except NotH2 as exc:
-            _drop_not_h2(insp, where, host, exc)
-            rec.set(decision="drop", reason=DROP_NOT_H2)
+            _drop_not_h2(insp, where, host, rec, exc)
             return
         except OSError as exc:
-            insp.counters.record_drop(DROP_RELAY_FAILED, host)
-            rec.set(decision="drop", reason=DROP_RELAY_FAILED)
-            insp.log(f"drop {where} host={host} "
-                                f"reason='relay failed: {exc}'")
+            insp.drop(where, DROP_RELAY_FAILED, exc, host=host, rec=rec)
             return
         # The session ran. Recorded as a forward and counted as a blind
         # spot in the same breath, because both are true of it.
@@ -570,21 +513,18 @@ def _serve_h2(insp, tls_conn, where, host, upstream):
             # here would make a stream that stopped framing halfway
             # indistinguishable from one that ended, which is the case
             # worth seeing.
-            _drop_not_h2(
-                insp, where, host,
-                NotH2("the connection ended part-way through a frame"))
-            rec.set(decision="drop", reason=DROP_NOT_H2)
+            _drop_not_h2(insp, where, host, rec,
+                         "the connection ended part-way through a frame")
     finally:
         rec.emit()
         upstream.sock.close()
 
 
-def _drop_not_h2(insp, where, host, exc):
-    insp.counters.record_drop(DROP_NOT_H2, host)
-    insp.log(f"drop {where} host={host} reason='not HTTP/2: {exc}. "
-             f"{host} is in the `http2` list and this session did "
-             f"not speak h2; drop the entry, or move the host to the "
-             f"splice list'")
+def _drop_not_h2(insp, where, host, rec, why):
+    insp.drop(where, DROP_NOT_H2,
+              f"{why}. {host} is in the `http2` list and this session did "
+              f"not speak h2; drop the entry, or move the host to the "
+              f"splice list", host=host, rec=rec)
 
 
 def serve_terminated(insp, tls_conn, where, host, upstream):
@@ -660,23 +600,17 @@ def _is_http(insp, client, conn, where, host):
     # Asked of the policy, not of the request: there is no request. See
     # Policy.governs.
     if insp.policy.governs(host):
-        insp.counters.record_drop(DROP_NOT_HTTP_POLICY, host)
-        insp.connection_record(where, "terminate", host=host,
-                                          decision="drop",
-                                          reason=DROP_NOT_HTTP_POLICY)
-        insp.log(
-            f"drop {where} host={host} reason='not HTTP (policy entry): "
+        insp.drop(
+            where, DROP_NOT_HTTP_POLICY,
             f"this session was terminated and {start[:8]!r} does not begin "
             f"a request line, so the `policy` entry for {host} never ran "
             f"and never will. Either the host does not belong in `policy` "
             f"at all, or it needs a `splice` entry AND that `policy` entry "
-            f"deleted -- a host cannot be in both'")
+            f"deleted -- a host cannot be in both",
+            host=host, mode="terminate")
         return False
-    insp.counters.record_drop(DROP_NOT_HTTP, host)
-    insp.connection_record(where, "terminate", host=host,
-                                      decision="drop", reason=DROP_NOT_HTTP)
-    insp.log(f"drop {where} host={host} reason='not HTTP: this session "
-             f"was terminated and {start[:8]!r} does not begin a request "
-             f"line. Add {host} to the `splice` list if it needs "
-             f"to keep end-to-end TLS'")
+    insp.drop(where, DROP_NOT_HTTP,
+              f"this session was terminated and {start[:8]!r} does not "
+              f"begin a request line. Add {host} to the `splice` list if it "
+              f"needs to keep end-to-end TLS", host=host, mode="terminate")
     return False
