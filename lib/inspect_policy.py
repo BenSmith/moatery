@@ -227,12 +227,16 @@ def load_policy(path):
     # Unnormalised, like `splice` and for the same reason: these are fnmatch
     # PATTERNS, and hostname_match normalises both sides where they are
     # compared.
-    entries = doc.get("policy") or []
+    entries = doc.get("policy")
+    if entries is None:
+        entries = []
     if not isinstance(entries, list):
         raise ValueError(f"{path}: 'policy' is not a list")
     policy = []
     for item in entries:
-        if not isinstance(item, dict) or not isinstance(item.get("host"), str):
+        if (not isinstance(item, dict)
+                or not isinstance(item.get("host"), str)
+                or not item["host"].strip()):
             raise ValueError(f"{path}: a 'policy' entry is not a table with a "
                              f"host: {item!r}")
         # None and [] are DIFFERENT and the document distinguishes them, so
@@ -259,6 +263,15 @@ def load_policy(path):
                 raise ValueError(
                     f"{path}: policy entry {item['host']!r}: {key!r} is not "
                     f"a list or null")
+            # Each member a non-empty string, or the entry is refused: a
+            # member dropped in silence narrows the entry to something the
+            # file does not say.
+            for member in value or ():
+                if not isinstance(member, str) or not member.strip():
+                    raise ValueError(
+                        f"{path}: policy entry {item['host']!r}: {key!r} "
+                        f"holds {member!r}, which is not a "
+                        f"{'method' if key == 'methods' else 'path pattern'}")
         # `.get`, not `[...]`: a writer may emit the key only on the
         # entries that carry one, so absent and null mean the same thing
         # here and the reader is the side that pays for it. A non-string is
@@ -274,9 +287,8 @@ def load_policy(path):
         policy.append(VmPolicyEntry(
             host=item["host"],
             methods=None if methods is None else tuple(
-                m.upper() for m in methods if isinstance(m, str)),
-            paths=None if paths is None else tuple(
-                p for p in paths if isinstance(p, str)),
+                m.upper() for m in methods),
+            paths=None if paths is None else tuple(paths),
             credential=credential))
     _refuse_inert_entries(path, tls, policy, splice, http2)
     return Policy(tls=tls, hosts=tuple(hosts),
@@ -294,7 +306,12 @@ def _names(doc, key, path):
     clean and then kills every connection that reaches the matcher, with
     the listener reporting itself up throughout.
     """
-    value = doc.get(key) or []
+    value = doc.get(key)
+    if value is None:
+        return []
+    # Checked before any falsiness: `{}` or `""` is a key of the wrong type,
+    # not an empty list, and reading it as one is a document that loads and
+    # says something other than it was written to.
     if not isinstance(value, list):
         raise ValueError(f"{path}: {key!r} is not a list")
     for item in value:
