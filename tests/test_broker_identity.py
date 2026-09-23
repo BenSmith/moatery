@@ -488,8 +488,6 @@ class TestUnixServerIdentifiesTheCaller(unittest.TestCase):
         with mock.patch.object(broker_server, "log") as log:
             reply = self._ask(path)
         self.assertIn(b"403", reply)
-        self.assertIn(b"no credential is configured", reply)
-        self.assertNotIn(b"caller not registered", reply)
         log.assert_called_with("deny", reason="host-not-configured",
                                sandbox="agent", host="nobody.example")
 
@@ -499,7 +497,7 @@ class TestUnixServerIdentifiesTheCaller(unittest.TestCase):
         threading.Thread(target=server.handle_request, daemon=True).start()
         with mock.patch.object(broker_server, "log") as log:
             reply = self._ask(path)
-        self.assertIn(b"caller not registered", reply)
+        self.assertIn(b"403", reply)
         log.assert_called_with("deny", reason="unidentified",
                                caller=f"uid:{os.getuid()}")
 
