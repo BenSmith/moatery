@@ -857,6 +857,110 @@ class TestPolicyLoading(unittest.TestCase):
                 mod.parse_args(full + ["--caller-uid", "agent"])
 
 
+class TestPolicyComposition(unittest.TestCase):
+    """The composition rule, asked of the Policy the listener consults.
+
+    A host with any matching `policy` entry is governed by `policy` ALONE;
+    membership in `hosts` allowlists it and contributes no rules. Among the
+    governing entries it is union, not precedence. Each policy here is
+    written by the test writer and read back by load_policy, so the rule is
+    measured on what the listener holds at run time.
+    """
+
+    def _policy(self, *entries, hosts=()):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        path = os.path.join(d, "inspect.json")
+        with open(path, "w") as f:
+            json.dump(policy_document(
+                {"tls": "inspect", "hosts": list(hosts),
+                 "policy": list(entries)}), f)
+        return load_policy(path)
+
+    def test_hosts_does_not_union_into_policy(self):
+        """Under the union reading a `hosts` entry is a `policy` entry with
+        no keys, so one wildcard written for an unrelated reason --
+        `*.github.com` for git over HTTPS -- contributes "any method, any
+        path" to `api.github.com` and the path restriction is gone."""
+        policy = self._policy({"host": "api.github.com",
+                               "methods": ["GET", "POST"],
+                               "paths": ["/repos/myorg/*"]},
+                              hosts=["*.github.com"])
+        self.assertFalse(policy.permits("api.github.com", "GET", "/user"))
+        self.assertTrue(policy.permits(
+            "api.github.com", "GET", "/repos/myorg/thing"))
+        self.assertTrue(policy.permits("codeload.github.com", "GET", "/x"))
+
+    def test_a_host_no_entry_governs_falls_back_to_hosts(self):
+        policy = self._policy({"host": "api.example.com"},
+                              hosts=["cdn.example.com"])
+        self.assertTrue(policy.permits("cdn.example.com", "DELETE", "/x"))
+        self.assertFalse(policy.permits("other.example", "GET", "/"))
+
+    def test_methods_and_paths_inside_one_entry_are_a_cross_product(self):
+        policy = self._policy({"host": "r.example",
+                               "methods": ["GET", "POST"],
+                               "paths": ["/v2/*", "/token"]})
+        for method in ("GET", "POST"):
+            for path in ("/v2/x", "/token"):
+                self.assertTrue(policy.permits("r.example", method, path),
+                                (method, path))
+        self.assertFalse(policy.permits("r.example", "DELETE", "/token"))
+        self.assertFalse(policy.permits("r.example", "GET", "/other"))
+
+    def test_entries_union_so_reordering_cannot_change_what_is_allowed(self):
+        """What lets a reviewer approve an added entry by asking whether IT
+        is acceptable, never whether it silently disabled a neighbour."""
+        a = {"host": "api.example.com", "methods": ["POST"],
+             "paths": ["/v1/messages"]}
+        b = {"host": "api.example.com", "methods": ["GET"],
+             "paths": ["/v1/models", "/v1/models/*"]}
+        for order in ((a, b), (b, a)):
+            policy = self._policy(*order)
+            self.assertTrue(policy.permits(
+                "api.example.com", "POST", "/v1/messages"))
+            self.assertTrue(policy.permits(
+                "api.example.com", "GET", "/v1/models/x"))
+            self.assertFalse(policy.permits(
+                "api.example.com", "POST", "/v1/models"))
+
+    def test_there_is_no_way_to_subtract(self):
+        """A narrower entry cannot carve an exception out of a wider one; if
+        a host needs a hole punched in it, the wide entry has to change."""
+        policy = self._policy(
+            {"host": "a.example", "methods": ["GET"], "paths": ["/v1/*"]},
+            {"host": "a.example", "methods": ["GET"],
+             "paths": ["/v1/public"]})
+        self.assertTrue(policy.permits("a.example", "GET", "/v1/admin"))
+
+    def test_host_patterns_union_too(self):
+        """A specific entry does NOT override a general one."""
+        policy = self._policy(
+            {"host": "*.example.com", "methods": ["GET"], "paths": ["/*"]},
+            {"host": "api.example.com", "methods": ["POST"],
+             "paths": ["/v1/messages"]})
+        self.assertTrue(policy.permits(
+            "api.example.com", "GET", "/anything"))
+
+    def test_case_sensitivity_is_per_field_and_paths_are_the_odd_one_out(self):
+        """Host and method compare insensitively; the path compares
+        sensitively, which is RFC-correct and still the one that surprises.
+        Pinned in both directions so a "consistency" change that lowercased
+        paths has to be a deliberate one."""
+        policy = self._policy({"host": "api.example.com",
+                               "methods": ["GET"], "paths": ["/v1/*"]})
+        self.assertTrue(policy.permits(
+            "API.Example.COM", "get", "/v1/models"))
+        self.assertTrue(policy.permits(
+            "api.example.com.", "GET", "/v1/models"))
+        self.assertFalse(policy.permits(
+            "api.example.com", "GET", "/V1/models"))
+
+    def test_an_absent_key_means_any(self):
+        policy = self._policy({"host": "a.example"})
+        self.assertTrue(policy.permits("a.example", "DELETE", "/anything"))
+
+
 class TestTheBrokerLegOverASocketPath(unittest.TestCase):
     """dial_broker with a path: a real AF_UNIX listener stands in for the
     broker, so the dial that reaches it and the one that finds no file are
