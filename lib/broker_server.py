@@ -4,12 +4,12 @@ Handler settles the caller's identity once per connection, looks the request's
 Host up in the profile table, and forwards one buffered request at a time to
 the fixed upstream with the credential attached -- the decisions themselves are
 broker_request's. The two servers bound the pool: a global ceiling, a
-per-caller ceiling, and an in-flight body budget, each refusing fast rather
-than queueing, because a sandbox that can make the broker hang can deny it to
-every other sandbox. Server is bound to an address and identifies a caller
-through the socket table; UnixServer is bound to a path and asks the socket.
-The two TLS contexts at the end are the program's: verified TLS out to the
-provider, and optional TLS in from the guest.
+small shared ceiling for every caller that is not the one served, and an
+in-flight body budget, each refusing fast rather than queueing. Server is
+bound to an address and identifies a caller through the socket table;
+UnixServer is bound to a path and asks the socket. The two TLS contexts
+at the end are the program's: verified TLS out to the provider, and
+optional TLS in from the guest.
 
 Used by `libexec/customs-broker`.
 """
@@ -33,10 +33,10 @@ from peer_identity import local_endpoints, peer_uid, peer_uid_unix
 # At most this much request body summed over every connection at once. The
 # request is buffered whole before it is forwarded, and broker_request's
 # MAX_REQUEST_BYTES bounds only one of them: MAX_CONCURRENT connections each
-# sending a legal 64 MiB body would reserve 2 GiB of host RAM. Neither the
-# per-request nor the per-caller limit helps, because no single request and
-# no single caller exceeds its own share -- the sum is the whole problem, and
-# it is not a limit either of them expresses.
+# sending a legal 64 MiB body would reserve 8 GiB of host RAM. Neither the
+# per-request nor the connection limit helps, because no single request
+# exceeds its own share -- the sum is the whole problem, and it is not a
+# limit either of them expresses.
 #
 # It matters more here than it would elsewhere: this runs on the host the
 # workloads share, so the memory in question is theirs, and a sandboxed agent
@@ -44,7 +44,7 @@ from peer_identity import local_endpoints, peer_uid, peer_uid_unix
 #
 # Past the budget a request is refused with 503 rather than queued, so a caller
 # gets a fast error it can retry instead of a hang -- the same choice the
-# per-caller connection ceiling makes.
+# connection ceilings make.
 MAX_INFLIGHT_BYTES = 256 * 1024 * 1024
 
 # The upstream leg's two timeouts, and the defaults the flags override. The
@@ -57,13 +57,14 @@ CHUNK = 64 * 1024
 
 # How long a connection may make no progress before it is dropped. Without one,
 # a caller that opens a socket and sends nothing holds its handler thread for
-# ever -- and with a bounded pool, enough of those deny the broker to every
-# other sandbox. MAX_CONCURRENT silent connections are enough.
+# ever -- and with a bounded pool, enough of those deny the broker to the
+# workload it serves.
 #
 # It bounds each blocking operation, not the request, so a client trickling
-# bytes is not caught by this; MAX_PER_CALLER is what stops one caller taking
-# the pool that way. Idle keep-alive connections are also reaped by it, which
-# is ordinary (nginx defaults to 75s) and costs a reconnect at worst.
+# bytes is not caught by this; MAX_FOREIGN is what stops any caller but the
+# served one taking the pool that way. Idle keep-alive connections are also
+# reaped by it, which is ordinary (nginx defaults to 75s) and costs a
+# reconnect at worst.
 CONNECTION_TIMEOUT = 60.0
 
 
@@ -98,13 +99,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """Resolve the caller, take a slot against its ceiling, then hand off.
 
         Identity is settled here, once per connection rather than once per
-        request: it is what the per-caller ceiling is applied to, and what
+        request: it is what the caller's ceiling is applied to, and what
         _identify then uses without scanning the socket tables again.
 
         TLS to the guest is also completed here rather than on the listening
         socket. Wrapping the listener makes accept() perform the handshake, so
         a caller that connected and then stalled it would block the accept
-        loop for every other sandbox -- a denial of service that
+        loop for every other caller -- a denial of service that
         MAX_CONCURRENT does not bound, because the connection never reaches a
         handler at all. In this thread the same stall costs one slot and
         expires on the timeout.
@@ -114,8 +115,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                                      self.client_address)
         except OSError:
             self.caller_uid = None  # peer vanished between accept and lookup
-        if not self.server.admit_caller(self.request, self.caller_uid):
-            raise CallerCeilingExceeded(self.server._bucket(self.caller_uid))
+        served = (self.caller_uid is not None
+                  and self.caller_uid != self.overflow
+                  and self.caller_uid == self.workload_uid)
+        if not self.server.admit_caller(self.request, self.caller_uid,
+                                        served=served):
+            raise CallerCeilingExceeded(
+                self.caller_uid if served else FOREIGN)
 
         guest_ctx = self.server.guest_tls_context
         if guest_ctx is not None:
@@ -160,7 +166,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """(sandbox, label) for this caller; None if it gets nothing.
 
         The uid on the far end is the identity, resolved once when the
-        connection was admitted (Server.process_request) because the per-caller
+        connection was admitted (Server.process_request) because the caller's
         connection ceiling has to know who is calling before it grants a slot.
         The two failures that mean the *mechanism* is broken -- no peer socket,
         or a uid this namespace cannot map -- are refusals, because both make
@@ -390,28 +396,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return sent
 
 
-MAX_CONCURRENT = 32
+# How many connections the broker holds at once. The one caller it serves
+# is the inspector, which funnels EVERY brokered request of its workload
+# into this one identity -- each guest connection to a brokered host holds
+# a broker connection of its own, kept alive between requests -- so this
+# is the workload's whole brokered concurrency, and it is sized against
+# the inspector's own MAX_CONNECTIONS rather than against one agent's
+# streams. Past it a connection is refused, not queued: a fast error
+# instead of a hang. The request bodies are bounded separately, by
+# MAX_INFLIGHT_BYTES, so the pool's size is threads, not memory.
+MAX_CONCURRENT = 128
 
-# ...and how many of those one caller may hold. The global bound alone is a
-# denial-of-service lever rather than a protection: a single hostile sandbox
-# opening MAX_CONCURRENT connections takes the whole pool and every other
-# sandbox is refused -- with nothing more exotic than sockets that connect
-# and send no bytes at all.
-#
-# Sandboxes do not share a budget, so one in a loop cannot reach past its own.
-# Eight concurrent streams is generous for an agent; past it the connection is
-# refused immediately rather than queued, so the caller gets a fast error
-# instead of a hang.
-MAX_PER_CALLER = 8
+# ...and how many of those every OTHER caller may hold, together. The one
+# served caller is the only one that gets anything, but a refusal still
+# costs a thread until it is answered, and on an address other uids can
+# dial -- a host, in shape 1 -- they must not be able to take the pool
+# from the workload with sockets that connect and send nothing. One shared
+# bucket rather than one per uid, so a host with many users cannot sum
+# its way past it.
+MAX_FOREIGN = 8
 
-# The bucket unidentified callers share. They are refused a credential by
-# _identify anyway; the ceiling exists so that a caller the socket tables
-# cannot resolve still cannot occupy the pool.
-UNIDENTIFIED = "unidentified"
+# The bucket every caller that is not the served one shares: other uids,
+# callers the socket tables could not resolve, and the overflow uid.
+FOREIGN = "foreign"
 
 
 class CallerCeilingExceeded(Exception):
-    """Raised out of Handler.setup() by a caller already at MAX_PER_CALLER.
+    """Raised out of Handler.setup() by a caller already at its ceiling.
 
     An exception rather than a return, because setup() has no way to decline:
     BaseRequestHandler runs setup/handle/finish from its constructor. Raising
@@ -451,7 +462,7 @@ class Pool(socketserver.ThreadingMixIn):
         self._slots = threading.BoundedSemaphore(MAX_CONCURRENT)
         self._lock = threading.Lock()
         self._held = {}       # caller bucket -> live connections
-        self._caller_of = {}  # accepted socket -> uid, handed to its handler
+        self._caller_of = {}  # accepted socket -> its caller's bucket
         self._inflight = 0    # request-body bytes reserved across all handlers
 
     def reserve_body(self, length):
@@ -479,11 +490,12 @@ class Pool(socketserver.ThreadingMixIn):
         with self._lock:
             self._inflight -= length
 
-    def _bucket(self, uid):
-        return UNIDENTIFIED if uid is None else uid
-
-    def admit_caller(self, request, uid):
+    def admit_caller(self, request, uid, *, served=False):
         """Count this connection against its caller's ceiling, or refuse it.
+
+        The served caller is bounded by the pool alone; every other caller
+        shares MAX_FOREIGN. `served` is the handler's to say, because which
+        uid is served is the handler's.
 
         Called from the handler thread rather than the accept loop, and that
         placement is measured rather than tasteful. Resolving a caller means
@@ -491,27 +503,20 @@ class Pool(socketserver.ThreadingMixIn):
         connection with ~1300 sockets on the host, and it grows with that
         number. In the accept loop every one of those milliseconds is time no
         other caller can be accepted, which hands a caller a way to slow the
-        whole broker down by connecting in a loop. A quieter version of the
-        denial of service the ceiling exists to stop.
+        whole broker down by connecting in a loop.
 
         In the handler it costs a thread, which is what MAX_CONCURRENT bounds,
         and the thread is released as soon as the refusal is raised. A caller
         over its ceiling therefore holds nothing.
-
-        The read still dominates and is still per connection. Asking the kernel
-        for one socket instead of the table (a NETLINK_INET_DIAG query filtered
-        by port) would make it O(1), and is the obvious next move if this ever
-        matters -- but it means hand-rolled netlink parsing in the one function
-        whose wrong answer is the wrong credential, so it is not a change to
-        make casually.
         """
-        bucket = self._bucket(uid)
+        bucket = uid if served else FOREIGN
+        limit = MAX_CONCURRENT if served else MAX_FOREIGN
         with self._lock:
             held = self._held.get(bucket, 0)
-            if held >= MAX_PER_CALLER:
+            if held >= limit:
                 return False
             self._held[bucket] = held + 1
-            self._caller_of[request] = uid
+            self._caller_of[request] = bucket
         return True
 
     def process_request(self, request, client_address):
@@ -537,7 +542,7 @@ class Pool(socketserver.ThreadingMixIn):
         try:
             with self._lock:
                 if request in self._caller_of:
-                    bucket = self._bucket(self._caller_of.pop(request))
+                    bucket = self._caller_of.pop(request)
                     remaining = self._held.get(bucket, 1) - 1
                     if remaining > 0:
                         self._held[bucket] = remaining
