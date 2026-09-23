@@ -21,7 +21,7 @@ Everything else follows from those three.
 | `systemd/customs-broker.service` | `~/.config/systemd/user/` | the broker, holding the credential |
 | `systemd/customs-inspect.socket` | `~/.config/systemd/user/` | the inspector's listeners, 127.0.0.1:8443 and :8080 |
 | `systemd/customs-inspect.service` | `~/.config/systemd/user/` | the inspector, started by the socket |
-| `systemd/customs-logrotate.{service,timer}` | `~/.config/systemd/user/` | daily rotation of the record |
+| `systemd/customs-logrotate.{service,timer}` | `~/.config/systemd/user/` | rotation of the record: daily, or hourly once past 100M |
 | `logrotate/customs.conf` | `~/.config/customs/logrotate.conf` | with `USER` replaced |
 
 The paths below use the default XDG directories: `~/.config` is `%E`
@@ -80,7 +80,8 @@ are steps 4 and 5 of shape 1 in [DESIGN.md](../docs/DESIGN.md).
 ## What it writes
 
 - `~/.local/state/log/customs/requests.log`: one JSON line per request
-  or refused connection, mode 0600.
+  or refused connection, mode 0600. Past 512 MiB the inspector drops
+  lines, and counts them as write failures, until the file is rotated.
 - `~/.local/state/customs/status.json`: counters, rewritten every 30
   seconds and at stop, with the digest of the policy the running
   inspector loaded.

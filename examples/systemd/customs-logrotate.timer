@@ -1,8 +1,8 @@
 [Unit]
-Description=Rotate the customs request record daily
+Description=Rotate the customs request record
 
 [Timer]
-OnCalendar=daily
+OnCalendar=hourly
 Persistent=true
 
 [Install]
