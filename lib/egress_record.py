@@ -6,7 +6,7 @@ The vocabulary of one refusal (`DROP_*`, `DROP_REASONS`, the per-host subset),
 the shape of one line of the per-request record (`RECORD_FIELDS` and the
 closed sets three of its fields draw from), and the writer (`Record`,
 `RequestLog`). Defined once, here, and read by everything on both sides of
-the file: the listener writes it, and whatever renders, filters or reports
+the file: the listener writes it, and whatever reads, filters or reports
 on it reads the counters keyed by the same strings.
 
 Defined once because a writer and a reader that each spell the vocabulary
@@ -51,13 +51,13 @@ def format_endpoint(addr):
 # the exact failure the pre-seeded `drop_reasons` exists to prevent. Adding a
 # reason means adding it here.
 #
-# DROP_REASONS IS THE WHOLE SET, and a renderer's `--reason` filter should
-# validate against it. A closed set is the point: a value that matches nothing
-# renders identically to a guest that never hit that refusal, so `--reason
-# "not allowed"` for `not allowlisted` would print an empty report and an
-# operator would conclude the denial never happened. Validated, it is an
-# argparse error naming the valid values instead. This matters more since the
-# guest-facing refusal body was made generic: the guest is told nothing about
+# DROP_REASONS IS THE WHOLE SET, and anything that filters the record by
+# reason should validate against it. A closed set is the point: a value that
+# matches nothing reads identically to a guest that never hit that refusal, so
+# a filter for "not allowed" meaning `not allowlisted` would print an empty
+# report and an operator would conclude the denial never happened. Validated,
+# it is an error naming the valid values instead. It matters because the
+# guest-facing refusal is the bare status: the guest is told nothing about
 # WHY, so `reason` in the record is the only place a not-allowlisted denial is
 # distinguishable from a not-permitted one.
 DROP_NOT_ALLOWLISTED = "not allowlisted"
@@ -91,7 +91,7 @@ DROP_MISDIRECTED = "host does not match the server name"
 # client as an intrusion, which is how an alarm stops being read.
 #
 # Both strings begin "host does not match the server name" so a grep for the
-# reason still finds both, the convention `not HTTP` set one tier earlier.
+# reason still finds both, the convention `not HTTP` follows too.
 #
 # The guest is told the same thing either way -- a bare 421 -- because the
 # split is FOR THE OPERATOR and changing the answer would only tell the guest
@@ -103,11 +103,12 @@ DROP_NOT_HTTP = "not HTTP"
 # The same refusal on a host a `policy` entry names, kept apart
 # because the operator's next move differs. Plain `not HTTP` is one line away
 # from working -- add the host to the `splice` list. This one is two, and
-# the second is a DELETION: `validate` refuses a host that is in both `splice`
-# and `policy`, so the entry whose `methods` and `paths` can never run has to
-# go with it. An operator reading a single merged figure cannot tell which of
-# their hosts is in which situation, and the two-line one is the one whose
-# config states an intention the wire has already contradicted.
+# the second is a DELETION: the policy is refused at start with a host in
+# both `splice` and `policy`, so the entry whose `methods` and `paths` can
+# never run has to go with it. An operator reading a single merged figure
+# cannot tell which of their hosts is in which situation, and the two-line
+# one is the one whose config states an intention the wire has already
+# contradicted.
 #
 # Both strings begin "not HTTP" so a grep for the reason still finds both.
 DROP_NOT_HTTP_POLICY = "not HTTP (policy entry)"
@@ -299,7 +300,7 @@ class Record:
     Built at the top of a pass and written once at the bottom, so that a pass
     which never got a parseable head still leaves a line -- the record's
     coverage is the COUNTERS' coverage, which is what makes the two joinable
-    by whatever renders them. A pass with no decision wrote nothing to
+    by whatever reads them. A pass with no decision wrote nothing to
     count and writes nothing here either: an idle kept-alive connection
     reaching its bound, and a guest that closed between requests, are not
     requests and must not be invented as ones.

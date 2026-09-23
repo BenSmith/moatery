@@ -9,7 +9,7 @@ are in [examples/](../examples/).
 
 ## The same in every shape
 
-- Both programs. Flags only, no TOML, stdlib. The inspector is
+- Both programs. Flags only, stdlib. The inspector is
   socket-activated (`LISTEN_FDS`), so where it listens is the `.socket`
   unit's business, not the program's.
 - The policy document the inspector reads (`--policy`):
@@ -412,4 +412,4 @@ and one real request that reaches the provider carrying the sealed key.
 Plus the negative probes: dial the broker's address from inside (must
 refuse to connect); dial an unlisted host (must be refused by the
 inspector); the origin with no key (401). Expect a defect of the "unit
-green, packet never arrives" kind; every placement so far had one.
+green, packet never arrives" kind.

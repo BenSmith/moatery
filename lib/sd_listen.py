@@ -11,7 +11,7 @@ supplies its own.
 
 Only the *reason* differs. Reading LISTEN_PID/LISTEN_FDS, refusing an
 activation environment that belongs to another process, and turning the fd
-range into sockets are identical in both, and are here.
+range into sockets are the same for every program, and are here.
 """
 import os
 import socket

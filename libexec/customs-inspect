@@ -12,10 +12,10 @@ inspector (inspect_listener and everything it imports, this file included)
 takes a policy document, a state directory, a status file, a record file,
 a broker endpoint and the uid it serves, and knows nothing about
 workloads: not any config grammar, not where a workload keeps its state,
-not how a uid becomes a loopback address, not what substrate the guest on
-the other end is. Every one of those is a fact about how a host is laid
-out, and every one is chosen by whoever writes the unit and put on its
-ExecStart= as an argument. This file derives nothing; it parses.
+not how a uid becomes a loopback address, not whether the guest on the
+other end is a container or a VM. Every one of those is a fact about how a
+host is laid out, and every one is chosen by whoever writes the unit and
+put on its ExecStart= as an argument. This file derives nothing; it parses.
 tests/test_closure.py holds that line, so the inspector stays startable on
 any host by writing a unit that answers the same questions.
 
@@ -175,8 +175,7 @@ def main(argv=None):
         args = parse_args(argv)
     except SystemExit as exc:
         # argparse's own usage line is already on stderr; what is ours is the
-        # exit status, which is 2 for a bad invocation as it always was and
-        # 0 for --help.
+        # exit status, which is 2 for a bad invocation and 0 for --help.
         return int(exc.code or 0)
     name = args.name
     policy_path = args.policy

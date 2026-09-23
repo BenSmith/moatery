@@ -6,8 +6,8 @@ The back half of bump-then-403. The inspector reads a name out of a ClientHello
 without answering it, decides what the name deserves, and then -- for both
 dispositions -- completes the handshake with a certificate this workload's own
 CA signed, because a guest that gets a certificate ERROR learns nothing, while
-a guest that gets a clean TLS session and a `403` learns exactly which host was
-refused and why.
+a guest that gets a clean TLS session and a `403` knows it was answered, and
+by the host it asked for, rather than cut off.
 
 WHAT IS IN HERE AND WHY IT IS THREE THINGS RATHER THAN ONE
 
@@ -97,15 +97,6 @@ MINT_BUCKET_REFILL_PER_SECOND = 1.0
 # not wait at all -- see Minter.leaf.
 MINT_WAIT_SECONDS = 5.0
 
-# Where the persisted working set lives, under the workload's state directory
-# beside the CA that signed it -- and the denial set's, a sibling rather than a
-# subdirectory so a `rm -rf` of one cannot take the other with it.
-#
-# Both names are imported from egress_ca rather than spelled here, because the
-# SELinux fcontext patterns registered at enable have to name the same three
-# directories this module creates. Two spellings of "leaves" is a mislabelled
-# directory, and a mislabelled directory presents as the inspector failing to
-# mint rather than as a naming mistake.
 
 
 class MintThrottled(Exception):
@@ -269,9 +260,9 @@ class LeafCache:
     it.
 
     The PEMs survive a restart, which is the point -- the listener is
-    socket-activated and `PartOf=` the VM, so it restarts more often than the
-    guest does, and re-minting the entire working set each time would put the
-    cold-start cost on every VM restart.
+    socket-activated, so it restarts more often than the guest does, and
+    re-minting the entire working set each time would put the cold-start
+    cost on every restart.
 
     EVERY CACHE OWNS A DIRECTORY, AND THAT IS WHAT MAKES THE TWO SETS SEPARATE.
     A leaf is a file, because completing a handshake means handing
@@ -569,8 +560,8 @@ class Minter:
         are lost under exactly the concurrency the figures exist to describe --
         a workload under sustained abuse is read by `throttled` and
         `denied_mints`, and those are the counters a flood drives in parallel.
-        The lock was already taken by `snapshot`; it simply was not taken by
-        anything that WROTE, which made it a lock over nothing.
+        `snapshot` reads under the same lock, and a lock only the reader takes
+        is a lock over nothing.
 
         Several names at once because the pairs are subsets, not dimensions:
         `denied_mints` counts the denial-only half of `mints`. Bumping them in

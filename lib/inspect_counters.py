@@ -2,9 +2,9 @@
 
 The writer of the `--status` file. Whatever reads it agrees with this on
 the document's shape only because the listener writes exactly
-`Counters.snapshot()` and nothing composes a second one. `egress_status` is
-the substrate -- the bounded per-host map and the atomic replace -- and
-holds no figure of its own.
+`Counters.snapshot()` and nothing composes a second one. `egress_status`
+holds the machinery -- the bounded per-host map and the atomic replace --
+and no figure of its own.
 """
 
 import threading
@@ -84,7 +84,7 @@ class Counters:
     single total can see that some host needs splicing but not that some OTHER
     host has method and path rules that never ran; and those two facts have
     different remedies, the second of which includes deleting the policy entry
-    (`validate` refuses `splice` and `policy` on one host). See
+    (the policy is refused with `splice` and `policy` on one host). See
     PER_HOST_REASONS.
 
     They are bounded top-N with a counted overflow because the keys come from

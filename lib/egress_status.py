@@ -107,7 +107,7 @@ def clear_status(path: str) -> None:
     file from a previous run and a file from a process that has been idle
     since that moment look identical, because they are the same file.
 
-    For whatever arms the workload to call at start, rather than at stop,
+    For whatever starts the workload to call at start, rather than at stop,
     because a stop is not guaranteed to run -- a host that loses power, or a
     service killed hard, leaves the file either way. Starting happens on
     every start by definition.

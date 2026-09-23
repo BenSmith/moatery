@@ -16,14 +16,14 @@ real 403 naming it, which is an answer 443 cannot give.
 WHY THE PLANE COMES FROM getsockname, NOT LISTEN_FDNAMES
 
 The socket unit runs with Accept=no, under which systemd names every
-activated fd after the unit — all four carry the same LISTEN_FDNAMES entry, so
-the name cannot tell the cleartext listener from the TLS one. The local port
-of the inherited fd can, and it is the honest source of it: a guest dial to 80
-is translated onto the cleartext plane's inspect port, one to 443 onto the
-TLS plane's (lib/egress_plane.py), and the socket that accepted the
-connection knows which it is. That property is what makes SO_ORIGINAL_DST
-unnecessary for choosing the plane; a regression that started reading the
-port from anywhere else quietly reintroduces the need for it.
+activated fd after the unit — every one carries the same LISTEN_FDNAMES
+entry, so the name cannot tell the cleartext listener from the TLS one. The
+local port of the inherited fd can, and it is the honest source of it: a
+guest dial to 80 is translated onto the cleartext plane's inspect port, one
+to 443 onto the TLS plane's (lib/egress_plane.py), and the socket that
+accepted the connection knows which it is. That property is what makes
+SO_ORIGINAL_DST unnecessary for choosing the plane; reading the port from
+anywhere else would reintroduce the need for it.
 
 CONCURRENCY AND TIMEOUTS
 
@@ -154,8 +154,7 @@ class Listener:
         # is what tells the two apart in the rules -- and every connection
         # would otherwise be refused as foreign.
         self._caller_uid = caller_uid
-        # None means "count but never write", which is what the tests want and
-        # also what a listener started without a workload name would do.
+        # None means "count but never write", which is what the tests want.
         self._status_path = status_path
         self.inspection = Inspection(
             policy, out=out, minter=minter, record_path=record_path,
@@ -269,7 +268,7 @@ class Listener:
         # refused: the nft guard is the control that must hold, this layer
         # cannot distinguish "hostile" from "raced", and failing closed on an
         # unresolvable read would drop the workload's OWN traffic under exactly
-        # the load that makes the table churn. Logged so the silence is
+        # the load that makes the table churn. Counted so the silence is
         # visible rather than assumed absent.
         if caller is None:
             # Counted, not logged. A line per connection would be noise for a

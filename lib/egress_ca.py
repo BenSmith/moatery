@@ -4,12 +4,12 @@
 One CA per workload rather than one per host, and the directory names, the
 validity windows and the two openssl invocations are all here together
 because they are one decision each spelled in several places: the minter
-creates the directories, whoever labels the state directory composes the
-names here, and whoever reports on a workload reads the certificate back.
-A drift between any two of those is a mislabelled directory or an
-untrusted anchor, and both present as a network fault rather than as a
-naming mistake. Where the anchor goes inside the workload, and what a
-label is called, are whoever provisions the workload's to decide.
+creates the directories, whatever manages the state directory from outside
+names them, and whoever reports on a workload reads the certificate back.
+A drift between any two of those is a misnamed directory or an untrusted
+anchor, and both present as a network fault rather than as a naming
+mistake. Where the anchor goes inside the workload is whoever provisions
+the workload's to decide.
 
 This module takes a STATE DIRECTORY and knows nothing about which workload
 it belongs to or how the caller found it. It imports inspect_document and
@@ -41,11 +41,11 @@ CA_CERT_NAME = "egress-ca.crt"
 
 
 # The two leaf caches live beside the CA, under the same state directory,
-# and their names are here rather than in egress_mint because whoever labels
-# the state directory has to name the same three directories the minter
-# creates. A drift between the two spellings is a mislabelled directory,
-# which presents as the inspector failing to mint and not as a naming
-# mistake.
+# and their names are here rather than in egress_mint because whatever
+# manages the state directory from outside has to name the same three
+# directories the minter creates. A drift between the two spellings is a
+# misnamed directory, which presents as the inspector failing to mint and
+# not as a naming mistake.
 LEAF_DIR_NAME = "leaves"
 DENIAL_DIR_NAME = "leaves-denied"
 

@@ -5,10 +5,10 @@ workload's inspection lists, read once at start and never edited after, so
 that an edited document applies on a restart and the running policy is
 always the file's. The questions the listener asks of it -- does this host
 get through, is it spliced, is it h2, which policy entry governs it -- are
-answered with the same hostname rule and the same entry matcher the render
+answered with the same hostname rule and the same entry matcher the writing
 side uses, both imported from inspect_document so the two cannot diverge.
 
-This module does not import whatever renders the document: the document
+This module does not import whatever writes the document: the document
 is the whole interface, and a reader that imported its writer would drag
 the config grammar into the listener's closure. What is shared lives one
 level below both, in inspect_document.
@@ -56,7 +56,7 @@ class Policy(NamedTuple):
     # from one enforcing an older one it still holds in memory. Defaulted so
     # every Policy() a test constructs by hand keeps working; the empty string
     # reads downstream as "this listener does not report a digest", which is a
-    # state the check is required to pass over in silence anyway.
+    # state whatever compares digests has to pass over in silence anyway.
     digest: str = ""
 
     @property
@@ -262,11 +262,10 @@ def load_policy(path):
         # `.get`, not `[...]`: a writer may emit the key only on the
         # entries that carry one, so absent and null mean the same thing
         # here and the reader is the side that pays for it. A non-string is
-        # dropped to
-        # None rather than refused -- the value's only use is as a name, and a
-        # document that named a number would otherwise fail the listener's
-        # START, which is a worse outcome than one brokered host reaching the
-        # origin unbrokered and saying so in the record.
+        # dropped to None rather than refused -- the value's only use is as a
+        # name, and a document that named a number would otherwise fail the
+        # listener's START, which is a worse outcome than one brokered host
+        # reaching the origin unbrokered and saying so in the record.
         credential = item.get("credential")
         if not isinstance(credential, str) or not credential.strip():
             credential = None

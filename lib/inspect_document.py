@@ -9,11 +9,11 @@ the document on disk from the one a running listener holds.
 
 WHAT IS NOT HERE, AND WHY THE LINE IS WHERE IT IS
 
-Nothing about a workload. No config grammar, no substrate, no uid, no
-path under /run or /var. Whatever renders a workload's configuration into
-this document lives above this module; the listener that reads it back
-lives in inspect_policy and inspect_listener, which import THIS and never
-a renderer. The document is the whole interface between the two halves,
+Nothing about a workload. No config grammar, no uid, no path under /run
+or /var. Whatever writes this document from a workload's configuration
+lives above this module; the listener that reads it back lives in
+inspect_policy and inspect_listener, which import THIS and never a writer.
+The document is the whole interface between the two halves,
 so the listener's closure has no reason to contain the config grammar --
 and a listener that imported one would be one that could only ever be
 started by that one tool, on a host laid out the way it lays one out.
@@ -23,7 +23,7 @@ egress_mint, egress_upstream, egress_relay, egress_record, http_*,
 tls_hello) imports from here and from each other, and from nothing that
 knows what a workload is. tests/test_closure.py holds that line.
 
-Every name here is spelled at least twice -- once by the code that renders,
+Every name here is spelled at least twice -- once by the code that writes,
 once by the code that reads back -- which is the reason a constant here is a
 constant rather than a literal: a drift between the two turns a real refusal
 into a figure that reads zero, which is indistinguishable from a refusal
@@ -37,8 +37,8 @@ from typing import NamedTuple
 
 # --- Hostname vocabulary: one normalisation, one refusal, one comparison ---
 #
-# Both substrates and three entrypoints ask the same questions of a name, and a
-# second answer to "what is this name" is a name the guest can spell twice.
+# Every entrypoint asks the same questions of a name, and a second answer to
+# "what is this name" is a name the guest can spell twice.
 
 def normalise_hostname(host: str) -> str:
     """A hostname in the one form every match in this design is made against.
@@ -150,11 +150,7 @@ def patterns_overlap(a: str, b: str) -> bool:
 # weaker property, not a deprecated one.
 #
 # It is also the widest bypass in this document: every host, not a named
-# one. Whoever writes the document should make an operator say why, because
-# the person deciding whether a bypass is still needed is not the person who
-# opened it, and "spliced because this guest cannot hold the CA" and
-# "spliced because nobody tried" are the same two words without a reason
-# beside them.
+# one.
 TLS_MODES = ("splice", "inspect")
 TLS_DEFAULT = "inspect"
 
@@ -163,10 +159,6 @@ TLS_DEFAULT = "inspect"
 
 class VmPolicyEntry(NamedTuple):
     """One policy entry, normalised: a host pattern and what it permits.
-
-    The `Vm` in the name is history the identifier carries for its
-    importers' sake; every substrate renders into this entry and the
-    listener reads them all back into this type.
 
     `methods` and `paths` are `None` where the key was absent, NOT an empty
     tuple, and the difference is the whole of the widening trap: absent means
@@ -226,7 +218,7 @@ INSPECT_DIGEST_KEY = "policy_digest"
 
 
 def inspect_policy_digest(text: str) -> str:
-    """The digest of one rendered policy document.
+    """The digest of one policy document.
 
     THE ONE PRODUCER: the listener digests the bytes it loaded and a reader
     digests the bytes on disk, and the two are compared for equality. A
