@@ -1,14 +1,12 @@
 """The broker's server: one handler thread per admitted connection.
 
-Handler settles the caller's identity once per connection, looks the request's
-Host up in the profile table, and forwards one buffered request at a time to
-the fixed upstream with the credential attached -- the decisions themselves are
-broker_request's. The two servers bound the pool: a global ceiling, a
-small shared ceiling for every caller that is not the one served, and an
-in-flight body budget, each refusing fast rather than queueing. Server is
-bound to an address and identifies a caller through the socket table;
-UnixServer is bound to a path and asks the socket. The TLS context at the
-end is verified TLS out to the provider.
+Handler identifies the caller once per connection, looks each request's
+Host up in the profile table, and forwards it, buffered, to that profile's
+fixed upstream with the credential attached; the decisions are
+broker_request's. The pool refuses rather than queues past a global
+ceiling, a small shared ceiling for every caller but the served one, and an
+in-flight body budget. Server is bound to an address and reads the caller
+from the socket table; UnixServer is bound to a path and asks the socket.
 
 Used by `libexec/customs-broker`.
 """
@@ -29,41 +27,21 @@ from broker_profiles import normalise_host
 from broker_request import forwarded_headers, request_framing, response_framing
 from peer_identity import local_endpoints, peer_uid, peer_uid_unix
 
-# At most this much request body summed over every connection at once. The
-# request is buffered whole before it is forwarded, and broker_request's
-# MAX_REQUEST_BYTES bounds only one of them: MAX_CONCURRENT connections each
-# sending a legal 64 MiB body would reserve 8 GiB of host RAM. Neither the
-# per-request nor the connection limit helps, because no single request
-# exceeds its own share -- the sum is the whole problem, and it is not a
-# limit either of them expresses.
-#
-# It matters more here than it would elsewhere: this runs on the host the
-# workloads share, so the memory in question is theirs, and a sandboxed agent
-# inside one of them is exactly who would be reaching for it.
-#
-# Past the budget a request is refused with 503 rather than queued, so a caller
-# gets a fast error it can retry instead of a hang -- the same choice the
-# connection ceilings make.
+# At most this much request body buffered over every connection at once.
+# MAX_REQUEST_BYTES bounds one request; without this, MAX_CONCURRENT legal
+# bodies would reserve 8 GiB of the host's memory. Past it, a 503.
 MAX_INFLIGHT_BYTES = 256 * 1024 * 1024
 
-# The upstream leg's two timeouts, and the defaults the flags override. The
-# read timeout is long on purpose: streamed completions idle between tokens
-# for far longer than a connect should be allowed to take.
+# The upstream leg's timeouts, which the flags override. Streamed
+# completions idle between tokens far longer than a connect may take.
 CONNECT_TIMEOUT = 15.0
 READ_TIMEOUT = 900.0
 
 CHUNK = 64 * 1024
 
-# How long a connection may make no progress before it is dropped. Without one,
-# a caller that opens a socket and sends nothing holds its handler thread for
-# ever -- and with a bounded pool, enough of those deny the broker to the
-# workload it serves.
-#
-# It bounds each blocking operation, not the request, so a client trickling
-# bytes is not caught by this; MAX_FOREIGN is what stops any caller but the
-# served one taking the pool that way. Idle keep-alive connections are also
-# reaped by it, which is ordinary (nginx defaults to 75s) and costs a
-# reconnect at worst.
+# How long a caller's connection may make no progress. It bounds each
+# blocking operation, not the request: a caller trickling bytes is held off
+# by MAX_FOREIGN instead, unless it is the served one.
 CONNECTION_TIMEOUT = 60.0
 
 
@@ -71,18 +49,14 @@ def log(event, **fields):
     """One structured line per event, to stderr -> journal. Never logs bodies,
     headers, or anything derived from the credential."""
     parts = " ".join(f"{k}={v}" for k, v in fields.items())
-    # One write, newline included. print() writes the line and its newline
-    # separately, and a handler thread logging between the two joins two
-    # events into one journal line.
+    # One write, newline included, so two threads cannot join their lines.
     sys.stderr.write(f"[{time.strftime('%H:%M:%S')}] {event} {parts}\n")
     sys.stderr.flush()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
-    # Set by main(). Class attributes so every request sees the same objects.
-    # `name` is a label for the log lines; `workload_uid` is the identity of
-    # the one caller this instance serves, told to it and never looked up;
-    # `profiles` is keyed by normalised Host.
+    # Set by main(). `workload_uid` is the one caller served, told and never
+    # looked up; `profiles` is keyed by normalised Host.
     name = None
     workload_uid = None
     profiles = {}
@@ -93,8 +67,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     protocol_version = "HTTP/1.1"
 
-    # Applied to the connection by StreamRequestHandler.setup(). See
-    # CONNECTION_TIMEOUT.
     timeout = CONNECTION_TIMEOUT
 
     def setup(self):
@@ -116,12 +88,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # replaced by explicit structured logging in _forward
 
-    # Every method an HTTP API uses lands in one place. Which of them a
-    # request may use is the inspector's policy, applied before the request
-    # is sent here; a method missing from this list is answered 501 by the
-    # base class, after that policy permitted it. CONNECT and TRACE are not
-    # here: one asks a proxy to open a tunnel and the other echoes the
-    # request back, credential and all.
+    # Which methods a request may use is the inspector's policy. CONNECT and
+    # TRACE are absent: one opens a tunnel, the other echoes the request
+    # back, credential and all.
     def do_GET(self):
         self._forward("GET")
 
@@ -146,24 +115,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _identify(self):
         """(sandbox, label) for this caller; None if it gets nothing.
 
-        The uid on the far end is the identity, resolved once when the
-        connection was admitted (Server.process_request) because the caller's
-        connection ceiling has to know who is calling before it grants a slot.
-        The two failures that mean the *mechanism* is broken -- no peer socket,
-        or a uid this namespace cannot map -- are refusals, because both make
-        every caller look alike.
-
-        The uid is compared to the ONE the instance was started for, and never
-        resolved to a name: an instance serves one workload, so this is an
-        assertion rather than a route, and the broker holds no notion of what a
-        uid is called. The label the log line carries is the name it was
-        handed, or the bare uid for a caller that is not it.
-
-        This settles the caller. The `Host` is per request rather than per
-        connection: one keep-alive connection from one inspector may carry
-        requests for two credential-backed hosts, and resolving the profile
-        once at setup would give the second request the first request's
-        credential.
+        No peer socket and an unmapped uid are refusals: both make every
+        caller look alike. The Host is looked up per request, not here, since
+        one connection may carry requests for two brokered hosts.
         """
         uid = self.caller_uid
         if uid is None:
@@ -175,31 +129,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return None, f"uid:{uid}"
 
     def send_error(self, code, message=None, explain=None):
-        """The base class's refusals -- a request line it cannot parse, a
-        method with no do_ -- answered the way every other refusal here is.
-
-        Its own is an HTML page naming the error in Python's words, which
-        the inspector would relay to the guest as the provider's answer.
-        """
+        """The base class's refusals, answered like ours: its HTML page
+        would reach the guest as the provider's answer."""
         log("deny", reason=f"http-{code}", detail=message or "")
         self._fail(code)
 
     def _fail(self, status):
         """Answer without forwarding, and end the connection.
 
-        The body is the status's own phrase and nothing else, and there is
-        no Server header. The inspector relays this response to the guest
-        as the provider's, so any sentence of ours in it -- a credential
-        that is not configured, a broker at its limit, an upstream that
-        failed -- tells the guest a broker is there. The reason is in the
-        log line each caller writes before this.
-
-        close_connection is set for every refusal, not just politeness in a
-        header. A rejected request has left its body unread -- rejected because
-        it was unreadable, in the chunked and bad-length cases -- so the next
-        thing on the wire is body bytes where a request line should be. Reading
-        on desynchronises the connection: a following pipelined request
-        silently receives no response at all.
+        The body is the status phrase and there is no Server header: the
+        guest sees this as the provider's answer, and a sentence of ours
+        would say a broker is there. The connection ends because the
+        request's body may be unread, and reading on would take it for the
+        next request.
         """
         body = f"{http.HTTPStatus(status).phrase}\n".encode()
         self.close_connection = True
@@ -214,9 +156,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _forward(self, method):
         started = time.monotonic()
-        # Per request, not per connection: a keep-alive connection runs this
-        # handler many times and the second request must not inherit the
-        # first's verdict about whether a response is already on the wire.
         self.response_started = False
         sandbox, label = self._identify()
         if sandbox is None:
@@ -224,11 +163,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._fail(403)
             return
 
-        # The other half of the decision. Resolved from THIS BROKER'S OWN
-        # TABLE -- the header selects a row and supplies nothing. A Host with
-        # no row is refused: there is no default profile, so a workload's
-        # second, unlisted destination cannot silently receive its first
-        # destination's key.
+        # The Host selects a row of this broker's own table and supplies
+        # nothing; with no row, no credential is sent.
         host = normalise_host(self.headers.get("Host"))
         profile = self.profiles.get(host) if host else None
         if profile is None:
@@ -257,15 +193,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.server.release_body(length)
 
     def _forward_body(self, method, length, profile, sandbox, started):
-        """Read the body and relay one request. Split from _forward only so the
-        budget reserved for `length` is released on every path out."""
+        """Read the body and relay one request, apart from _forward so the
+        body budget is released on every path out."""
         body = self.rfile.read(length) if length else None
 
-        # Denylist rather than allowlist: provider SDKs send version and beta
-        # headers that change faster than we would keep an allowlist current,
-        # and dropping one silently breaks requests in ways that are painful to
-        # debug. Everything genuinely dangerous is enumerated in
-        # forwarded_headers.
+        # A denylist of the caller's headers, not an allowlist: provider SDKs
+        # add version and beta headers faster than a list would keep up.
         headers = forwarded_headers(self.headers, profile)
         if body is not None:
             headers["Content-Length"] = str(len(body))
@@ -280,38 +213,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 timeout=self.connect_timeout,
             )
             conn.request(method, path, body=body, headers=headers)
-            # Streamed completions can idle between tokens for far longer than
-            # a connect timeout should allow.
             conn.sock.settimeout(self.read_timeout)
             resp = conn.getresponse()
             sent = self._relay(resp)
             log("ok", sandbox=sandbox, method=method, path=self.path,
                 status=resp.status, bytes=sent,
                 ms=int((time.monotonic() - started) * 1000))
-        # ValueError is http.client refusing a header or a target before a
-        # byte is sent, with the offending value in its message. Named here
-        # so it is logged by type like the rest, not printed as a traceback
-        # by the server: one of the values is the credential. build_profiles
-        # refuses such a credential at start; this is the line that holds
-        # if something reaches here anyway.
+        # ValueError is http.client refusing a header before sending it, with
+        # the value in its message, and one of the values is the credential:
+        # logged by type, never as a traceback.
         except (OSError, http.client.HTTPException, ValueError) as exc:
             log("upstream-error", sandbox=sandbox, path=self.path,
                 error=type(exc).__name__, streamed=self.response_started)
             if self.response_started:
-                # A status line and headers -- and usually some body -- are
-                # already on the wire. _fail() would send a *second* complete
-                # response, which the client reads as body content of the
-                # first: under Content-Length it either truncates or arrives as
-                # trailing garbage, and under chunked its raw bytes are parsed
-                # as a chunk header and kill the message. Both leave the caller
-                # holding something that looks like an answer.
-                #
-                # Dropping the connection instead is the one signal every
-                # client already understands. A Content-Length body short of
-                # its declared length, or a chunked body with no terminating
-                # 0-chunk, is a truncated message by definition -- so the
-                # caller gets an error rather than a plausible answer, which is
-                # the whole point when the response carries model output.
+                # A response is already on the wire, and a second one would
+                # read as its body. A dropped connection is a truncated
+                # message, which every client reads as an error.
                 self.close_connection = True
             else:
                 try:
@@ -325,34 +242,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _relay(self, resp):
         """Stream the upstream response back without buffering it.
 
-        read1() is the load-bearing call. A plain read(n) blocks until it has n
-        bytes or EOF, which turns a token-by-token SSE stream into one silent
-        pause followed by the whole answer at once — the agent still works but
-        the interaction feels broken. read1() returns whatever has arrived.
+        read1(), not read(n): read(n) waits for n bytes, which holds a
+        token-by-token stream back until the end.
         """
         passthrough, declared, bodiless = response_framing(
             resp.status, resp.getheaders(), self.command)
 
-        # _only: no Server and no Date of ours; the provider's pass through.
+        # The provider's Server and Date pass through; we add neither.
         self.send_response_only(resp.status)
         for k, v in passthrough:
             self.send_header(k, v)
         if bodiless:
-            # A HEAD answer keeps the length a GET would have had: it is the
-            # thing a HEAD is sent to learn. 204 and 304 have none to keep.
+            # A HEAD answer keeps the length a GET would have had.
             if self.command == "HEAD" and declared is not None:
                 self.send_header("Content-Length", declared)
         elif declared is not None:
             self.send_header("Content-Length", declared)
         else:
-            # No length up front (streaming): re-frame as chunked so the client
-            # can consume it incrementally and still see a clean
-            # end-of-message.
+            # No length up front: re-framed as chunked, so the stream can be
+            # consumed as it comes and still end cleanly.
             self.send_header("Transfer-Encoding", "chunked")
-        # Set before the flush, not after: once end_headers() has begun writing
-        # there is no state in which sending a different response is still
-        # correct, and a partial head is exactly the case where appending a
-        # second one does the most damage. See the handler in _forward.
+        # Set before end_headers begins writing: from then on no other
+        # response may follow. See _forward_body.
         self.response_started = True
         self.end_headers()
 
@@ -377,39 +288,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return sent
 
 
-# How many connections the broker holds at once. The one caller it serves
-# is the inspector, which funnels EVERY brokered request of its workload
-# into this one identity -- each guest connection to a brokered host holds
-# a broker connection of its own, kept alive between requests -- so this
-# is the workload's whole brokered concurrency, and it is sized against
-# the inspector's own MAX_CONNECTIONS rather than against one agent's
-# streams. Past it a connection is refused, not queued: a fast error
-# instead of a hang. The request bodies are bounded separately, by
-# MAX_INFLIGHT_BYTES, so the pool's size is threads, not memory.
+# How many connections the broker holds at once. Its one served caller is
+# the inspector, whose every brokered guest connection holds one of these,
+# so this is sized against the inspector's MAX_CONNECTIONS.
 MAX_CONCURRENT = 128
 
-# ...and how many of those every OTHER caller may hold, together. The one
-# served caller is the only one that gets anything, but a refusal still
+# How many of those every other caller may hold, together. A refusal still
 # costs a thread until it is answered, and on an address other uids can
-# dial -- a host, in shape 1 -- they must not be able to take the pool
-# from the workload with sockets that connect and send nothing. One shared
-# bucket rather than one per uid, so a host with many users cannot sum
-# its way past it.
+# dial they must not be able to take the pool. One bucket, not one per uid,
+# so many users cannot sum past it.
 MAX_FOREIGN = 8
 
-# The bucket every caller that is not the served one shares: other uids,
-# callers the socket tables could not resolve, and the overflow uid.
+# The bucket every caller that is not the served one shares.
 FOREIGN = "foreign"
 
 
 class CallerCeilingExceeded(Exception):
     """Raised out of Handler.setup() by a caller already at its ceiling.
 
-    An exception rather than a return, because setup() has no way to decline:
-    BaseRequestHandler runs setup/handle/finish from its constructor. Raising
-    reaches process_request_thread, which reports it through handle_error and
-    closes the connection in its finally -- releasing the thread immediately,
-    which is what makes the refusal cheap.
+    setup() cannot decline, so it raises: handle_error reports it and the
+    connection is closed, freeing the thread at once.
     """
 
     def __init__(self, bucket):
@@ -418,13 +316,8 @@ class CallerCeilingExceeded(Exception):
 
 
 class Pool(socketserver.ThreadingMixIn):
-    """The pool, shared by the two servers below.
-
-    What a server adds is the family: how it binds, and how a caller on an
-    accepted connection is identified, which is the one question whose
-    wrong answer is the wrong credential and so is the server's to answer
-    rather than the handler's.
-    """
+    """The pool, shared by the two servers below, which differ in how they
+    bind and how they identify a caller."""
 
     daemon_threads = True
     allow_reuse_address = True
@@ -434,8 +327,7 @@ class Pool(socketserver.ThreadingMixIn):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # ThreadingMixIn spawns one thread per connection with no ceiling, so a
-        # sandbox in a loop can exhaust host threads.
+        # ThreadingMixIn has no ceiling of its own.
         self._slots = threading.BoundedSemaphore(MAX_CONCURRENT)
         self._lock = threading.Lock()
         self._held = {True: 0, False: 0}  # served, foreign: live connections
@@ -445,13 +337,8 @@ class Pool(socketserver.ThreadingMixIn):
     def reserve_body(self, length):
         """Claim `length` bytes of the shared body budget, or refuse.
 
-        Reserved on the declared Content-Length, before the body is read: the
-        budget exists so the bytes are never allocated, so a check made after
-        reading them would measure the damage rather than prevent it. The
-        length is already known to be a non-negative number no larger than
-        MAX_REQUEST_BYTES -- request_framing rejects it otherwise -- so a
-        caller cannot claim the whole budget by declaring a number it will not
-        send.
+        On the declared length, before the body is read. request_framing has
+        already held it to MAX_REQUEST_BYTES.
         """
         if length <= 0:
             return True
@@ -470,21 +357,9 @@ class Pool(socketserver.ThreadingMixIn):
     def admit_caller(self, request, *, served=False):
         """Count this connection against its caller's ceiling, or refuse it.
 
-        The served caller is bounded by the pool alone; every other caller
-        shares MAX_FOREIGN. `served` is the handler's to say, because which
-        uid is served is the handler's.
-
-        Called from the handler thread rather than the accept loop, and that
-        placement is measured rather than tasteful. Resolving a caller means
-        reading /proc/net/tcp, which the kernel generates on demand: 3.8ms per
-        connection with ~1300 sockets on the host, and it grows with that
-        number. In the accept loop every one of those milliseconds is time no
-        other caller can be accepted, which hands a caller a way to slow the
-        whole broker down by connecting in a loop.
-
-        In the handler it costs a thread, which is what MAX_CONCURRENT bounds,
-        and the thread is released as soon as the refusal is raised. A caller
-        over its ceiling therefore holds nothing.
+        Called from the handler thread, not the accept loop: identifying a
+        caller reads /proc/net/tcp, milliseconds on a busy host, and on the
+        accept loop that is time no one else is accepted.
         """
         limit = MAX_CONCURRENT if served else MAX_FOREIGN
         with self._lock:
@@ -499,17 +374,13 @@ class Pool(socketserver.ThreadingMixIn):
         if not self._slots.acquire(blocking=False):
             log("deny", reason="too-many-connections",
                 src=self.peer_label(client_address))
-            # Bypass our own shutdown_request: we never took a slot, and
-            # releasing one we do not hold would inflate the pool for everyone.
+            # Our own shutdown_request would release a slot never taken.
             super().shutdown_request(request)
             return
 
-        # No try/except around this. `t.start()` does raise when the host is
-        # out of threads, and the slot must come back when it does -- but
-        # BaseServer._handle_request_noblock already calls shutdown_request on
-        # any exception out of process_request. Releasing it here as well is a
-        # double release, which a BoundedSemaphore turns into "Semaphore
-        # released too many times" at the worst possible moment.
+        # No try around this: when start() raises, the base class already
+        # calls shutdown_request, and a second release would overflow the
+        # BoundedSemaphore.
         super().process_request(request, client_address)
 
     def shutdown_request(self, request):
@@ -526,14 +397,9 @@ class Pool(socketserver.ThreadingMixIn):
     def handle_error(self, request, client_address):
         """One line for the expected, a traceback for the rest.
 
-        A stalled read, a caller that vanishes mid-request, a caller
-        over its ceiling: ordinary here, saying nothing an operator can act on,
-        and the default's full traceback for each one is itself a log-flooding
-        lever for a hostile sandbox.
-
-        Anything else is a bug in this program, and swallowing its traceback
-        would mean debugging the broker from a single exception name with no
-        line number. Those keep the default.
+        A stalled read, a vanished caller and a caller over its ceiling are
+        routine, and a traceback each would let a caller flood the journal.
+        Anything else is a bug and keeps its traceback.
         """
         exc = sys.exception()
         if isinstance(exc, CallerCeilingExceeded):
@@ -559,21 +425,16 @@ class Server(Pool, http.server.HTTPServer):
         return client_address[0]
 
 
-# What the socket file is created as: its owner and one group may connect,
-# and nobody else. The inspector beside this broker is the group's other
-# member. The workload is kept off the socket by having no path to it, not
-# by this mode; the mode is for every other uid that does share the mount.
+# The socket file's mode: its owner and one group, whose other member is
+# the inspector. The workload is kept off it by having no path to it.
 SOCKET_MODE = 0o660
 
 
 class UnixServer(Pool, socketserver.UnixStreamServer):
-    """Bound to a path. The caller is whatever SO_PEERCRED says, which the
-    kernel recorded at connect(); nothing is scanned and nothing can race.
+    """Bound to a path. The caller is whatever SO_PEERCRED says.
 
-    The path is unlinked on close and a stale socket at it is replaced at
-    bind, so an instance that died without cleaning up does not keep its
-    successor from starting. Anything at the path that is not a socket is
-    left alone, and the bind fails on it.
+    A stale socket at the path is replaced at bind and the path unlinked on
+    close; anything there that is not a socket fails the bind.
     """
 
     @staticmethod
@@ -595,15 +456,13 @@ class UnixServer(Pool, socketserver.UnixStreamServer):
             pass
         super().server_bind()
         self._bound = True
-        # Before listen(), which server_activate does next: a dial that lands
-        # between the bind and this is refused for want of a listener, so no
-        # connection is ever admitted under the mode the umask gave the file.
+        # Before listen(), so no connection is admitted under the umask's
+        # mode.
         os.chmod(path, SOCKET_MODE)
 
     def server_close(self):
         super().server_close()
-        # Only a file this instance created: a failed bind closes the server
-        # too, and what refused the bind is not this instance's to remove.
+        # Only a file this instance bound: a failed bind closes too.
         if self._bound:
             with contextlib.suppress(OSError):
                 os.unlink(self.server_address)
@@ -626,18 +485,11 @@ def listening_url(endpoint):
 
 def upstream_tls_context(relax_x509_strict=False):
     """Verified TLS to the provider, using the host's trust store. There is
-    no option to disable verification and there should not be one."""
+    no option to disable verification."""
     ctx = ssl.create_default_context()
     if relax_x509_strict:
-        # Python 3.13+ enables VERIFY_X509_STRICT in create_default_context(),
-        # which enforces RFC 5280 details most CAs honor but some private ones
-        # do not -- notably a root without a keyUsage extension, which fails as
-        # "CA cert does not include key usage extension" even though curl and
-        # Node accept the same chain.
-        #
-        # This clears ONLY that strictness flag. Chain building, signature
-        # verification, expiry, and hostname matching all still apply. It is
-        # not a path to an unverified connection. Fix the CA instead where you
-        # can; this exists for the case where you cannot.
+        # Clears only VERIFY_X509_STRICT, which Python 3.13 turned on and
+        # which refuses some private roots (one without keyUsage) that curl
+        # accepts. Chain, signature, expiry and hostname are still checked.
         ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
     return ctx

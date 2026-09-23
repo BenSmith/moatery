@@ -1,12 +1,9 @@
 """What leaves this host carrying a credential, decided without a socket.
 
-The broker's request path as free functions: which of a caller's headers go
-upstream and which are replaced, how a request is framed before any of it is
-forwarded, and how an upstream response is re-framed on the way back. None
-of it needs a connection to be decided, and as free functions none of it
-needs a server with a TLS upstream to be tested -- which, as methods on the
-handler, is what it would take, and how a whole request path goes untested
-while config and identity are covered three ways.
+The broker's request path as free functions, so it can be tested without a
+server: which of a caller's headers go upstream, how a request is framed
+before any of it is forwarded, and how a response is re-framed on the way
+back.
 
 Used by `libexec/customs-broker`.
 """
@@ -18,46 +15,28 @@ HOP_BY_HOP = frozenset({
     "te", "trailer", "transfer-encoding", "upgrade",
 })
 
-# Anything the guest sends that looks like a credential is dropped rather than
-# forwarded. The guest has no legitimate reason to set these: we supply the
-# credential, and letting a caller pass its own through would turn the broker
-# into an open relay for whatever key a compromised sandbox happened to find.
-#
-# This list is not the whole story, and must not be treated as it: the
-# configured `auth_header` is stripped too, by name, in forwarded_headers().
-# These four are the ones worth dropping even when they are not the header this
-# broker uses.
+# A caller's own credential headers are dropped, so the broker cannot relay
+# a key the guest found. The configured auth header is stripped by name as
+# well, in forwarded_headers.
 STRIP_FROM_REQUEST = frozenset({
     "authorization", "x-api-key", "api-key", "x-goog-api-key",
     "cookie", "host", "content-length",
 })
 
-# Dropped from a relayed response. Beyond the hop-by-hop set:
-#
-# `content-length` because this hop re-frames the body and declares its own --
-# a streamed response goes back chunked, so the upstream's number would be a
-# lie about a message it no longer describes.
-#
-# `date` and `server` are NOT here, and the handler stamps neither: they go
-# back as the provider sent them. The inspector relays every other host's
-# response head verbatim, so a brokered host that answered with a Server of
-# its own would be the one host whose responses say something else stands
-# in front of it -- the sandbox told it is one, on every brokered request.
+# Dropped from a relayed response: the hop-by-hop set, and Content-Length,
+# which this hop re-frames. Date and Server pass through, so a brokered host
+# looks like every other.
 DROP_FROM_RESPONSE = HOP_BY_HOP | {"content-length"}
 
-# Read at most this much request body. Generous enough for a large context
-# window, small enough that a runaway sandbox can't exhaust host memory.
+# The largest request body read, in bytes.
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
 
 
 def forwarded_headers(incoming, profile):
     """The headers to send upstream, given the ones the caller sent.
 
-    The configured auth header is stripped by name as well as by the fixed
-    list, and both are compared lowercased. The outgoing dict is keyed by
-    whatever case the *caller* used, so a caller's `x-custom-key` and the
-    broker's `X-Custom-Key` would otherwise be two keys, and the caller's
-    value would go upstream beside the real credential.
+    Compared lowercased: the dict keeps the caller's spelling, so a caller's
+    `x-custom-key` would otherwise go up beside our `X-Custom-Key`.
     """
     strip = STRIP_FROM_REQUEST | HOP_BY_HOP | {profile.auth_header.lower()}
     headers = {k: v for k, v in incoming.items() if k.lower() not in strip}
@@ -70,19 +49,12 @@ def request_framing(path, headers):
     """(body length, rejection) for a request, before any of it is forwarded.
 
     A rejection is (status, log reason, client message); None means proceed.
-    Every one of these closes the connection rather than reading on, because
-    each means the body is either unread or unreadable and the stream can no
-    longer be framed -- see _fail.
-
-    The chunked case is the reason this exists. Transfer-Encoding is
-    hop-by-hop and is stripped, so without the refusal a chunked request has
-    no Content-Length, reads as length 0, and is forwarded with its body
-    silently dropped: 200 OK, nothing logged, the provider seeing a request
-    the caller did not send.
+    Each closes the connection, since the body is unread. A chunked body is
+    refused: Transfer-Encoding is stripped as hop-by-hop, and without the
+    refusal the request would go up with its body silently dropped.
     """
     if not path.startswith("/"):
-        # Absolute-form targets ("GET https://elsewhere/...") are how a client
-        # asks a *proxy* to choose the destination. We are not a proxy.
+        # An absolute-form target asks a proxy to choose the destination.
         return 0, (400, "absolute-target",
                    "absolute request targets are not accepted\n")
 
@@ -93,11 +65,7 @@ def request_framing(path, headers):
 
     declared = headers.get_all("Content-Length") or []
     if len(declared) > 1:
-        # Two lengths frame two different messages. Picking one (get() takes
-        # the first) leaves the rest of the other in the socket, to be read
-        # as the next request line -- the chunked case's desynchronisation,
-        # arrived at from the other direction. RFC 9112 §6.3 says reject,
-        # and there is no legitimate sender to accommodate.
+        # Two lengths frame two messages (RFC 9112 §6.3).
         return 0, (400, "duplicate-content-length",
                    "Content-Length appears more than once\n")
 
@@ -105,11 +73,8 @@ def request_framing(path, headers):
     if raw is None or raw.strip() == "":
         return 0, None
     raw = raw.strip(" \t")
-    # ASCII digits and nothing else, which is RFC 9110 §8.6's grammar. int()
-    # is wider: it takes a sign, `1_000` and non-ASCII digits, each a
-    # spelling a parser elsewhere on the path reads as another number or
-    # none. A sign is the worst of them: rfile.read(-1) reads to EOF, so
-    # the handler would block until the caller chose to close.
+    # ASCII digits only, RFC 9110 §8.6. int() also takes a sign, `1_000` and
+    # non-ASCII digits, and rfile.read(-1) reads to EOF.
     if not (raw.isascii() and raw.isdigit()):
         return 0, (400, "bad-content-length",
                    "Content-Length is not a number\n")
@@ -122,22 +87,15 @@ def request_framing(path, headers):
 def response_framing(status, headers, method="GET"):
     """(headers to pass back, declared length, whether a body is forbidden).
 
-    A response to HEAD carries the headers a GET would have had and no
-    body, so its Content-Length describes bytes that never follow. Framing
-    it as a body -- or, with no length, as chunked with a terminator -- puts
-    bytes on the wire the client reads as the start of the next response.
+    A HEAD response's Content-Length describes a body that never follows,
+    and framing one would put bytes on the wire read as the next response.
     """
     passthrough = [(k, v) for k, v in headers
                    if k.lower() not in DROP_FROM_RESPONSE]
     # A Transfer-Encoding overrides a Content-Length (RFC 9112 §6.3), and
-    # http.client reads the body by the encoding, so an upstream that sends
-    # both has its body decoded to a length the header need not state.
-    # Declaring the header's number over the decoded body would put the
-    # difference into the next response on this connection.
+    # http.client decodes by the encoding, so the length is not declared.
     chunked = any(k.lower() == "transfer-encoding" for k, _ in headers)
     declared = None if chunked else next(
         (v for k, v in headers if k.lower() == "content-length"), None)
-    # 204 and 304 must not carry a body; framing them as chunked (even as a
-    # bare terminator) is a protocol violation that strict clients reject.
     return passthrough, declared, (status in (204, 304)
                                    or method == "HEAD")

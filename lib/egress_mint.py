@@ -1,38 +1,14 @@
 """
-egress_mint — minting a workload's egress CA once, and the leaf certificates
+egress_mint -- minting a workload's egress CA once, and the leaf certificates
 its inspector presents.
 
-The back half of bump-then-403. The inspector reads a name out of a ClientHello
-without answering it, decides what the name deserves, and then -- for both
-dispositions -- completes the handshake with a certificate this workload's own
-CA signed, because a guest that gets a certificate ERROR learns nothing, while
-a guest that gets a clean TLS session and a `403` knows it was answered, and
-by the host it asked for, rather than cut off.
-
-WHAT IS IN HERE AND WHY IT IS THREE THINGS RATHER THAN ONE
-
-Minting is a subprocess (~20 ms, against ~0.1 ms in-process -- but `lib/`
-has no third-party dependencies and stdlib cannot sign a certificate, so
-`openssl` it is). That cost is what shapes everything else:
-
-- A WORKING-SET CACHE, persisted, so a guest's usual hosts cost one mint each
-  ever, not one per connection and not one per listener restart.
-- A SEPARATE DENIAL-ONLY CACHE, so a guest hammering invented names cannot
-  evict the working set that its legitimate traffic depends on. Two bounded
-  LRUs, never one shared one -- with a shared cache, "flood the cache" is a
-  denial of service against the workload's real destinations, spelled in
-  ordinary traffic.
-- A TOKEN BUCKET over all minting, because a cache miss is
-  attacker-reachable by construction: the guest picks the names.
-
-WHAT IS NOT VIABLE, RECORDED BECAUSE IT IS THE OBVIOUS FIRST IDEA
-
-One shared certificate for every denial, minted once. The client validates the
-SAN against the name it asked for and aborts on mismatch, so the guest gets a
-certificate error instead of the `403` -- which is the entire benefit
-bump-then-403 exists to buy. The denials must each be minted for their own
-name, which is why they need a cache and a bucket of their own rather than a
-constant.
+A mint is an openssl subprocess, since the stdlib cannot sign, and a cache
+miss is guest-reachable because the guest picks the names. So there are two
+bounded caches, a working set and a denial set that a flood of invented
+names cannot evict the working set from, and a token bucket over all
+minting. Each denial needs a leaf of its own: a shared one fails the
+client's name check, and the guest sees a certificate error instead of the
+403.
 """
 
 from __future__ import annotations
@@ -55,59 +31,27 @@ from egress_ca import (
     ca_cert_path, ca_key_path, ca_openssl_argv, leaf_openssl_argv, leaf_san,
 )
 
-# --- sizes ---
-#
-# Module-local: nothing outside this file needs to agree on them, and lib/
-# holds only what two programs must.
-
-# The working set. 1024 exact names is far above any guest's real destination
-# count (a browsing session is tens; a build reaching a package index and a
-# registry is fewer) and the entries are small, so the bound is a guard against
-# unbounded growth rather than a budget anything is expected to press against.
+# The working set, far above any guest's real destination count.
 LEAF_CACHE_MAX = 1024
 
-# The denial set, deliberately a quarter the size. It is the one an adversary
-# controls the fill rate of, and nothing depends on a denial staying cached --
-# a miss costs one mint, which is exactly what the bucket below rations.
-#
-# THE FLOOR IS NOT AESTHETIC: A CACHE MUST HOLD MORE ENTRIES THAN THERE CAN BE
-# CONNECTIONS IN FLIGHT. Eviction unlinks the victim's PEM, and a leaf is a
-# file the caller opens AFTER this class has handed it over -- so if the
-# least-recently-used entry can be one a live connection is still holding, a
-# flood can delete a certificate out from under a handshake that was about to
-# use it. With N connection slots, N distinct names can be checked out at once,
-# and only the N+1'th insert can evict something nobody holds.
-#
-# Twice the listener's MAX_CONNECTIONS (128), so the margin is a factor rather
-# than an off-by-one: at exactly 128, 128 concurrent denials for distinct names
-# could evict the oldest of themselves, and a handshake would die on a missing
-# file and be reported as the guest not trusting the CA -- a wrong diagnosis
-# pointing at a re-provision. Asserted against the listener's ceiling by the
-# mint tests, since the two numbers live in different files and nothing else
-# makes them meet. The working set is well clear of it (1024 against 128).
+# The denial set. It must hold more entries than there are connections in
+# flight: eviction unlinks a leaf's PEM, and the handshake opens it after
+# the minter hands it over, so a flood of denials could otherwise delete a
+# leaf a handshake is about to use. Twice the listener's MAX_CONNECTIONS;
+# the mint tests assert it.
 DENIAL_CACHE_MAX = 256
 
-# The bucket. 256 tokens refilling at 1/s: a cold VM contacting fifty hosts
-# spends fifty tokens at once and refills in under a minute, while a guest
-# minting continuously is held to one name a second.
+# The bucket: 256 tokens refilling at 1/s. A cold guest contacting fifty
+# hosts spends fifty at once; a guest minting continuously gets one a second.
 MINT_BUCKET_CAPACITY = 256
 MINT_BUCKET_REFILL_PER_SECOND = 1.0
 
-# How long an ALLOWLISTED mint waits for a token before giving up. Denials do
-# not wait at all -- see Minter.leaf.
+# How long an allowlisted mint waits for a token. A denial does not wait.
 MINT_WAIT_SECONDS = 5.0
 
 
-
 class MintThrottled(Exception):
-    """The token bucket was empty. Carries which disposition was refused.
-
-    A type of its own rather than a `None` return, because the two callers do
-    opposite things with it -- an allowlisted name that cannot be minted for is
-    an incident to log, a denied one is the connection closing -- and a caller
-    that forgets to check a sentinel gets a certificate-shaped `None` instead
-    of an error.
-    """
+    """The token bucket was empty. Carries which disposition was refused."""
 
     def __init__(self, name: str, *, denied: bool):
         self.name = name
@@ -126,17 +70,9 @@ def mint_ca(name: str, state_dir, *, now: float | None = None,
     """Mint the workload's egress CA into `state_dir`, unless it is there.
 
     True if this call minted it, False if a key and a certificate were
-    already present, which are left exactly as they are: the workload's
-    trust bundle is built from that certificate, and a second mint would
-    make every leaf fail against a bundle nobody rebuilt.
-
-    Half a CA -- a key with no certificate, or the reverse -- is refused,
-    not repaired. Either half alone is useless, but which one an operator
-    has is theirs to decide, and a mint would overwrite the other.
-
-    The one mint, for every placement: the sidecar's entrypoint and
-    `customs-mint-ca` both call this, so the three extensions
-    ca_openssl_argv explains are applied the same way everywhere.
+    already present; those are left alone, since the guest's trust bundle
+    was built from that certificate. Half a CA is refused, not repaired:
+    which half to keep is the operator's call.
     """
     key, cert = ca_key_path(state_dir), ca_cert_path(state_dir)
     have_key, have_cert = key.exists(), cert.exists()
@@ -166,9 +102,8 @@ def mint_ca(name: str, state_dir, *, now: float | None = None,
                 raise MintFailed(
                     f"openssl refused to mint the CA for {name!r}: {detail}")
             os.chmod(staged_key, 0o600)
-            # The key first: a stop between the two leaves a key and no
-            # certificate, which the next call refuses by name, rather than
-            # a certificate a later mint would orphan.
+            # The key first: a stop between the two leaves a key with no
+            # certificate, which the next call refuses by name.
             os.replace(staged_key, key)
             os.replace(staged_cert, cert)
     except OSError as exc:
@@ -178,12 +113,8 @@ def mint_ca(name: str, state_dir, *, now: float | None = None,
 
 
 class Leaf(NamedTuple):
-    """One minted leaf: where it is, and when it stops being usable.
-
-    `path` holds the certificate AND its private key in one PEM file, which is
-    what `ssl.SSLContext.load_cert_chain(path)` takes with no keyfile argument.
-    One file rather than two so eviction is one unlink and cannot half-succeed.
-    """
+    """One minted leaf: a PEM holding the certificate and its key, and when
+    it stops being usable. One file, so eviction is one unlink."""
     name: str
     path: Path
     not_after: float
@@ -194,12 +125,7 @@ class Leaf(NamedTuple):
 
 class TokenBucket:
     """A refilling bucket, thread-safe, with an optional bounded wait.
-
-    The clock is injected rather than read directly so a test can assert the
-    refill rate without spending the wall-clock time it describes. `monotonic`,
-    not `time.time`: a host clock stepped backwards -- by an NTP resync, say
-    -- would otherwise freeze the bucket for the size of the step.
-    """
+    Monotonic, so a clock stepped backwards does not freeze it."""
 
     def __init__(self, capacity: float = MINT_BUCKET_CAPACITY,
                  refill_per_second: float = MINT_BUCKET_REFILL_PER_SECOND,
@@ -235,12 +161,7 @@ class TokenBucket:
             return True
 
     def wait(self, timeout: float) -> bool:
-        """One token, waiting up to `timeout` seconds for it.
-
-        Polls rather than sleeping for the computed shortfall: several threads
-        waiting would each compute the same instant and wake together, and the
-        poll interval is small against a five-second budget.
-        """
+        """One token, waiting up to `timeout` seconds for it."""
         deadline = self._clock() + timeout
         while True:
             if self.take():
@@ -252,33 +173,19 @@ class TokenBucket:
 
 
 class LeafCache:
-    """A bounded LRU of leaves, optionally backed by a directory.
+    """A bounded LRU of leaves, each a PEM in the cache's own directory.
 
-    Bounded by COUNT, not by age: an entry that ages out is handled by
-    `due_for_renewal` at lookup time instead, so a cache full of valid-but-idle
-    entries never re-mints and a cache holding one about to expire never serves
-    it.
-
-    The PEMs survive a restart, which is the point -- the listener is
-    socket-activated, so it restarts more often than the guest does, and
-    re-minting the entire working set each time would put the cold-start
-    cost on every restart.
-
-    EVERY CACHE OWNS A DIRECTORY, AND THAT IS WHAT MAKES THE TWO SETS SEPARATE.
-    A leaf is a file, because completing a handshake means handing
-    openssl-signed PEM to `ssl.SSLContext.load_cert_chain` -- so "memory-only"
-    is not available to the denial set, and the separation has to be structural
-    instead: eviction unlinks a path this cache minted, and two caches sharing
-    a directory would make a flood of refusals evict the working set by
-    deleting its files. Two directories, and the class cannot be constructed
-    without one.
+    Two caches never share a directory: eviction unlinks files, and a flood
+    of denials would otherwise delete the working set. The PEMs outlive a
+    restart, so a socket-activated listener does not re-mint its working
+    set each time it starts.
     """
 
     def __init__(self, capacity: int, directory: Path, issuer=None):
         self.capacity = capacity
         self.directory = Path(directory)
-        # A zero-argument callable giving the key id of the CA leaves must
-        # chain to, or None to adopt without asking. See _adopt.
+        # A callable giving the key id of the CA a leaf must chain to, or
+        # None to adopt without asking. See _adopt.
         self._issuer = issuer
         self._entries: OrderedDict[str, Leaf] = OrderedDict()
         self._lock = threading.RLock()
@@ -286,14 +193,8 @@ class LeafCache:
         self._trim_directory()
 
     def _trim_directory(self) -> None:
-        """Delete the oldest PEMs on disk down to `capacity`.
-
-        The in-memory LRU starts empty on every restart, so eviction alone
-        cannot bound the directory across restarts -- files evicted in a
-        previous process were never in this one's LRU to evict. Oldest-first by
-        mtime is a coarse stand-in for least-recently-used and only ever runs
-        at construction, where being coarse costs a re-mint and nothing else.
-        """
+        """Delete the oldest PEMs on disk down to `capacity`, since files a
+        previous process evicted were never in this one's LRU."""
         try:
             pems = sorted(self.directory.glob("*.pem"),
                           key=lambda p: p.stat().st_mtime)
@@ -303,13 +204,8 @@ class LeafCache:
             stale.unlink(missing_ok=True)
 
     def path_for(self, name: str) -> Path:
-        """Where `name`'s PEM lives on disk.
-
-        Hashed, not the name itself: a name is up to 253 characters of
-        guest-chosen input and this is a filesystem path. The hash also makes
-        every filename the same shape and length, so nothing about the guest's
-        destinations is legible from a directory listing.
-        """
+        """Where `name`'s PEM lives: hashed, since the name is guest input
+        and a listing should not show the guest's destinations."""
         digest = hashlib.sha256(name.encode()).hexdigest()
         return self.directory / f"{digest}.pem"
 
@@ -328,22 +224,10 @@ class LeafCache:
             return leaf
 
     def _adopt(self, name: str, *, now: float) -> Leaf | None:
-        """Take a PEM this process did not mint, left by a previous one.
+        """Take a PEM a previous process left, on a miss.
 
-        Adoption on a miss rather than a scan at startup: reading 1024 PEMs to
-        recover their expiry would put a subprocess-per-file on the listener's
-        first connection, and the names are hashed so the mapping cannot be
-        recovered from the directory anyway. A miss already costs a mint, so
-        checking one path first is free by comparison.
-
-        ONLY A LEAF THE CURRENT CA SIGNED. The directory outlives the CA:
-        a CA removed and minted again leaves every cached leaf signed by a
-        key nothing trusts any more, and adopting them serves a guest that
-        trusts the new CA a certificate error for each of its usual hosts
-        until the leaf expires, a month later. The subject cannot tell the
-        two CAs apart -- a re-mint carries the same name -- so the check is
-        the leaf's authority key id against the CA's subject key id, read
-        by the same openssl call that reads the expiry.
+        Only a leaf the current CA signed, compared by key id: a CA minted
+        again leaves leaves nothing trusts, under the same subject.
         """
         path = self.path_for(name)
         if not path.exists():
@@ -384,22 +268,10 @@ class LeafCache:
 
 
 def pem_fingerprint(path: Path) -> str | None:
-    """The SHA-256 fingerprint of the certificate in a PEM, or None.
+    """The SHA-256 fingerprint of the first certificate in a PEM, or None.
 
-    Public, because anything that compares the CA a running listener is
-    minting with against the one on disk must use THIS spelling: a second
-    implementation of "the fingerprint of a PEM" is the one thing that
-    comparison cannot survive -- two spellings of the same certificate report
-    a mismatch forever, on every workload.
-
-    Decoded here rather than shelled out to openssl. A fingerprint is a hash of
-    the DER, the DER is what the base64 between the PEM markers decodes to, and
-    hashlib is already imported -- so the subprocess this would otherwise cost
-    on every status write buys nothing. Formatted in the colon-separated
-    uppercase hex `openssl x509 -fingerprint -sha256` prints, because the value
-    exists to be compared against that output by eye.
-
-    Only the FIRST certificate in the file, which for a CA PEM is the CA.
+    Spelled as `openssl x509 -fingerprint -sha256` prints it, and the one
+    spelling anything comparing CAs should use.
     """
     try:
         text = path.read_text()
@@ -423,11 +295,7 @@ def pem_fingerprint(path: Path) -> str | None:
 
 def _key_id(text: str, extension: str) -> str | None:
     """The key id `openssl x509 -ext` printed under `extension`, or None.
-
-    The value is the indented line after the extension's name; older
-    openssl prefixes an authority key id with `keyid:`, which is dropped
-    so the two ids compare as the same spelling.
-    """
+    Older openssl prefixes an authority key id with `keyid:`."""
     lines = text.splitlines()
     for i, line in enumerate(lines):
         if line.strip().startswith(extension) and i + 1 < len(lines):
@@ -438,8 +306,7 @@ def _key_id(text: str, extension: str) -> str | None:
 
 def pem_leaf_facts(path: Path) -> tuple[float | None, str | None]:
     """(notAfter, authority key id) of the certificate in a PEM, either of
-    them None where it cannot be read. One openssl call for both, which is
-    the one adoption already paid for the expiry."""
+    them None where it cannot be read. One openssl call for both."""
     try:
         result = subprocess.run(
             ["openssl", "x509", "-in", str(path), "-noout", "-enddate",
@@ -479,13 +346,8 @@ def _parse_not_after(line: str) -> float | None:
 
 
 def pem_not_after(path: Path) -> float | None:
-    """The notAfter of the certificate in a PEM, as a unix timestamp.
-
-    `ssl.cert_time_to_seconds` on the text openssl prints, rather than parsing
-    DER by hand. Returns None on anything unreadable, which the caller treats
-    as "not cached" -- a corrupt PEM must cost a re-mint, never an exception on
-    a connection path.
-    """
+    """The notAfter of the certificate in a PEM, as a unix timestamp, or
+    None if it cannot be read, which the caller treats as not cached."""
     try:
         result = subprocess.run(
             ["openssl", "x509", "-in", str(path), "-noout", "-enddate"],
@@ -500,15 +362,8 @@ def pem_not_after(path: Path) -> float | None:
 class Minter:
     """Leaves for one workload, cached and rationed.
 
-    NOTHING HERE ASKS ABOUT THE GUEST. A leaf is backdated an hour, and a
-    guest whose clock is further out than that rejects every leaf this class
-    signs -- but that is a fact about the guest, repaired on the guest's
-    behalf by whatever owns the guest, and not something a minter can learn
-    from the name it was asked to sign. A minter that ran a caller-supplied
-    "remedy" on a cache miss would close a window only a fresh mint can fall
-    into, for one retryable handshake, at the price of carrying a seam into
-    whatever owns the guest. A guest whose clock is being stepped gets one
-    certificate error and a working retry.
+    A leaf is backdated an hour; a guest whose clock is further out rejects
+    it, and that is for whatever owns the guest to repair.
     """
 
     def __init__(self, name: str, state_dir, *,
@@ -523,19 +378,11 @@ class Minter:
         self.working_set = LeafCache(
             LEAF_CACHE_MAX, self.state_dir / LEAF_DIR_NAME,
             issuer=self._issuer_key_id)
-        # Its own directory, which is what keeps the two sets unable to evict
-        # each other. See the class docstring on LeafCache.
         self.denials = LeafCache(
             DENIAL_CACHE_MAX, self.state_dir / DENIAL_DIR_NAME,
             issuer=self._issuer_key_id)
-        # THE DENIAL FIGURES ARE SUBSETS, not a second dimension: `mints` and
-        # `hits` count both caches, and `denied_mints`/`denied_hits` count the
-        # denial-only half of the same events. Reporting them as disjoint pairs
-        # would make the total a sum an operator has to compute; reporting only
-        # the totals loses the split, and the SPLIT IS THE SIGNAL -- legitimate
-        # traffic mints a handful of working-set leaves and then lives on hits,
-        # while a guest driving the minter shows up almost entirely in the
-        # denial half. Same number, two very different workloads.
+        # The denied_* figures are subsets of mints and hits, not a second
+        # dimension: a guest driving the minter shows up in them.
         self.stats = {
             "mints": 0, "denied_mints": 0,
             "hits": 0, "denied_hits": 0,
@@ -545,29 +392,15 @@ class Minter:
         self._ca_identity = None
 
     def _issuer_key_id(self) -> str | None:
-        """The CA's subject key id, read once. The CA does not change
-        under a running inspector: a new one needs a new trust bundle in
-        the guest, and the inspector is restarted with it."""
+        """The CA's subject key id, read once: a new CA needs a new trust
+        bundle in the guest, and a restart."""
         if self._ca_key_id is None:
             self._ca_key_id = pem_subject_key_id(ca_cert_path(self.state_dir))
         return self._ca_key_id
 
     def _bump(self, *names: str) -> None:
-        """Add one to each named counter, under the lock `snapshot` reads with.
-
-        `d[k] += 1` is a read and a write rather than one operation, and every
-        call site here runs on a per-connection thread. Unlocked, increments
-        are lost under exactly the concurrency the figures exist to describe --
-        a workload under sustained abuse is read by `throttled` and
-        `denied_mints`, and those are the counters a flood drives in parallel.
-        `snapshot` reads under the same lock, and a lock only the reader takes
-        is a lock over nothing.
-
-        Several names at once because the pairs are subsets, not dimensions:
-        `denied_mints` counts the denial-only half of `mints`. Bumping them in
-        one critical section is what stops a reader seeing a total that has not
-        yet been told about its own subset.
-        """
+        """Add one to each named counter, in one critical section, so a
+        reader never sees a total ahead of its subset."""
         with self._lock:
             for name in names:
                 self.stats[name] += 1
@@ -575,17 +408,8 @@ class Minter:
     def leaf(self, server_name: str, *, denied: bool) -> Leaf:
         """A leaf for one exact name. Raises rather than returning a sentinel.
 
-        The name arrives already normalised by the caller's parse; normalising
-        again is idempotent and costs nothing, and it means this function's
-        contract does not depend on a promise made two modules away.
-
-        THE TWO DISPOSITIONS DIFFER ONLY ON AN EMPTY BUCKET, and that is the
-        part worth getting right. A denial does not wait: under a flood the
-        refusals degrade to closing the connection, which is the behaviour this
-        design rejects as a DEFAULT and accepts as an overflow, because it is
-        unreachable in normal operation. An allowlisted name waits up to
-        MINT_WAIT_SECONDS, because legitimate traffic never empties the bucket
-        and losing it is the outcome the whole design exists to avoid.
+        On an empty bucket a denial fails at once, and an allowlisted name
+        waits up to MINT_WAIT_SECONDS.
         """
         name = normalise_hostname(server_name)
         cache = self.denials if denied else self.working_set
@@ -596,19 +420,9 @@ class Minter:
             self._bump(*(("hits", "denied_hits") if denied else ("hits",)))
             return cached
 
-        # THE NAME IS CHECKED BEFORE THE BUCKET IS ASKED. A refusal runs no
-        # openssl, so it has no cost for a token to ration -- and a name
-        # the guest chose to be refused, sent in a loop, would otherwise
-        # empty the bucket for the allowlisted mints behind it.
-        #
-        # COUNTED HERE OR NOWHERE. `refused` and `failed` are two different
-        # facts -- a name this design will never mint for, against a mint
-        # that broke -- and only the first is guest-chosen, so it is the
-        # figure that moves on a workload being driven at the one boundary
-        # that exists to hold a guest off. The listener's own drop counter
-        # merges both under DROP_MINT_FAILED, which is right for an operator
-        # reading drops and wrong for anyone asking which of the two
-        # happened.
+        # The name is checked before a token is spent: a refusal runs no
+        # openssl, and a guest sending refused names would otherwise empty
+        # the bucket for allowlisted mints.
         try:
             leaf_san(name)
         except LeafRefused:
@@ -629,24 +443,8 @@ class Minter:
         return leaf
 
     def ca_identity(self) -> dict:
-        """This workload's CA, as the two facts an operator can act on.
-
-        The SHA-256 fingerprint over the DER, spelled the way `openssl x509
-        -fingerprint -sha256` spells it, so it can be compared by eye against
-        the anchor installed in the guest. This is the only place the value
-        has a producer, because this is what mints with it.
-
-        `notAfter` is here for one reason: a ten-year validity is invisible
-        until something prints the date it ends on. Distant is not the same as
-        safe, and an operator who can see 2036 can decide whether that is what
-        they meant.
-
-        Read once and remembered. The CA does not rotate (egress_ca: made
-        once, never churned), so re-reading it per status write would be a
-        syscall per tick to confirm a constant. Every failure degrades to None
-        rather than raising: this runs on the status path, and a status file
-        is never worth a connection.
-        """
+        """The CA's fingerprint and notAfter, read once. Failures are None:
+        this runs on the status path."""
         if self._ca_identity is None:
             cert = ca_cert_path(self.state_dir)
             self._ca_identity = {
@@ -656,12 +454,7 @@ class Minter:
         return dict(self._ca_identity)
 
     def snapshot(self) -> dict:
-        """Everything this minter reports, counters and live sizes together.
-
-        The sizes are read here rather than counted as they change: a cache
-        that evicts on insert would need every eviction mirrored into a counter
-        to stay honest, and the length IS the honest figure.
-        """
+        """Everything this minter reports, counters and live sizes together."""
         with self._lock:
             out = dict(self.stats)
         out["working_set"] = len(self.working_set)
@@ -671,31 +464,15 @@ class Minter:
         return out
 
     def _mint(self, name: str, cache: LeafCache, *, denied: bool) -> Leaf:
-        """Sign one leaf and land it as a single PEM, atomically.
-
-        Minted into a temporary directory and moved into place, so a reader
-        that finds the PEM finds a whole one. `os.replace` on the same
-        filesystem is the atomic step; the temp directory is inside the cache
-        directory to guarantee that.
-        """
-        # The certificate a denial gets is identical to the one an allow gets
-        # -- same name, same CA -- and the disposition lives in what the
-        # inspector does AFTER the handshake. What differs is which cache owns
-        # the file, so the same name minted under both dispositions lands
-        # twice, once per directory. That duplication IS the isolation.
+        """Sign one leaf and land it as a single PEM, atomically, from a
+        temporary directory inside the cache's."""
         target = cache.path_for(name)
         argv_dir = cache.directory
 
         now = self._clock()
-        # EVERY filesystem step is inside this. A cache directory the
-        # process cannot write raises OSError from the TemporaryDirectory
-        # below, and the inspector's per-connection handler swallows OSError
-        # by design -- so outside a handler here it would produce the worst
-        # failure shape this component has: the guest's connection reset, no
-        # journal line, no counter, and a warm cache hiding it entirely, the
-        # first request to a host failing and the second succeeding.
-        # MintFailed is logged, counted and named; an OSError
-        # escaping this function is not.
+        # Every filesystem step is inside this, so an unwritable cache is a
+        # MintFailed, named and counted, rather than an OSError the
+        # connection handler swallows.
         try:
             with tempfile.TemporaryDirectory(dir=argv_dir) as tmp:
                 key_path = Path(tmp) / "leaf.key"
@@ -712,8 +489,6 @@ class Minter:
                     raise MintFailed(f"could not run openssl: {exc}") from exc
                 if result.returncode != 0:
                     self._bump("failed")
-                    # Both streams: openssl splits its diagnostics across them
-                    # and which half carries the cause varies by subcommand.
                     detail = ((result.stderr or "")
                               + (result.stdout or "")).strip()
                     raise MintFailed(
@@ -732,7 +507,6 @@ class Minter:
         self._bump(*(("mints", "denied_mints") if denied else ("mints",)))
         not_after = pem_not_after(target)
         if not_after is None:
-            # A leaf we just minted and cannot read back is not a leaf.
             target.unlink(missing_ok=True)
             self._bump("failed")
             raise MintFailed(f"minted leaf for {name!r} is unreadable")
