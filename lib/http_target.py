@@ -1,23 +1,13 @@
 """
-http_target: what a request target and an authority NAME, in one canonical
+http_target: what a request target and an authority name, in one canonical
 form.
 
-The request target the inspect listener acts on IS normalised here --
-percent-decoding, dot-segment resolution, duplicate-slash collapsing -- and
-the normalised form is what goes upstream. Normalisation is not a service
-to the `paths` matcher; it is the claim that the string the listener acts on
-and the string the origin acts on are the same string. A matcher reading a
-different path from the one being fetched is a traversal, so the claim has to
-hold whether or not any policy names a path. See normalise_path for what is
-normalised, what is deliberately not (the query, `;params`, a trailing `/`),
-and why each.
-
-The same applies to the two other places a guest names a destination: the
-authority (`Host`, or an absolute-form target) and a redirect's `Location`.
-Each is reduced to the one name the policy is matched against, for the plane
-the request arrived on -- `Scheme` says which port that plane is, so that
-`Host: example.com:443` is the ordinary spelling on one and misdirected on
-the other.
+The path is normalised here -- unreserved escapes decoded, dot segments
+resolved, duplicate slashes collapsed -- and the normalised form is what the
+policy matches and what goes upstream, so the two cannot address different
+resources. A path with two readings among origins is refused instead. The
+authority (`Host`, or an absolute-form target) and a redirect's `Location`
+are reduced the same way to the one name policy is matched against.
 """
 
 import ipaddress
@@ -28,16 +18,8 @@ from egress_plane import CLEARTEXT, TLS
 from http_framing import RequestUnreadable
 
 class Scheme(NamedTuple):
-    """Which plane a request is being read on, for the two parsers that care.
-
-    The request parser is shared by the cleartext plane and the terminated TLS
-    one, and two of its refusals are plane-specific: the absolute-form scheme
-    it accepts, and the port an authority may name. Both are refusals about
-    reaching a destination neither end is on, so both have to know which port
-    this end IS -- hard-coding 80 in a parser the terminated plane also uses
-    would refuse `Host: example.com:443` as a misdirected request when it is
-    the ordinary spelling there.
-    """
+    """Which plane a request is read on: the absolute-form scheme it
+    accepts, and the one port an authority may name."""
 
     name: str
     port: int
@@ -47,9 +29,7 @@ SCHEME_HTTP = Scheme("http", CLEARTEXT.guest_port)
 SCHEME_HTTPS = Scheme("https", TLS.guest_port)
 
 
-# The characters RFC 3986 says a percent-encoding of is equivalent to the
-# character itself, so decoding one changes nothing and NOT decoding one leaves
-# two spellings of the same path for a matcher to disagree about.
+# RFC 3986's unreserved characters, whose escapes are equivalent to them.
 _UNRESERVED = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
@@ -59,24 +39,10 @@ _HEX = frozenset("0123456789abcdefABCDEF")
 def _decode_unreserved(path):
     """A path with unreserved percent-encodings decoded and the rest kept.
 
-    THE ENCODED SLASH IS REFUSED, and that is the whole reason this function is
-    not three lines of urllib. `%2f` has two readings -- an opaque byte inside
-    a segment, or a separator -- and real origins are split between them.
-    Decode it and `..%2f..%2f` becomes a traversal we then resolve on the
-    guest's behalf; keep it opaque and we match a pattern against a path the
-    origin will read as one segment deeper. Neither is a reading this listener
-    is entitled to pick, so the request is declined, in the same voice as the
-    framing refusals above: a message two parsers on the path read differently
-    is not one we relay.
-
-    `%2e` is a different case and IS decoded: `.` is unreserved, the decoding
-    is equivalence rather than a choice, and the dot-segment resolution
-    downstream is then applied to the same path the origin will resolve. That
-    is the `%2e%2e%2f` case closed, from the other end -- the dots become dots,
-    and the slash that would have joined them is gone before them.
-
-    Everything else percent-encoded stays encoded, spelled in UPPERCASE hex so
-    one path has one form. Non-ASCII travels as the bytes it was written as.
+    `%2e` is decoded, so dot-segment resolution sees the dots an origin
+    will. An encoded slash is refused: origins split on whether it is a
+    separator. Every other escape stays, in uppercase hex, so one path has
+    one spelling.
     """
     out = []
     i = 0
@@ -110,17 +76,8 @@ def _decode_unreserved(path):
 def _resolve_dot_segments(path):
     """A path with `.` and `..` resolved and empty segments collapsed.
 
-    The motivating case is a matcher that does not exist yet:
-    `/repos/myorg/../../secret` matches `paths = ["/repos/myorg/*"]` and
-    arrives at the origin as `/secret`. Resolving BEFORE the match, and sending
-    what was resolved, is what makes the string a policy is written against the
-    string the origin acts on.
-
-    A `..` at the root is discarded rather than refused, which is what RFC 3986
-    prescribes and what every origin does. TRAILING SLASH IS SIGNIFICANT and is
-    preserved: `/a` and `/a/` are different resources to most origins, so
-    normalising one into the other would change which one is fetched. A
-    trailing `.` or `..` produces one, again per RFC 3986.
+    A `..` at the root is discarded, as RFC 3986 says. A trailing slash is
+    kept, since `/a` and `/a/` are different resources.
     """
     segments = path.split("/")
     trailing = segments[-1] in ("", ".", "..")
@@ -139,27 +96,9 @@ def _resolve_dot_segments(path):
 def normalise_path(path):
     """The canonical form of an origin-form path, or raise.
 
-    ONE PLACE, on purpose. A path that is decoded here, resolved there and
-    matched somewhere else is a path with three forms, and the gap between any
-    two of them is where a traversal lives. Everything that has an opinion
-    about what this request addresses -- the `paths` matcher, the log line, and
-    the bytes sent upstream -- reads the string this returns.
-
-    THE QUERY IS NOT PART OF IT and is carried through untouched. Both readings
-    are defensible and silence picks the worse one: matching the full target
-    makes `paths = ["/v1/messages"]` fail on `/v1/messages?stream=true`, a
-    legitimate request denied for a reason an operator cannot see in their
-    config. Nor is the query normalised -- `%26` and `&` are different
-    parameters, so decoding there is not equivalence. A policy that needs to
-    constrain a query wants a key of its own.
-
-    `;params` are left inside their segment for the same reason: stripping them
-    is a legacy reading, and this listener does not get to decide that the
-    origin shares it. Except on a dot segment: `..;x`, or `..%3Bx`, is `..`
-    to an origin that strips params and a name to one that does not, which
-    is the encoded slash's two readings again, and is refused for the same
-    reason. So is a backslash, literal or encoded, which some origins read
-    as a separator.
+    The query is carried through untouched and is not part of what `paths`
+    matches. `;params` stay inside their segment, except on a dot segment,
+    which _refuse_second_readings refuses.
     """
     if "#" in path:
         raise RequestUnreadable(
@@ -175,12 +114,9 @@ def normalise_path(path):
 def _refuse_second_readings(path):
     """Refuse a decoded path some origins read as another path.
 
-    Each case is one the dot-segment resolution below cannot settle,
-    because it is a separator or a dot segment only to SOME origins: a
-    backslash (IIS and the frameworks that copy it), and a dot segment
-    carrying `;params` (the servlet containers, which strip params before
-    resolving). Matched as written, `/allowed/..;/admin` passes a pattern
-    for `/allowed/*` and reaches `/admin` there.
+    A backslash is a separator to some origins, and a dot segment with
+    `;params` is a dot segment to those that strip params first:
+    `/allowed/..;/admin` matches `/allowed/*` and reaches `/admin` there.
     """
     if "\\" in path or "%5C" in path:
         raise RequestUnreadable(
@@ -188,8 +124,7 @@ def _refuse_second_readings(path):
             "separator and some as a byte, so it is not a path this can "
             "authorise")
     for segment in path.split("/"):
-        # `%3B` as well as `;`: an origin that decodes before it strips
-        # params reads the encoded one as the delimiter.
+        # `%3B` too, for an origin that decodes before it strips params.
         name, semi, _params = segment.replace("%3B", ";").partition(";")
         if semi and name in (".", ".."):
             raise RequestUnreadable(
@@ -201,11 +136,9 @@ def _refuse_second_readings(path):
 def normalise_target(method, target, scheme=SCHEME_HTTP):
     """(origin-form target, authority or None) for a request target, or raise.
 
-    Absolute-form is legal HTTP/1.1 and moves the authorising name OUT of the
-    Host header, which RFC 9110 §7.2 then says to ignore. Left alone, that one
-    line of guest input defeats both the Host read that authorises here and the
-    `paths` match. So it is normalised to origin-form and
-    its authority becomes the name we authorise -- or the request is refused.
+    An absolute-form target is rewritten to origin-form, and its authority
+    becomes the name authorised; the Host header is then ignored, as RFC
+    9110 §7.2 says.
     """
     if method == "CONNECT":
         raise RequestUnreadable(
@@ -222,9 +155,8 @@ def normalise_target(method, target, scheme=SCHEME_HTTP):
         raise RequestUnreadable(
             f"request target {target!r} is neither origin-form nor an "
             f"{scheme.name} absolute-form URI")
-    # The authority ends at the FIRST of these three, not at the first slash: a
-    # query or a fragment can carry a slash of its own, and splitting on that
-    # one puts half the query into the name we are about to authorise.
+    # The authority ends at the first `/`, `?` or `#`: a query can carry a
+    # slash of its own.
     cut = min((i for i in (rest.find("/"), rest.find("?"), rest.find("#"))
                if i != -1), default=-1)
     if cut == -1:
@@ -274,8 +206,8 @@ def host_from_authority(authority, scheme=SCHEME_HTTP):
     if not host:
         raise RequestUnreadable(f"authority {authority!r} names no host")
     if host.startswith("["):
-        # A bracketed literal is an IPv6 address and nothing else. No scope
-        # id: `%` is no part of a name, and it carries whatever follows it.
+        # An IPv6 address and nothing else, and no scope id: `%` carries
+        # whatever follows it.
         try:
             if "%" in host:
                 raise ValueError(host)
@@ -290,12 +222,8 @@ def host_from_authority(authority, scheme=SCHEME_HTTP):
             raise RequestUnreadable(
                 f"the authority carries {ch!r}, which no host name is "
                 "spelled with")
-    # A plane is reached by a redirect keyed on one dport and it dials that
-    # same port, so an authority naming any other port describes a destination
-    # that is not the one either end is on. Refused rather than ignored: the
-    # alternative is authorising and dialling one thing while telling the
-    # origin another, which is how a vhost decision gets made on a port nobody
-    # connected to.
+    # A plane only ever dials its own port, so an authority naming another
+    # describes a destination neither end is on.
     if port not in ("", str(scheme.port)):
         raise RequestUnreadable(
             f"authority {authority!r} names port {port!r}, but this plane "
@@ -306,30 +234,16 @@ def host_from_authority(authority, scheme=SCHEME_HTTP):
 def redirect_target(location, scheme=SCHEME_HTTP):
     """(host, path) a Location header names, or (None, None) for neither.
 
-    A relative Location -- the common case -- names no host and is not a
-    redirect off this origin, so it is None rather than a refusal. So is
-    anything this cannot read: the only thing built on the answer is a log
-    line, and a parse failure there must never become a failed response.
-
-    Any scheme is read, not just this plane's: a redirect from http to https is
-    ordinary, and the name is the question, not the scheme it is reached over.
-
-    The path comes back NORMALISED BY THE REQUEST PARSER'S OWN FUNCTION, and
-    that is the point of returning it at all. What is built on it is a
-    prediction of the verdict the guest's next connection will get, so it has
-    to be the same string that connection will be judged on; a path normalised
-    differently here would produce a note that disagrees with the 403 it is
-    meant to explain. A path this cannot normalise comes back None -- there is
-    then no prediction to make, which is not the same as predicting no refusal.
+    Only a log line is built on this, so a relative Location, or one that
+    cannot be read, is (None, None) rather than a refusal. Any scheme is
+    read. The path is normalised by normalise_path, so the note predicting
+    a refusal matches the path the next request will be judged on; one that
+    cannot be normalised is None.
     """
     text = location.strip()
     got, sep, rest = text.partition("://")
     if not sep or not got or "/" in got:
         return None, None
-    # The authority ends at the FIRST of these three, not at the first slash --
-    # the same cut `normalise_target` makes and for the same reason: a query or
-    # a fragment can carry a slash, and splitting on that one puts half the
-    # query into the name.
     cut = min((i for i in (rest.find("/"), rest.find("?"), rest.find("#"))
                if i != -1), default=-1)
     if cut == -1:
@@ -337,15 +251,11 @@ def redirect_target(location, scheme=SCHEME_HTTP):
     elif rest[cut] == "/":
         authority, path = rest[:cut], rest[cut:]
     else:
-        # A query or fragment with no path before it: the resource is the root.
-        # The query is dropped either way, because `paths` matches the path
-        # alone -- the same rule the request side applies.
         authority, path = rest[:cut], "/"
     if not authority:
         return None, None
-    # Port-agnostic on purpose: `host_from_authority` refuses a port this plane
-    # does not reach, which is right for a request being authorised and wrong
-    # for a name being reported. Strip it first.
+    # Port-agnostic: the port refusal is right for a request and wrong for a
+    # name being reported, so it is stripped first.
     try:
         host = host_from_authority(authority, Scheme(got.lower(), 0)).host
     except RequestUnreadable:

@@ -1,43 +1,16 @@
 """
-inspect_listener: the transparent egress inspector, one connection at a
-time.
+inspect_listener: the transparent egress inspector's accept loop.
 
-The shape is the socket, the concurrency and the timeout discipline: accept
-on the inherited listeners, admit up to a ceiling, name the plane, and hand
-the connection to it with the workload's Inspection (lib/inspect_scope.py).
-The planes are the rest. On 443 (lib/inspect_tls.py) a connection has its
-ClientHello read, its server name matched against this workload's `hosts`,
-and is then SPLICED byte-exact to that name's real host, TERMINATED and
-authorised request by request, or closed. On 80 (lib/inspect_http.py) every
-request on a connection is authorised by its Host header, through the same
-matcher, and only the ones that pass are relayed -- a name on no list gets a
-real 403 naming it, which is an answer 443 cannot give.
+Accept on the inherited listeners, identify the caller, admit up to a
+ceiling, and hand each connection to its plane with the workload's
+Inspection: 443 to inspect_tls, 80 to inspect_http.
 
-WHY THE PLANE COMES FROM getsockname, NOT LISTEN_FDNAMES
+The plane is read from the accepting socket's port, not LISTEN_FDNAMES:
+under Accept=no every fd carries the unit's name.
 
-The socket unit runs with Accept=no, under which systemd names every
-activated fd after the unit — every one carries the same LISTEN_FDNAMES
-entry, so the name cannot tell the cleartext listener from the TLS one. The
-local port of the inherited fd can, and it is the honest source of it: a
-guest dial to 80 is translated onto the cleartext plane's inspect port, one
-to 443 onto the TLS plane's (lib/egress_plane.py), and the socket that
-accepted the connection knows which it is. That property is what makes
-SO_ORIGINAL_DST unnecessary for choosing the plane; reading the port from
-anywhere else would reintroduce the need for it.
-
-CONCURRENCY AND TIMEOUTS
-
-One thread per connection, with a ceiling, and reject above it — do not queue.
-An unbounded accept queue turns a guest's connection storm into memory growth
-in a process that holds a CA key; a refused connection is a fast,
-countable failure instead. The threads are daemons, as the broker's
-ThreadingMixIn sets them, so a SIGTERM that stops the accept loop does not
-wait on the connections it already took.
-
-Every accepted socket gets an explicit timeout before it is touched, and the
-two numbers it moves between -- one bounding every wait up to a decision, one
-bounding every wait after -- are egress_relay's, which says why they cannot
-be one number and which wait on the cleartext plane takes which.
+One daemon thread per connection, up to a ceiling, and refused above it
+rather than queued. Every accepted socket gets egress_relay's decision
+timeout before it is touched.
 """
 
 import errno
@@ -64,44 +37,27 @@ from inspect_scope import Inspection
 from peer_identity import local_endpoints, peer_caller
 
 
-
-# The ceiling on simultaneously-handled connections. Sized well above a guest's
-# legitimate concurrency (a browser is a handful of connections per origin,
-# plus a few parallel downloads). The cost of being generous is bounded; the
-# cost of being tight is a workload that reaches nothing. Past it a connection
-# is refused, not queued.
+# The ceiling on connections being served, well above a guest's honest
+# concurrency.
 MAX_CONNECTIONS = 128
 
-# The ceiling on connections whose caller is still being looked up. Separate
-# from MAX_CONNECTIONS so that a caller refused as foreign never holds a
-# serving slot, and small because a lookup takes milliseconds: past it a
-# connection is refused, like one over the other ceiling.
+# The ceiling on connections whose caller is still being looked up. Apart
+# from MAX_CONNECTIONS so a foreign caller never holds a serving slot, and
+# small because a lookup takes milliseconds.
 MAX_IDENTIFYING = 32
 
 
-
-# How often the accept loop wakes to look for a stop, in seconds. select() is a
-# blocking call that a SIGTERM cannot make return (PEP 475 retries it), so the
-# loop polls on a short interval and checks the stop flag.
+# How often the accept loop wakes to look for a stop, in seconds: PEP 475
+# retries select() across a signal.
 _ACCEPT_POLL = 0.1
 
 
-
-
-# How often the status file is replaced while the listener is serving. A low
-# tick, deliberately: it is read at a moment nobody chose, and a file
-# minutes out of date reads as a stalled counter. Cheap enough to ignore --
-# a few hundred bytes of JSON against a process whose other work is relaying
-# a tunnel.
+# How often the status file is replaced, in seconds.
 STATUS_INTERVAL = 30.0
 
 
 class Ceiling:
-    """Bounded, per-process: admit up to `limit` live connections, refuse the
-    rest. Refuse, not queue — a connection over the cap is turned away
-    immediately rather than held in an unbounded accept queue, which is what
-    turns a guest's connection storm into memory growth.
-    """
+    """Admit up to `limit` live connections and refuse the rest."""
 
     def __init__(self, limit):
         self._limit = limit
@@ -111,14 +67,7 @@ class Ceiling:
 
     @property
     def held(self) -> int:
-        """Connections live right now.
-
-        Reported beside `rejected` because the pair is what separates the two
-        readings of a non-zero refusal count: a guest storming the listener
-        shows refusals with the ceiling full, and a ceiling set too low for a
-        real workload shows them with it full as well -- but the second sits at
-        the limit steadily while the first spikes. One number cannot say which.
-        """
+        """Connections live right now."""
         with self._lock:
             return self._held
 
@@ -132,14 +81,8 @@ class Ceiling:
             return True
 
     def release(self, *, refused=False):
-        """Give a slot back.
-
-        `refused` marks the give-back as a connection that was admitted but
-        never served, so the tally counts every turned-away connection and not
-        only the ones the cap itself turned away. Both reach the guest the same
-        way — a closed connection — so a total that counted just one of them
-        would understate what the guest saw.
-        """
+        """Give a slot back. `refused` counts a connection admitted and then
+        turned away before it was served."""
         with self._lock:
             self._held -= 1
             if refused:
@@ -157,13 +100,10 @@ class Listener:
         self._ceiling = Ceiling(limit)
         self._identifying = Ceiling(MAX_IDENTIFYING)
         self._stop = threading.Event()
-        # The one uid whose connections are served, or None for this
-        # process's own. Told, where it is told, for the placement where
-        # the workload is another uid by design -- a sidecar, where the uid
-        # is what tells the two apart in the rules -- and every connection
-        # would otherwise be refused as foreign.
+        # The one uid served, or None for this process's own. A sidecar's
+        # workload is another uid by design.
         self._caller_uid = caller_uid
-        # None means "count but never write", which is what the tests want.
+        # None: count, never write.
         self._status_path = status_path
         self.inspection = Inspection(
             policy, out=out, minter=minter, record_path=record_path,
@@ -181,12 +121,8 @@ class Listener:
         sel = selectors.DefaultSelector()
         for s in self._sockets:
             sel.register(s, selectors.EVENT_READ)
-        # Written once before the first connection, so the file exists from the
-        # moment the listener is up. Absence then means "this inspector has
-        # never STARTED" rather than the ambiguous "has never served a
-        # connection" -- a distinction the reader cannot otherwise draw,
-        # because a workload whose guest has dialled nothing is healthy and a
-        # socket unit that hit its trigger limit is not.
+        # Written before the first connection, so a missing file means the
+        # listener never started, not that it has served nothing.
         self.write_status()
         due = time.monotonic() + STATUS_INTERVAL
         try:
@@ -210,17 +146,15 @@ class Listener:
         finally:
             sel.close()
 
-    # Whether the last accept failed for want of a file descriptor, so the
-    # line saying so is written once per shortage rather than per attempt.
+    # Whether the last accept failed for want of a descriptor, so the
+    # warning is written once per shortage.
     _fds_short = False
 
     def _out_of_fds(self, exc):
-        """Wait out a shortage of file descriptors, rather than spin on it.
+        """Wait out a shortage of file descriptors rather than spin on it.
 
-        The connection is still queued, so the listener stays readable and
-        select() returns at once: without a pause the loop turns an fd
-        shortage into a core spent retrying accept(). The pause is the
-        loop's poll interval, and a stop still ends it.
+        The connection stays queued, so the listener stays readable and
+        select() would return at once.
         """
         if not self._fds_short:
             self._fds_short = True
@@ -230,29 +164,13 @@ class Listener:
         self._stop.wait(_ACCEPT_POLL)
 
     def _handle(self, conn, peer, listen_sock):
-        # Set the timeout before doing anything with the accepted socket —
-        # admitted or not, and before the ceiling is consulted. Both planes
-        # read as their first act, so this is the number that bounds a guest
-        # that connects and then says nothing.
         conn.settimeout(egress_relay.CONNECTION_TIMEOUT)
-        # The accepting port, from getsockname() on the inherited fd — the fd
-        # name cannot distinguish the planes under Accept=no (module
-        # docstring).
         local = listen_sock.getsockname()
         plane = plane_for_port(local[1])
-        # HERE, not in _serve, and before the ceiling is consulted: _serve does
-        # not run for a connection the ceiling rejects, and those two
-        # `rejected` lines are exactly the ones an operator correlates when a
-        # guest reports a stall it got no answer to.
-        #
-        # Random rather than a counter. The listener is socket-activated, so a
-        # counter restarts at zero every time the socket re-triggers it, while
-        # the record file this keys outlives that restart -- two unrelated
-        # connections would share a key in the one file a reader joins on.
+        # Random, not a counter: a socket-activated listener restarts, and
+        # the record it keys outlives the restart.
         cid = secrets.token_hex(6)
         if plane is None:
-            # Not a port the socket unit binds, so not a listener of ours:
-            # there is no plane to serve it on and none a record could name.
             self.inspection.log(
                 f"rejected {LOG_ID_FIELD}={cid} "
                 f"local={format_endpoint(local)} "
@@ -268,24 +186,14 @@ class Listener:
                       f"local={format_endpoint(local)} "
                       f"peer={format_endpoint(peer)}",
                       cid=cid, plane=plane.label)
-        # The caller is looked up in the connection's own thread, not here.
-        # The lookup reads the kernel's whole socket table, milliseconds on
-        # a busy host, and on this loop every one of them is time no other
-        # connection is accepted -- which any local uid could buy by
-        # connecting in a loop. Bounded by MAX_IDENTIFYING meanwhile.
+        # The caller is looked up in the connection's thread: the lookup
+        # reads the kernel's socket table, and on this loop that time is
+        # time no connection is accepted.
         if not self._identifying.admit():
             self._refuse_ceiling(conn, where, plane)
             return
-        # Daemon, as the broker's ThreadingMixIn: a SIGTERM that stops the
-        # accept loop does not wait on the connections it already took.
-        #
-        # The slot is admitted before the thread exists, so the failure to
-        # start one has to give it back here. Thread.start() raises
-        # RuntimeError when the process cannot get another thread — exactly the
-        # condition a connection storm produces, and exactly when the ceiling
-        # matters. A leaked slot is never returned by anything, so each
-        # failure would lower the ceiling for good and the listener degrade
-        # to refusing every connection while still reporting itself active.
+        # Thread.start() raises when the process is out of threads, and the
+        # slot taken above must come back or the ceiling shrinks for good.
         try:
             threading.Thread(
                 target=self._admit, args=(conn, peer, where, plane),
@@ -296,9 +204,6 @@ class Listener:
                                  f"cannot start thread: {exc}")
 
     def _refuse_ceiling(self, conn, where, plane, detail=None):
-        # Counted as a drop as well as a rejection: the guest saw a closed
-        # connection, as every other drop gives it, and a disposition total
-        # without these would not add up to the connections accepted.
         mode = ("forward" if plane is not TLS
                 else "terminate" if self.inspection.policy.tls == "inspect"
                 else "splice")
@@ -323,39 +228,21 @@ class Listener:
     def _identified(self, conn, peer, where):
         """Whether the caller is the one this listener serves. Closes the
         connection if not.
+
+        Behind the host's rules, which are the primary control: a dial from
+        another uid that got past them would be written into this
+        workload's records as its own. Root is refused too, whatever the
+        rules exempt.
         """
-        # WHO IS CALLING. Before the ceiling, so a foreign caller cannot spend
-        # a slot the workload needs, and before any byte is read.
-        #
-        # This is defence in depth, not the primary control: the host's
-        # rules are what keep another uid's packets away from this
-        # listener. It exists because that guard is a rule in a table this
-        # program does not own and cannot verify, and because of what a gap
-        # in it lets through -- a dial from any local uid reaches this
-        # listener AND is written into this workload's egress records, so
-        # the records describe traffic the workload never sent. A record an
-        # operator cannot trust is worse than no record.
-        #
-        # Root is refused here even where a host's rules exempt it. Such an
-        # exemption exists so host tooling is not caught by a host-wide
-        # drop, and host tooling does not dial this listener. So the
-        # exemption is about packets, not about callers, and a manual probe
-        # from root landing in a workload's records is the same defect.
         try:
             caller, orphaned = peer_caller(local_endpoints(conn), peer[:2])
         except Exception:
-            # A check that can throw is worse than one that fails soft: this is
-            # the second layer, and taking the connection path down with it
-            # would turn a hardening measure into an outage. Treated as
-            # unresolved, which is handled below.
+            # A second layer that throws must not take the connection path
+            # down with it.
             caller, orphaned = None, False
         if orphaned:
-            # The caller wrote and closed before it could be looked up: its
-            # row is there and no socket owns it. Admitting it would let any
-            # local uid have a request served by closing first -- a request
-            # it cannot read the answer to, but one that is forwarded, and
-            # brokered where the policy says so. On a host this layer is the
-            # only thing between another user and this listener.
+            # The caller wrote and closed before it could be looked up, which
+            # any local uid can choose to do.
             self.inspection.drop(where, DROP_CALLER_CLOSED, verb="rejected")
             conn.close()
             return False
@@ -365,17 +252,10 @@ class Listener:
                                  caller_uid=caller)
             conn.close()
             return False
-        # `None` means the lookup could not name the owner and found no
-        # orphaned row either -- a /proc read that failed, or a translation
-        # the endpoints do not cover. Admitted, not refused: failing closed
-        # on an unresolvable read would drop the workload's OWN traffic under
-        # exactly the load that makes the table churn. Counted so the
-        # silence is visible rather than assumed absent.
+        # An owner the lookup could not name is admitted, since refusing
+        # would drop the workload's own traffic when the table churns, and
+        # counted rather than logged, since it is a routine race.
         if caller is None:
-            # Counted, not logged. A line per connection would be noise for a
-            # routine race -- the row can leave the table before we read it --
-            # and it would carry a connection id, putting entries in the log an
-            # operator joins on for connections that were served normally.
             self.inspection.counters.record_caller_unresolved()
         return True
 
@@ -393,52 +273,25 @@ class Listener:
 
     @property
     def rejected(self) -> int:
-        """How many connections this process turned away.
-
-        A ceiling nobody can read is indistinguishable from one that never
-        fires: the guest sees closed connections either way, and the operator
-        has no way to tell a listener that refused 40,000 connections from one
-        that was never reached. Reported on shutdown by `log_summary`.
-        """
+        """How many connections this process turned away."""
         return self._ceiling.rejected + self._identifying.rejected
 
     def status(self) -> dict:
         """This listener's counters, as they would be written right now."""
         snap = self.inspection.counters.snapshot(open_now=self._ceiling.held,
                                       refused=self.rejected)
-        # The digest of the document THIS PROCESS loaded. It is not a
-        # counter and it never moves, which is exactly why it belongs here:
-        # the status file is the only channel from a running listener to the
-        # host, and the question a reader cannot otherwise answer is which
-        # policy the process behind the socket is actually enforcing. Written
-        # unconditionally, empty string included -- a key that appeared only
-        # when non-empty would make "no digest" and "an older listener"
-        # indistinguishable to the reader, and the reader treats one of those
-        # as silence.
+        # Which policy this process enforces, empty string included, so a
+        # missing digest is not mistaken for an older listener.
         snap[INSPECT_DIGEST_KEY] = self.inspection.policy.digest
         if self.inspection.minter is not None:
-            # The minter's own figures, live sizes and CA identity included.
-            # `hits` against `mints` says whether the working set is doing its
-            # job; the `denied_*` subsets say which half of the traffic is
-            # driving it; `throttled` is the only thing that names why a
-            # workload under sustained abuse stopped getting readable 403s.
             snap["mint"] = self.inspection.minter.snapshot()
         return snap
 
     def write_status(self):
         """Replace the status file, or log why it could not be replaced.
 
-        Never raises, and the except clause has to be as wide as that claim.
-        A listener that died because it could not write a diagnostic would be a
-        worse outcome than the missing diagnostic, and this runs on the accept
-        loop -- the thread whose death stops the guest reaching anything.
-
-        OSError is the expected failure (a full or read-only /run). TypeError
-        and ValueError are caught because json.dump raises them for a value it
-        cannot serialise: every figure here is an int, a str or a dict of those
-        today, so that is unreachable -- and a counter added later that is
-        not must degrade to a missing status file, never to a workload
-        whose guest cannot reach anything.
+        Never raises: this runs on the accept loop. TypeError and ValueError
+        are json.dump's for a value it cannot serialise.
         """
         if self._status_path is None:
             return
@@ -449,30 +302,16 @@ class Listener:
                 f"WARNING: could not write {self._status_path}: {exc}")
 
     def log_summary(self):
-        """One line, at shutdown, naming what was refused.
-
-        Emitted unconditionally — a zero is the useful reading most of the
-        time, because it is what distinguishes "the ceiling never fired" from
-        "nothing was logged about it".
-        """
+        """One line at shutdown naming what was refused, zero included."""
         self.inspection.log(f"stopped: {self.rejected} connection(s) rejected")
 
 
 def build_minter(name, state_dir, policy):
     """A Minter for a terminating workload, or None. Raises if it cannot.
 
-    `state_dir` is where this workload's CA and leaf caches live, and it is
-    HANDED IN rather than derived from `name`: where a workload keeps its
-    state is a fact about how a host is laid out, and this module is the
-    inspector, which is started by whatever lays the host out but is not
-    it. `name` is still taken because the CA subject and the log lines
-    carry it -- a label, not a lookup key.
-
-    The CA is checked HERE rather than at the first mint. It is made by
-    whoever provisions the workload, before the listener is ever
-    socket-activated, so its absence is a provisioning failure, and a
-    provisioning failure that surfaces as one refused connection an hour
-    after boot is a provisioning failure nobody attributes.
+    The CA is checked here, at start: it is made before the listener first
+    runs, so its absence is a provisioning failure, and it should not
+    surface as a refused connection an hour later.
     """
     if policy.tls != "inspect":
         return None

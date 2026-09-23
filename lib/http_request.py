@@ -1,18 +1,10 @@
 """
 http_request: one request head, parsed to the form the inspect listener emits.
 
-`parse_request` is where the pieces meet: the head is split by
-`http_framing`, the target and authority are reduced by `http_target` to the
-one name policy is matched against, the body's framing is decided, and the
-result is a `Request` the listener authorises and -- if it passes --
-`rebuild_request` turns back into bytes. Those bytes are OUR framing and the
-name we authorised, never the guest's head forwarded verbatim: two parsers
-cannot disagree about a length one of them wrote.
-
-The one place the strip-and-recompute rule reaches past framing is an
-`Upgrade` offer, which is re-emitted from the value `_upgrade_offer`
-recognised -- and never for `h2c`, which would move the rest of the
-connection onto frames this relay cannot read.
+`parse_request` splits the head (`http_framing`), reduces the target and
+authority to the name policy matches (`http_target`) and decides the body's
+framing. `rebuild_request` turns the result back into bytes: our framing and
+the name we authorised, never the guest's head forwarded verbatim.
 """
 
 from typing import NamedTuple
@@ -40,56 +32,35 @@ class Request(NamedTuple):
 
     @property
     def path(self) -> str:
-        """The target's path ALONE, which is what `paths` is matched against.
-
-        The query is deliberately not part of it (normalise_path says so at
-        length): matching the full target makes `paths = ["/v1/messages"]`
-        fail on `/v1/messages?stream=true`, a legitimate request denied for a
-        reason the operator cannot see anywhere in their config.
-        """
+        """The target's path without its query, which is what `paths` is
+        matched against."""
         return self.target.partition("?")[0]
 
 
-# Headers we never forward: the hop-by-hop names, plus the two framing headers,
-# which are re-emitted from what we computed, plus Host, which is re-emitted as
-# the name we authorised.
+# Headers never forwarded: the hop-by-hop names, the framing headers and
+# Host, which are re-emitted from what was computed and authorised.
 #
-# A FIXED LIST, NOT RFC 9110 §7.6.1's. That section says the names to drop are
-# the ones the message's own `Connection` header lists, which is a set the
-# GUEST writes; this is the standing set those names are drawn from in
-# practice. The difference is real and is accepted: a guest sending
-# `Connection: x-custom` has `x-custom` forwarded rather than stripped. It buys
-# nothing here -- every framing decision on this path is recomputed by
-# request_framing and re-emitted by rebuild_request, so a header the origin
-# does not recognise is a header the origin ignores -- and honouring the
-# dynamic list would mean letting guest input decide which of OUR headers
-# survive. Named so the citation cannot be read as a claim this implements it.
+# A fixed list, not the names the guest's own `Connection` header lists
+# (RFC 9110 §7.6.1): honouring that would let the guest choose which of our
+# headers survive. An extra name it lists is forwarded, and the origin
+# ignores what it does not know.
 _NOT_FORWARDED = frozenset((
     "host", "content-length", "transfer-encoding", "connection",
     "proxy-connection", "keep-alive", "te", "trailer", "upgrade", "expect",
 ))
 
 
-# Protocol names we will not carry an upgrade to. An `h2c` upgrade moves the
-# rest of the connection onto HTTP/2, whose requests are HPACK-compressed
-# frames this relay cannot read -- so forwarding one would hand the guest a
-# way to opt out of per-request authorisation entirely, which is the property
-# the terminating plane exists to provide. HTTP/2 on this plane is a
-# capability to buy deliberately, and this is the line that keeps it from
-# arriving by accident in the meantime.
+# Upgrades not carried. h2c moves the connection onto frames this relay
+# cannot read, which would end per-request authorisation.
 _UPGRADE_REFUSED = frozenset(("h2", "h2c"))
 
 
 def _upgrade_offer(headers, tokens, version):
     """The Upgrade value to forward, or "" for a request that is not one.
 
-    "" covers three different things and deliberately does not distinguish
-    them, because they all mean the same to the origin: not an upgrade at all,
-    an upgrade this relay will not carry, and an upgrade on HTTP/1.0 (where the
-    mechanism does not exist). In each case the request goes upstream as the
-    ordinary HTTP/1.1 request it also is, the origin does not switch protocols,
-    and the exchange completes normally -- which is the behaviour RFC 9110
-    already defines for a server that declines an offer, not a silent breakage.
+    "" also for an upgrade not carried, and for HTTP/1.0: the request then
+    goes up as the ordinary request it also is, and the origin declines to
+    switch, as RFC 9110 defines.
     """
     if version != "HTTP/1.1" or "upgrade" not in tokens:
         return ""
@@ -122,9 +93,8 @@ def parse_request(head, scheme=SCHEME_HTTP):
                 f"{len(hosts)} Host headers: with no absolute-form authority "
                 "there is exactly one name that could authorise this request")
         authority = hosts[0]
-    # The port is dropped from what we emit: it is either absent or the port we
-    # are on, so the canonical spelling is the bare name -- and the name is
-    # what was authorised.
+    # The port is either absent or this plane's, so the bare name is what
+    # goes up.
     host = host_from_authority(authority.strip().lower(), scheme).host
     connection = ",".join(_get_all(headers, "connection")).lower()
     tokens = {t.strip() for t in connection.split(",")}
@@ -144,22 +114,10 @@ def parse_request(head, scheme=SCHEME_HTTP):
 
 
 def rebuild_request(req):
-    """The bytes we send upstream: OUR framing, and the name we authorised.
+    """The bytes sent upstream: our framing, and the name we authorised.
 
-    Not the guest's head forwarded verbatim. Two parsers cannot disagree about
-    a length one of them wrote, so the framing headers are dropped and re-
-    emitted from the Framing we computed, and Host is re-emitted as the
-    authority that was actually matched -- which for an absolute-form request
-    is not what the guest's Host header said.
-
-    THE NAMES GO UPSTREAM LOWERCASED, as a consequence of _split_head folding
-    them for its own comparisons. Field names are case-insensitive, so this is
-    legal and nothing that reads HTTP properly can tell -- but an origin with a
-    hand-rolled parser that string-matches `Content-Type` can, and the symptom
-    is a request that works direct and fails inspected. Named rather than
-    repaired: preserving the guest's spelling would mean carrying a second
-    copy of every name purely to write it back, and the case where that
-    matters is an origin already outside the spec.
+    Header names go up lowercased, as _split_head folded them. That is
+    legal, and only an origin matching names case-sensitively notices.
     """
     lines = [f"{req.method} {req.target} {req.version}",
              f"Host: {req.authority}"]
@@ -169,26 +127,15 @@ def rebuild_request(req):
         lines.append(f"Content-Length: {req.framing.length}")
     elif req.framing.kind == "chunked":
         lines.append("Transfer-Encoding: chunked")
-    # AN UPGRADE OFFER IS RE-EMITTED, NOT DROPPED, and this is the one place
-    # the strip-and-recompute rule reaches past framing. `Upgrade` and
-    # `Connection` are both in _NOT_FORWARDED -- correctly, since a guest must
-    # not choose which of our headers survive -- so without this line every
-    # upgrade request reaches the origin with the offer removed, no origin can
-    # ever answer 101, and the whole relay-after-101 path below is unreachable.
-    # Upgrades are SUPPORTED behaviour (police the request as ordinary HTTP,
-    # relay opaquely afterwards), so the offer is put back here -- from the
-    # value _upgrade_offer recognised, never from the guest's own bytes, which
-    # is what keeps this a recompute rather than a forward.
+    # An upgrade offer is re-emitted from what _upgrade_offer accepted, or
+    # no origin could ever answer 101.
     if req.upgrade:
         lines.append(f"Upgrade: {req.upgrade}")
         lines.append("Connection: upgrade")
     else:
-        # The guest's own version goes upstream, and an HTTP/1.0 request is not
-        # offered keep-alive. Speaking 1.1 upstream on a 1.0 guest's behalf
-        # invites a `Transfer-Encoding: chunked` response, and the head is
-        # relayed verbatim -- so a client that has never heard of chunked would
-        # be handed a chunked body. The version is the one field that decides
-        # that, so it is the guest's.
+        # The guest's own version goes up, and a 1.0 guest is not offered
+        # keep-alive: speaking 1.1 for it invites a chunked response, which
+        # is relayed to a client that may never have heard of chunked.
         lines.append("Connection: close" if req.version == "HTTP/1.0"
                      else "Connection: keep-alive")
     return ("\r\n".join(lines) + "\r\n\r\n").encode("ascii")
