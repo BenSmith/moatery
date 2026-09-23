@@ -22,6 +22,8 @@ sys.path.insert(0, str(CHECKOUT / "lib"))
 from egress_ca import ca_cert_path, ca_key_path, ca_openssl_argv  # noqa
 
 NAME = "rig"
+# stub_provider.py's server_version, which a brokered response must carry.
+STUB_SERVER = "stub-provider/1"
 PROVIDER = "provider.test"
 UNLISTED = "unlisted.test"
 CREDENTIAL = "example"

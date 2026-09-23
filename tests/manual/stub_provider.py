@@ -27,6 +27,10 @@ SECRET = os.environ["STUB_SECRET"]
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    # The Server the workload must see on a brokered response: the
+    # provider's, relayed, and not one the broker stamps. riglib.STUB_SERVER.
+    server_version = "stub-provider/1"
+    sys_version = ""
 
     def log_message(self, fmt, *args):
         print(f"stub: {self.address_string()} {fmt % args}", flush=True)

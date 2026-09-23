@@ -279,7 +279,7 @@ def probe(pid, secret):
     before = journal("broker").count(" ok ")
     rc, code, body, err = curl_in(
         f"https://{PROVIDER}/v1/probe", "-H",
-        f"Authorization: Bearer {PLACEHOLDER}")
+        f"Authorization: Bearer {PLACEHOLDER}", "-D", "/tmp/head")
     arrived = ""
     try:
         arrived = json.loads(body).get("authorization", "")
@@ -291,6 +291,12 @@ def probe(pid, secret):
         arrived == f"Bearer {secret}",
         "the stub reports the real key" if arrived == f"Bearer {secret}"
         else f"the stub saw {arrived!r}")
+    head = exec_in(["cat", "/tmp/head"]).stdout
+    server = next((ln.strip() for ln in head.splitlines()
+                   if ln.lower().startswith("server:")), "no Server")
+    row("request: the response names the provider's server, not a broker",
+        server == f"Server: {riglib.STUB_SERVER}"
+        and "customs" not in head.lower(), server)
     env = exec_in(["env"]).stdout
     row("request: the container's environment holds the placeholder only",
         PLACEHOLDER in env and secret not in env,
