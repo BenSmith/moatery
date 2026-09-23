@@ -52,14 +52,15 @@ from egress_ca import ca_cert_path, ca_key_path
 from http_framing import RequestUnreadable
 from egress_mint import Minter
 from egress_record import (
-    DROP_CEILING, DROP_FOREIGN_CALLER, LOG_ID_FIELD, Where, format_endpoint,
+    DROP_CALLER_CLOSED, DROP_CEILING, DROP_FOREIGN_CALLER, LOG_ID_FIELD, Where,
+    format_endpoint,
 )
 import egress_relay
 from egress_status import write_status
 import inspect_http
 import inspect_tls
 from inspect_scope import Inspection
-from peer_identity import local_endpoints, peer_uid
+from peer_identity import local_endpoints, peer_caller
 
 
 
@@ -246,13 +247,28 @@ class Listener:
         # exemption is about packets, not about callers, and a manual probe
         # from root landing in a workload's records is the same defect.
         try:
-            caller = peer_uid(local_endpoints(conn), peer[:2])
+            caller, orphaned = peer_caller(local_endpoints(conn), peer[:2])
         except Exception:
             # A check that can throw is worse than one that fails soft: this is
             # the second layer, and taking the connection path down with it
             # would turn a hardening measure into an outage. Treated as
             # unresolved, which is handled below.
-            caller = None
+            caller, orphaned = None, False
+        if orphaned:
+            # The caller wrote and closed before it could be looked up: its
+            # row is there and no socket owns it. Admitting it would let any
+            # local uid have a request served by closing first -- a request
+            # it cannot read the answer to, but one that is forwarded, and
+            # brokered where the policy says so. On a host this layer is the
+            # only thing between another user and this listener.
+            self.inspection.log(
+                f"rejected {LOG_ID_FIELD}={cid} plane={plane.label} "
+                f"local={format_endpoint(local)} "
+                f"peer={format_endpoint(peer)} "
+                f"reason='{DROP_CALLER_CLOSED}'")
+            self.inspection.counters.record_drop(DROP_CALLER_CLOSED)
+            conn.close()
+            return
         own = os.getuid() if self._caller_uid is None else self._caller_uid
         if caller is not None and caller != own:
             self.inspection.log(
@@ -263,13 +279,12 @@ class Listener:
             self.inspection.counters.record_drop(DROP_FOREIGN_CALLER)
             conn.close()
             return
-        # `None` means the lookup could not name the owner -- a row that had
-        # already left the table, or a /proc read that failed. Admitted, not
-        # refused: the nft guard is the control that must hold, this layer
-        # cannot distinguish "hostile" from "raced", and failing closed on an
-        # unresolvable read would drop the workload's OWN traffic under exactly
-        # the load that makes the table churn. Counted so the silence is
-        # visible rather than assumed absent.
+        # `None` means the lookup could not name the owner and found no
+        # orphaned row either -- a /proc read that failed, or a translation
+        # the endpoints do not cover. Admitted, not refused: failing closed
+        # on an unresolvable read would drop the workload's OWN traffic under
+        # exactly the load that makes the table churn. Counted so the
+        # silence is visible rather than assumed absent.
         if caller is None:
             # Counted, not logged. A line per connection would be noise for a
             # routine race -- the row can leave the table before we read it --
