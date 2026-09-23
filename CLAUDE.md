@@ -84,7 +84,7 @@ It is customs-only and has no workloadctl counterpart.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 562)
+just test     # all unit tests (unittest discover; 579)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user
