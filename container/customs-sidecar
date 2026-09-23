@@ -17,9 +17,11 @@ the socket unit do on a host, and nothing the programs do themselves:
   - mints the egress CA into the state volume on the first start, so the
     workload's trust bundle can be built from it, and hands the volume to
     the inspector's uid.
-  - drops to the inspector's uid and execs the inspector, told the
-    workload's uid so that it serves the one caller the pod's rules
-    redirect into it.
+  - starts the inspector as its own uid with the planes as fds 3 and 4,
+    told the workload's uid so that it serves the one caller the pod's
+    rules redirect into it.
+  - stays, as the container's pid 1, to supervise the two. See
+    SUPERVISION.
 
 Two uids in one container is the privilege boundary: the inspector parses
 what the workload sends and holds no key; the broker holds the key and
@@ -36,7 +38,7 @@ LoadCredentialEncrypted=.
 Usage:
   customs-sidecar --name NAME --caller-uid UID [BROKER FLAGS...]
 
-  podman run --pod POD --init \\
+  podman run --pod POD --restart on-failure \\
       --cap-drop all --cap-add chown,dac_override,setgid,setuid \\
       -v policy.json:/etc/customs/policy.json:ro,Z \\
       -v customs-state:/var/lib/customs:Z \\
@@ -44,16 +46,40 @@ Usage:
       IMAGE --name NAME --caller-uid UID --host HOST=CRED ...
 
 The four capabilities are this process's, for the chown, the mint into a
-directory it then hands over, and the two drops; setuid() clears them
-all, so neither program holds one. Under --init the broker is reaped if
-it dies; the inspector's brokered dials then fail legibly at the socket.
-Nothing here restarts it: a container is restarted whole.
+directory it then hands over, and the drops; setuid() clears them all,
+so neither program holds one, and nor does this process once both have
+started.
+
+SUPERVISION
+
+The pair serves together or not at all, and a container is restarted
+whole, so the container ends when either program does. This process
+waits on both. A stop is forwarded to both, and the container exits 0
+once both have exited. If a program exits unasked, the other is stopped
+(SIGKILL after STOP_GRACE) and the container exits 1, which is what a
+restart policy acts on. A broker left dead under a live inspector would
+keep the container up with every brokered request refused.
+
+To signal both without CAP_KILL, this process ends with the inspector's
+uid as its real uid and the broker's as its effective and saved uid.
+kill() is allowed where the sender's real or effective uid is the
+target's real uid, so both are in reach, and with no uid 0 left every
+capability is cleared. Either program can signal this process, which
+only ends the container.
+
+It is pid 1 for the same reason, and refuses to start as anything else.
+The runtime delivers a stop to pid 1 from outside the container, where
+uids are no barrier. An init such as --init's runs as root without
+CAP_KILL and cannot signal a process whose uids are not 0, so its stop
+never arrived and the stop timeout's SIGKILL ended every run. As pid 1
+this process also reaps whatever the programs orphan.
 """
 
 import argparse
 import grp
 import os
 import pwd
+import signal
 import socket
 import sys
 import time
@@ -90,6 +116,11 @@ LISTEN_FDS_START = 3
 # inspector is started; past it the container fails rather than serving a
 # workload whose brokered requests all 502.
 BROKER_START_TIMEOUT = 10.0
+
+# How long a program gets to exit on SIGTERM before SIGKILL, once the
+# other has exited or a stop has arrived. Under podman's default stop
+# timeout, so a stop ends here rather than in the runtime's SIGKILL.
+STOP_GRACE = 5.0
 
 
 def parse_args(argv):
@@ -155,8 +186,10 @@ def prepare_dirs(inspect, broker, group):
     side that parses the workload's bytes."""
     for path, owner in ((Path(RUN_DIR), broker), (Path(STATE), inspect)):
         path.mkdir(mode=0o750, exist_ok=True)
-        # chmod before chown: once the directory is another uid's, chmod
-        # needs CAP_FOWNER, which the container need not hold.
+        # Root's before the chmod: on a restart the directory is already
+        # the owner's, and chmod on another uid's file needs CAP_FOWNER,
+        # which the container need not hold. chown needs CAP_CHOWN only.
+        os.chown(path, 0, 0)
         path.chmod(0o750)
         os.chown(path, owner.pw_uid, group.gr_gid)
 
@@ -213,18 +246,74 @@ def await_socket(pid):
     return False, None
 
 
-def exec_inspector(name, caller_uid, inspect, group, sockets):
-    """Replace this process with the inspector: fds moved to 3.., made
-    inheritable, LISTEN_PID naming this pid, which exec keeps."""
-    for i, s in enumerate(sockets):
-        fd = LISTEN_FDS_START + i
-        if s.fileno() != fd:
-            os.dup2(s.fileno(), fd)
-        os.set_inheritable(fd, True)
-    become(inspect, group)
-    env = {**os.environ, "LISTEN_PID": str(os.getpid()),
-           "LISTEN_FDS": str(len(sockets))}
-    os.execve(sys.executable, inspector_argv(name, caller_uid), env)
+def start_inspector(name, caller_uid, inspect, group, sockets):
+    """Fork the inspector as its uid: fds moved to 3.., made inheritable,
+    LISTEN_PID naming the child, which exec keeps."""
+    pid = os.fork()
+    if pid == 0:
+        try:
+            for i, s in enumerate(sockets):
+                fd = LISTEN_FDS_START + i
+                if s.fileno() != fd:
+                    os.dup2(s.fileno(), fd)
+                os.set_inheritable(fd, True)
+            become(inspect, group)
+            env = {**os.environ, "LISTEN_PID": str(os.getpid()),
+                   "LISTEN_FDS": str(len(sockets))}
+            os.execve(sys.executable, inspector_argv(name, caller_uid), env)
+        finally:
+            os._exit(127)
+    return pid
+
+
+def become_supervisor(inspect, broker, group):
+    """The uids SUPERVISION describes: real the inspector's, effective
+    and saved the broker's. No uid is 0 afterwards, so the kernel clears
+    every capability."""
+    os.setgroups([])
+    os.setresgid(group.gr_gid, group.gr_gid, group.gr_gid)
+    os.setresuid(inspect.pw_uid, broker.pw_uid, broker.pw_uid)
+
+
+def supervise(children, stopping):
+    """Wait on {pid: name} until every one has exited, and return the
+    container's exit status: 0 after a stop, 1 if a program exited unasked.
+
+    `stopping` is a list a signal handler appends to; whichever comes
+    first, a stop or an exit, the rest get SIGTERM and STOP_GRACE.
+    Any other pid is an orphan reparented here, reaped and ignored.
+    """
+    unasked = False
+    deadline = None
+
+    def end_all(sig):
+        for pid in children:
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+
+    while children:
+        if deadline is None and stopping:
+            end_all(signal.SIGTERM)
+            deadline = time.monotonic() + STOP_GRACE
+        # Polled: a blocking wait is resumed after the handler runs, so a
+        # stop would wait on an exit that only the stop can cause.
+        pid, status = os.waitpid(-1, os.WNOHANG)
+        if pid == 0:
+            if deadline is not None and time.monotonic() >= deadline:
+                end_all(signal.SIGKILL)
+            time.sleep(0.1)
+            continue
+        name = children.pop(pid, None)
+        if name is None:
+            continue
+        code = os.waitstatus_to_exitcode(status)
+        print(f"the {name} exited ({code})", file=sys.stderr, flush=True)
+        if not stopping:
+            unasked = True
+            stopping.append(None)
+    return 1 if unasked else 0
 
 
 def main(argv=None):
@@ -239,6 +328,9 @@ def main(argv=None):
         group = grp.getgrnam(GROUP)
     except KeyError as exc:
         sys.exit(f"the image lacks its user: {exc}")
+    if os.getpid() != 1:
+        sys.exit("customs-sidecar supervises both programs as the "
+                 "container's pid 1; run the container without --init")
     if not Path(POLICY).exists():
         sys.exit(f"no policy at {POLICY}; mount one (ro)")
 
@@ -250,6 +342,12 @@ def main(argv=None):
     except egress_mint.MintFailed as exc:
         sys.exit(f"could not mint the egress CA: {exc}")
     sockets = bind_planes()
+    # /run survives a container restart. A socket the last broker left
+    # would read as this one listening before it has bound.
+    Path(SOCKET).unlink(missing_ok=True)
+    stopping = []
+    signal.signal(signal.SIGTERM, lambda signum, _: stopping.append(signum))
+    signal.signal(signal.SIGINT, lambda signum, _: stopping.append(signum))
     pid = start_broker(args.name, broker_flags, broker, group, sockets)
     up, status = await_socket(pid)
     if not up:
@@ -258,7 +356,13 @@ def main(argv=None):
                      f"{BROKER_START_TIMEOUT:.0f}s")
         sys.exit(f"the broker exited with status {status} before "
                  "listening; its reason is above")
-    exec_inspector(args.name, args.caller_uid, inspect, group, sockets)
+    children = {pid: "broker"}
+    children[start_inspector(args.name, args.caller_uid, inspect, group,
+                             sockets)] = "inspector"
+    for s in sockets:
+        s.close()
+    become_supervisor(inspect, broker, group)
+    sys.exit(supervise(children, stopping))
 
 
 if __name__ == "__main__":

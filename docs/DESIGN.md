@@ -275,8 +275,8 @@ its entrypoint `container/customs-sidecar` is the unit file as a process.
 As the container's root it binds the two planes on the pod's loopback,
 starts the broker as 201 on `unix:/run/customs/broker.sock` with
 `CREDENTIALS_DIRECTORY=/run/secrets`, mints the egress CA into the state
-volume on the first start, then drops to 200 and execs the inspector with
-the listeners as fds 3 and 4 and `LISTEN_PID`/`LISTEN_FDS` set. No
+volume on the first start, then starts the inspector as 200 with the
+listeners as fds 3 and 4 and `LISTEN_PID`/`LISTEN_FDS` set. No
 `systemd-socket-activate`, no systemd in the image: the bind is still not
 the inspector's, and it is root's before any privilege is dropped, which
 is the socket unit's property by a different route. The entrypoint takes
@@ -285,7 +285,7 @@ the two facts the image cannot know -- the workload's label and its uid
 
 ```
 podman pod create --name POD
-podman run -d --pod POD --name sidecar --init \
+podman run -d --pod POD --name sidecar --restart on-failure \
     --cap-drop all --cap-add chown,dac_override,setgid,setuid \
     -v policy.json:/etc/customs/policy.json:ro,Z \
     -v customs-state:/var/lib/customs \
@@ -317,7 +317,22 @@ podman run -d --pod POD --name workload --user 1000:1000 --cap-drop all \
 ```
 
 The four capabilities are the entrypoint's: the chown of the two
-directories it hands over, the mint into one of them, and the two drops.
+directories it hands over, the mint into one of them, and the drops.
+
+The entrypoint stays as the container's pid 1 and supervises the pair,
+which serves together or not at all. A stop is forwarded to both
+programs and the container exits 0. If either program exits unasked,
+the other is stopped and the container exits 1, so a broker that dies
+takes the container with it and the restart policy (or the quadlet's
+`Restart=`) brings the pair back. A restart reuses the volume's CA, so
+the workload's bundle still holds. Until the pair is back, the
+workload's redirected connections are refused: nothing listens on the
+planes and the rules stay in the pod's netns. The supervisor holds no
+capability once both have started: its real uid is 200 and its
+effective and saved uid 201, which lets it signal both and is not root.
+That is also why it must be pid 1 and refuses `--init`. An init runs as
+root without `CAP_KILL`, so it cannot signal a process with no uid 0, and
+a stop would reach nobody.
 The rules go in after the sidecar starts (the pod's netns exists from
 then) and before the workload does. Both image uids are exempt from the
 redirect and the drop, since their dials are the upstream legs and leave

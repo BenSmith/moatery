@@ -20,7 +20,8 @@ THE ROWS
             CAP_SETUID -- the second because the uid is the selector, and
             a workload that could become the sidecar's uid would be
             exempt from its own redirect; the rules are in the pod's
-            netns; the sidecar's two processes run as the two image uids.
+            netns; the sidecar's two processes run as the two image uids,
+            and its pid 1, which supervises them, holds no capability.
   request   from the workload, with the placeholder, the provider answers
             200 and reports that the REAL key arrived; the workload's
             environment holds the placeholder only; the broker logged one
@@ -38,11 +39,18 @@ THE ROWS
             SO_ORIGINAL_DST answers rather than falling back), and none
             was dropped as foreign: the inspector was told the workload's
             uid, and the workload IS another uid here.
+  lifecycle the broker killed from outside takes the container down,
+            non-zero, and the restart policy brings it back on the same
+            volume: the restart count rose and the workload's request is
+            served again under the CA its bundle holds. Then a stop
+            reaches both programs well inside podman's timeout, and the
+            container exits 0.
 
 `--without-rules` loads no rules into the pod's netns. `premise`,
-`request` and `unlisted` must go red: the workload's dial reaches the
-stub directly and refuses its certificate, which no bundle of the
-workload's carries, and the unlisted name times out on TEST-NET.
+`request`, `unlisted` and the lifecycle's request must go red: the
+workload's dial reaches the stub directly and refuses its certificate,
+which no bundle of the workload's carries, and the unlisted name times
+out on TEST-NET.
 """
 
 import argparse
@@ -123,7 +131,8 @@ def create_pod():
 
 
 def start_sidecar():
-    run(["podman", "create", "--pod", POD, "--name", SIDECAR, "--init",
+    run(["podman", "create", "--pod", POD, "--name", SIDECAR,
+         "--restart", "on-failure",
          "--cap-drop", "all",
          "--cap-add", "chown,dac_override,setgid,setuid",
          "-v", f"{POLICY}:{POLICY_IN_SIDECAR}:ro,Z",
@@ -138,6 +147,12 @@ def start_sidecar():
          "--auth-header", f"{CREDENTIAL}=Authorization",
          f"--auth-format={CREDENTIAL}=Bearer {{secret}}"])
     run(["podman", "start", SIDECAR])
+    return await_sidecar()
+
+
+def await_sidecar():
+    """The sidecar's pid once its planes are bound and the broker's
+    socket is at its path."""
     pid = int(run(["podman", "inspect", "-f", "{{.State.Pid}}",
                    SIDECAR]).stdout.strip())
     for _ in range(100):
@@ -275,6 +290,11 @@ def probe(sidecar_pid, workload_pid, secret):
         who.get("customs-broker") in ("broker", str(BROKER_UID))
         and who.get("customs-inspect") in ("inspect", str(INSPECT_UID)),
         f"{who}")
+    effective = int(next(ln.split()[1] for ln in
+                         Path(f"/proc/{sidecar_pid}/status").read_text()
+                         .splitlines() if ln.startswith("CapEff:")), 16)
+    row("premise: the supervisor holds no capability",
+        effective == 0, f"CapEff={effective:016x}")
 
     say("request")
     before = logs().count(" ok ")
@@ -366,6 +386,62 @@ def probe(sidecar_pid, workload_pid, secret):
             foreign == 0, f"{DROP_FOREIGN_CALLER!r}: {foreign}")
 
 
+def sidecar_state(field):
+    return run(["podman", "inspect", "-f", "{{" + field + "}}", SIDECAR],
+               check=False).stdout.strip()
+
+
+def lifecycle(secret):
+    """Last: every row here ends the sidecar at least once."""
+    say("lifecycle")
+    restarts = int(sidecar_state(".RestartCount") or 0)
+    top = run(["podman", "top", SIDECAR, "hpid,args"], check=False).stdout
+    broker = next((ln.split()[0] for ln in top.splitlines()
+                   if "customs-broker" in ln), None)
+    if broker is None:
+        row("lifecycle: the broker is running to be killed", False, top)
+        return
+    run(["podman", "unshare", "kill", "-TERM", broker])
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        now = int(sidecar_state(".RestartCount") or 0)
+        if now > restarts:
+            break
+        time.sleep(0.2)
+    log = logs()
+    row("lifecycle: the broker's death ends the container, non-zero",
+        now == restarts + 1 and "the broker exited (-15)" in log
+        and "the inspector exited (0)" in log,
+        f"restarts {restarts} -> {now}; "
+        + "; ".join(ln for ln in log.splitlines() if " exited (" in ln))
+
+    if now > restarts:
+        await_sidecar()
+    rc, code, body, err = curl_in(
+        f"https://{PROVIDER}/v1/probe", "-H",
+        f"Authorization: Bearer {PLACEHOLDER}")
+    arrived = ""
+    try:
+        arrived = json.loads(body).get("authorization", "")
+    except ValueError:
+        pass
+    row("lifecycle: restarted on the same volume, it serves the workload",
+        rc == 0 and code == "200" and arrived == f"Bearer {secret}",
+        f"curl rc={rc} http={code} {err}".strip())
+
+    started = time.monotonic()
+    run(["podman", "stop", "-t", "10", SIDECAR], check=False)
+    took = time.monotonic() - started
+    status = sidecar_state(".State.ExitCode")
+    log = logs()
+    tail = [ln for ln in log.splitlines() if " exited (" in ln][-2:]
+    row("lifecycle: a stop reaches both programs and exits 0",
+        took < 5 and status == "0"
+        and sorted(tail) == ["the broker exited (-15)",
+                             "the inspector exited (0)"],
+        f"{took:.1f}s, exit {status}; {tail}")
+
+
 # --- teardown ----------------------------------------------------------------
 
 def teardown(keep):
@@ -426,11 +502,13 @@ def main():
         workload_pid = start_workload()
         probe_started = time.time()
         probe(sidecar_pid, workload_pid, secret)
+        lifecycle(secret)
     finally:
         teardown(args.keep)
 
     rc = riglib.report(
-        "--without-rules: premise, request and unlisted are expected red"
+        "--without-rules: premise, request, unlisted and the lifecycle's "
+        "request are expected red"
         if args.without_rules else None)
     if rc:
         say(f"logs: podman logs {SIDECAR}  (with --keep)")

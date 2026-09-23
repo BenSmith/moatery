@@ -12,13 +12,19 @@ the bind, the drop, the socket at the path, the workload's request.
 
 import contextlib
 import io
+import os
 import pwd
+import signal
+import subprocess
+import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from egress_plane import CLEARTEXT, TLS
-from tests import REPO_ROOT, load_script
+from tests import REPO_ROOT, load_script, script_env
 
 FAKE_INSPECT = pwd.struct_passwd(("inspect", "x", 200, 200, "", "/", ""))
 
@@ -136,6 +142,130 @@ class TestTheSidecarMintsTheOneWay(unittest.TestCase):
         extensions to drift between."""
         source = (Path(REPO_ROOT) / "container" / "customs-sidecar").read_text()
         self.assertNotIn("ca_openssl_argv", source)
+
+
+# Run in a child of its own so that supervise() waits on nothing but the
+# processes the scenario forks. argv: repo root, scenario, STOP_GRACE,
+# a directory for the marks each program leaves when SIGTERM reaches it.
+SUPERVISED = r"""
+import os, signal, sys, time
+sys.path.insert(0, sys.argv[1])
+from tests import load_script
+mod = load_script("container/customs-sidecar")
+scenario, mod.STOP_GRACE, marks = sys.argv[2], float(sys.argv[3]), sys.argv[4]
+
+def program(name, exit_after=None, ignore_term=False):
+    pid = os.fork()
+    if pid:
+        return pid
+    def term(*_):
+        open(os.path.join(marks, "term-" + name), "w").close()
+        os._exit(0)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN if ignore_term else term)
+    open(os.path.join(marks, "up-" + name), "w").close()
+    if exit_after is not None:
+        time.sleep(exit_after)
+        os._exit(3)
+    while True:
+        time.sleep(0.05)
+
+stopping = []
+signal.signal(signal.SIGTERM, lambda signum, _: stopping.append(signum))
+dies = scenario != "stop"
+children = {program("broker", exit_after=0.3 if dies else None): "broker",
+            program("inspector", ignore_term=scenario == "stubborn"):
+                "inspector"}
+if not os.fork():
+    os._exit(0)                     # an orphan's stand-in: not a program
+while len(os.listdir(marks)) < 2:
+    time.sleep(0.01)
+print("ready", flush=True)
+sys.exit(mod.supervise(children, stopping))
+"""
+
+
+class TestTheContainerEndsWithEitherProgram(unittest.TestCase):
+    """The pair serves together or not at all. A broker that died under a
+    live inspector left the container up with every brokered request
+    refused, so no restart policy ever fired: the entrypoint exec'd the
+    inspector and nothing waited on the broker."""
+
+    def _supervise(self, scenario, grace=5.0, stop=False):
+        marks = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(marks))
+        proc = subprocess.Popen(
+            [sys.executable, "-c", SUPERVISED, str(REPO_ROOT), scenario,
+             str(grace), marks],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=script_env())
+        self.addCleanup(proc.kill)
+        self.assertEqual(proc.stdout.readline(), "ready\n")
+        if stop:
+            # Once supervise() is waiting: a stop that lands before the
+            # wait is seen whether or not the wait can be interrupted.
+            time.sleep(0.5)
+            proc.send_signal(signal.SIGTERM)
+        _out, err = proc.communicate(timeout=10)
+        termed = sorted(n[len("term-"):] for n in os.listdir(marks)
+                        if n.startswith("term-"))
+        return proc.returncode, err, termed
+
+    def test_a_program_exiting_stops_the_other_and_the_container_fails(self):
+        rc, err, termed = self._supervise("exit")
+        self.assertIn("the broker exited (3)", err)
+        self.assertEqual(termed, ["inspector"])
+        self.assertEqual(rc, 1)
+
+    def test_a_stop_reaches_both_and_the_container_succeeds(self):
+        rc, err, termed = self._supervise("stop", stop=True)
+        self.assertEqual(termed, ["broker", "inspector"])
+        self.assertEqual(rc, 0, err)
+
+    def test_a_program_deaf_to_sigterm_is_killed_after_the_grace(self):
+        rc, err, _termed = self._supervise("stubborn", grace=0.5)
+        self.assertIn("the inspector exited (-9)", err)
+        self.assertEqual(rc, 1)
+
+
+class TestTheSidecarStartsTwice(unittest.TestCase):
+    """A restart finds its directories already handed over. The chmod
+    that came first on a fresh volume was refused on the second start,
+    since the directory was the inspector's and the container holds no
+    CAP_FOWNER, so the sidecar could never start twice on one volume."""
+
+    def test_each_directory_is_roots_before_its_chmod(self):
+        mod = _mod()
+        calls = []
+        group = mock.Mock(gr_gid=200)
+        broker = pwd.struct_passwd(("broker", "x", 201, 200, "", "/", ""))
+        with mock.patch.object(mod.Path, "mkdir"), \
+                mock.patch.object(mod.Path, "chmod",
+                                  lambda path, mode: calls.append(
+                                      ("chmod", str(path)))), \
+                mock.patch.object(mod.os, "chown",
+                                  lambda path, uid, gid: calls.append(
+                                      ("chown", str(path), uid))):
+            mod.prepare_dirs(FAKE_INSPECT, broker, group)
+        self.assertEqual(calls, [
+            ("chown", mod.RUN_DIR, 0), ("chmod", mod.RUN_DIR),
+            ("chown", mod.RUN_DIR, 201),
+            ("chown", mod.STATE, 0), ("chmod", mod.STATE),
+            ("chown", mod.STATE, 200)])
+
+    def test_it_refuses_to_run_under_an_init(self):
+        """An init running as root without CAP_KILL cannot deliver a stop
+        to this process once it has dropped root."""
+        mod = _mod()
+        err = io.StringIO()
+        with mock.patch.object(mod.os, "getuid", return_value=0), \
+                mock.patch.object(mod.os, "getpid", return_value=7), \
+                mock.patch.object(mod.pwd, "getpwnam"), \
+                mock.patch.object(mod.grp, "getgrnam"), \
+                contextlib.redirect_stderr(err), \
+                self.assertRaises(SystemExit) as caught:
+            mod.main(["customs-sidecar", "--name", "wl", "--caller-uid",
+                      "1000", "--host", "h=c"])
+        self.assertIn("without --init", str(caught.exception.code))
 
 
 if __name__ == "__main__":

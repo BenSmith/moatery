@@ -137,7 +137,8 @@ secret.
 
 **Rows.** Premise (the workload holds neither `CAP_NET_ADMIN` nor
 `CAP_SETUID`; the table is in the pod's netns; `podman top` shows the two
-programs as the two image users). The request (200; the real key arrived;
+programs as the two image users, and the supervising pid 1 holds no
+capability). The request (200; the real key arrived;
 the workload's environment holds the placeholder only; the broker's log
 grew by one; the record says `forward` under the credential with
 `upstream` naming the socket path). The broker's path is ENOENT from the
@@ -146,7 +147,12 @@ cannot distinguish from a refusal -- and nothing but the two planes
 listens on TCP in the pod, so there is no address to spell; its log did
 not grow. An unlisted host gets the 403 and the record. The origin's two
 rows. The counters name every caller and dropped none as foreign, with
-the workload being another uid.
+the workload being another uid. Last, the lifecycle: the broker killed
+from outside ends the container non-zero and the restart policy brings
+it back (the restart count rose; both exits are in the log), the
+restarted pair serves the workload's request under the CA its bundle
+already holds, and a stop reaches both programs well inside podman's
+timeout and exits 0.
 
 **What it found, first run, 2026-09-22.** One defect in the pair, the
 seam kind: `peer_identity.userns_ranges` read the *outside* column of
@@ -161,9 +167,28 @@ holds it, and the same check runs in the inspector under `--caller-uid`.
 Two facts for the design, both now in `DESIGN.md`: nothing in the sidecar
 needs `systemd-socket-activate` -- the entrypoint binds the planes as
 root and hands them down as fds 3 and 4 with `LISTEN_PID`/`LISTEN_FDS`
-set, then drops to the inspector's uid and execs, which is the socket
-unit's property (the bind is not the inspector's) by a different route;
+set, then starts the inspector as its uid, which is the socket unit's
+property (the bind is not the inspector's) by a different route;
 and the entrypoint needs exactly `chown,dac_override,setgid,setuid` on
 top of `--cap-drop all`, all of which `setuid()` clears before either
 program runs. `SO_ORIGINAL_DST` answers in the pod rather than falling
 back, since the DNAT is in the same netns: `caller_unresolved` is 0.
+
+**What it found, the lifecycle rows, 2026-09-23.** Three defects in the
+entrypoint, none of which the earlier rows could see because each run
+started one fresh container and tore it down:
+
+- a stop never arrived. `--init`'s catatonit runs as root without
+  `CAP_KILL` and cannot signal uid 200, so every stop waited out the
+  timeout and ended in SIGKILL (exit 137), and the inspector never wrote
+  its last status. The entrypoint is pid 1 now and refuses `--init`.
+- a second start on the same volume failed: the directory was already
+  the inspector's, and the chmod that came first needs `CAP_FOWNER`.
+- a dead broker left the inspector up and the container running, so no
+  restart policy fired. The entrypoint supervises both now.
+
+Seen red against the entrypoint before the fix: the three lifecycle rows
+failed. The capability row was seen red against an image whose
+supervisor skipped its drop (`CapEff=c3`), which also failed two
+lifecycle rows: a root supervisor without `CAP_KILL` cannot stop the
+inspector, so the uid arrangement is what makes the stop work.
