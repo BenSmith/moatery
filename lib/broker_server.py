@@ -38,9 +38,9 @@ from peer_identity import local_endpoints, peer_uid, peer_uid_unix
 # share -- the sum is the whole problem, and it is not a limit either of them
 # expresses.
 #
-# It matters more here than it would elsewhere: this runs on a hypervisor, so
-# the memory in question is memory the VMs are using, and a sandboxed agent
-# inside one of those VMs is exactly who would be reaching for it.
+# It matters more here than it would elsewhere: this runs on the host the
+# workloads share, so the memory in question is theirs, and a sandboxed agent
+# inside one of them is exactly who would be reaching for it.
 #
 # Past the budget a request is refused with 503 rather than queued, so a caller
 # gets a fast error it can retry instead of a hang -- the same choice the

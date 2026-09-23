@@ -147,7 +147,7 @@ class Counters:
         # `per_host`, both key spaces come off this workload's own file and are
         # already bounded by it.
         #
-        # NEVER THE CREDENTIAL ITSELF, only its credstore name. The material is
+        # NEVER THE CREDENTIAL ITSELF, only its name. The material is
         # in the broker's process and this one has never seen it, which is
         # the whole point of the broker -- a figure carrying it would put it
         # in a file a metrics exporter publishes.

@@ -386,8 +386,8 @@ class Listener:
         OSError is the expected failure (a full or read-only /run). TypeError
         and ValueError are caught because json.dump raises them for a value it
         cannot serialise: every figure here is an int, a str or a dict of those
-        today, so that is unreachable -- and a counter added in a later rung
-        that is not must degrade to a missing status file, never to a workload
+        today, so that is unreachable -- and a counter added later that is
+        not must degrade to a missing status file, never to a workload
         whose guest cannot reach anything.
         """
         if self._status_path is None:

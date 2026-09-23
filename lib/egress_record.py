@@ -213,7 +213,7 @@ DROP_UNCLASSIFIED = "(unclassified)"
 
 # The record's field names, and the vocabularies of three of them.
 #
-# `credential` is the NAME of the credstore material the request was brokered
+# `credential` is the NAME of the credential the request was brokered
 # with, or null on a request that was not brokered -- never the material, and
 # never an address. It is here because `upstream` is honestly the broker's
 # address on a brokered request: `upstream` is documented as the address
@@ -299,7 +299,7 @@ class Record:
     Built at the top of a pass and written once at the bottom, so that a pass
     which never got a parseable head still leaves a line -- the record's
     coverage is the COUNTERS' coverage, which is what makes the two joinable
-    in the rung that renders them. A pass with no decision wrote nothing to
+    by whatever renders them. A pass with no decision wrote nothing to
     count and writes nothing here either: an idle kept-alive connection
     reaching its bound, and a guest that closed between requests, are not
     requests and must not be invented as ones.
@@ -438,7 +438,7 @@ class RequestLog:
         try:
             line = json.dumps(record, sort_keys=True) + "\n"
         except (TypeError, ValueError) as exc:
-            # A field a later rung added that json cannot serialise. Degrade to
+            # A field added later that json cannot serialise. Degrade to
             # a missing record, never to a failed request.
             self._fail(f"could not serialise a record: {exc}")
             return

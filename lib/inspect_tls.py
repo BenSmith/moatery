@@ -228,8 +228,9 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
     # A BROKERED HOST IS NOT DIALLED HERE AT ALL, and the invariant above
     # survives that: the offer is still chosen from configuration, it is
     # simply always `http/1.1` -- the broker leg is cleartext HTTP/1.1, and
-    # `credential` with `http2` on one host is a validation error, so there
-    # is no h2 session to relay and never was.
+    # a host with a `credential` is never relayed as h2 (a `policy` entry
+    # governs it, and `speaks_h2` is false for a governed host), so there
+    # is no h2 session to relay.
     #
     # WHAT THE DIAL WAS DOING FOR A BROKERED HOST WAS NOTHING GOOD. The
     # request goes to the broker, so the origin connection was opened,
@@ -351,8 +352,8 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
             ALPN_H2 if (h2 and refusal is None) else UPSTREAM_ALPN)
     except (ssl.SSLError, OSError) as exc:
         # The guest rejected the leaf, or went away mid-handshake. The most
-        # common real cause is a guest that never got the CA -- an existing
-        # instance whose seed predates it, which cloud-init will not revisit.
+        # common real cause is a guest that never got the CA -- one
+        # provisioned before the CA existed, and not re-provisioned since.
         #
         # BUT NOT IF THE LEAF IS GONE, and that is worth a branch of its
         # own. A cache eviction unlinks the PEM, so a leaf handed over and
@@ -667,8 +668,8 @@ def _is_http(insp, client, conn, where, host):
     AND THE TWO REFUSALS ARE COUNTED APART. A host a `policy` entry names
     is the same wire failure with a different remedy: the entry's `methods`
     and `paths` never ran and never can, so splicing the host is only half
-    of it -- the entry has to go too, because a writer that validates
-    refuses a host that is in `splice` and `policy` both. Reporting one
+    of it -- the entry has to go too, because load_policy refuses a host
+    that is in `splice` and `policy` both. Reporting one
     merged figure would leave that operator with a number they cannot act
     on, and the split is the entire reason the counter exists.
     """

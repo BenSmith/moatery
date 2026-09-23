@@ -201,7 +201,7 @@ def leaf_san(name: str) -> str:
     `_` is permitted in a label though RFC 1035 forbids it: it is common in
     real service names, and every client this design faces resolves and
     validates such names. Refusing them would break traffic the allowlist
-    authorised, which is the failure this whole rung exists to avoid.
+    authorised, which is the failure this whole design exists to avoid.
     """
     name = normalise_hostname(name)
     if not name:

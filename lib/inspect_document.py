@@ -48,11 +48,12 @@ def normalise_hostname(host: str) -> str:
     the same name -- a workload that writes either spelling must get the same
     decision, or the spelling becomes the bypass.
 
-    Defined HERE, at the bottom, because the config grammar (config_parser)
-    and the listener both normalise, and they have to normalise the same way:
-    a pattern the validator accepted under one rule and the listener matched
-    under another is a rule that reads as written and enforces something else.
-    The grammar imports it from here; the listener never imports the grammar.
+    Defined HERE, at the bottom, because whatever writes the document and
+    the listener that reads it both normalise, and they have to normalise the
+    same way: a pattern the writer accepted under one rule and the listener
+    matched under another is a rule that reads as written and enforces
+    something else. A writer imports it from here; the listener never imports
+    a writer.
     """
     host = host.strip().lower()
     return host[:-1] if host.endswith(".") and host != "." else host

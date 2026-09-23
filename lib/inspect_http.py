@@ -259,7 +259,7 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
     # because `Upstream.connection_for` takes the dial as an argument.
     # Everything downstream is the same: the head that goes up is
     # the same `rebuild_request(req)`, carrying the same `Host`, which is
-    # half of the broker's `(uid, Host)` key. The other half is the uid on
+    # what the broker picks the credential by. Who is asking is the uid on
     # the far end of the socket, which is this process's own and is not
     # ours to send.
     #

@@ -1,5 +1,5 @@
 """
-egress_mint — minting leaf certificates for a filtered VM's egress inspector.
+egress_mint — minting leaf certificates for a workload's egress inspector.
 
 The back half of bump-then-403. The inspector reads a name out of a ClientHello
 without answering it, decides what the name deserves, and then -- for both
@@ -77,15 +77,13 @@ LEAF_CACHE_MAX = 1024
 # use it. With N connection slots, N distinct names can be checked out at once,
 # and only the N+1'th insert can evict something nobody holds.
 #
-# This was 128, which is exactly workload-inspect-listener's MAX_CONNECTIONS
-# and therefore exactly one entry short of the invariant: 128 concurrent
-# denials for distinct names could evict the oldest of themselves. The failure
-# was a handshake that died on a missing file and was reported as the guest not
-# trusting the CA -- a wrong diagnosis pointing at a re-provision. Doubled, so
-# the margin is a factor rather than an off-by-one, and asserted against the
-# listener's ceiling by the mint tests, since the two numbers live in
-# different files and nothing else makes them meet. The working set is well
-# clear of it (1024 against 128).
+# Twice the listener's MAX_CONNECTIONS (128), so the margin is a factor rather
+# than an off-by-one: at exactly 128, 128 concurrent denials for distinct names
+# could evict the oldest of themselves, and a handshake would die on a missing
+# file and be reported as the guest not trusting the CA -- a wrong diagnosis
+# pointing at a re-provision. Asserted against the listener's ceiling by the
+# mint tests, since the two numbers live in different files and nothing else
+# makes them meet. The working set is well clear of it (1024 against 128).
 DENIAL_CACHE_MAX = 256
 
 # The bucket. 256 tokens refilling at 1/s: a cold VM contacting fifty hosts
@@ -151,8 +149,8 @@ class TokenBucket:
 
     The clock is injected rather than read directly so a test can assert the
     refill rate without spending the wall-clock time it describes. `monotonic`,
-    not `time.time`: a host clock stepped backwards -- by the very resync this
-    rung added -- would otherwise freeze the bucket for the size of the step.
+    not `time.time`: a host clock stepped backwards -- by an NTP resync, say
+    -- would otherwise freeze the bucket for the size of the step.
     """
 
     def __init__(self, capacity: float = MINT_BUCKET_CAPACITY,
@@ -462,7 +460,7 @@ class Minter:
         design rejects as a DEFAULT and accepts as an overflow, because it is
         unreachable in normal operation. An allowlisted name waits up to
         MINT_WAIT_SECONDS, because legitimate traffic never empties the bucket
-        and losing it is the outcome the whole rung exists to avoid.
+        and losing it is the outcome the whole design exists to avoid.
         """
         name = normalise_hostname(server_name)
         cache = self.denials if denied else self.working_set
@@ -504,20 +502,19 @@ class Minter:
 
         The SHA-256 fingerprint over the DER, spelled the way `openssl x509
         -fingerprint -sha256` spells it, so it can be compared by eye against
-        the anchor installed in the guest -- which is rung 5's comparison, but
-        this is the only place the value has a producer, because this is what
-        mints with it.
+        the anchor installed in the guest. This is the only place the value
+        has a producer, because this is what mints with it.
 
         `notAfter` is here for one reason: a ten-year validity is invisible
         until something prints the date it ends on. Distant is not the same as
         safe, and an operator who can see 2036 can decide whether that is what
         they meant.
 
-        Read once and remembered. The CA does not rotate -- decision 4 of ADR
-        008 -- so re-reading it per status write would be a syscall per tick to
-        confirm a constant. Every failure degrades to None rather than raising:
-        this runs on the status path, and a status file is never worth a
-        connection.
+        Read once and remembered. The CA does not rotate (egress_ca: made
+        once, never churned), so re-reading it per status write would be a
+        syscall per tick to confirm a constant. Every failure degrades to None
+        rather than raising: this runs on the status path, and a status file
+        is never worth a connection.
         """
         if self._ca_identity is None:
             cert = ca_cert_path(self.state_dir)

@@ -151,22 +151,22 @@ class Policy(NamedTuple):
         return hostname_match(host, self.http2) and not self.governs(host)
 
     def credential_for(self, host: str):
-        """The credstore NAME this host's requests are brokered with, or None.
+        """The credential NAME this host's requests are brokered with, or None.
 
         Asked once per authorised request, and it decides only WHERE the
         request is sent -- to this workload's broker instance instead of to the
         origin. Nothing about the credential itself is known here and nothing
-        needs to be: the broker's table is keyed by `(uid, Host)`, so the
-        name travels on no wire and exists in this process for one purpose,
+        needs to be: the broker's table is keyed by `Host`, so the name
+        travels on no wire and exists in this process for one purpose,
         which is naming the credential in the record and the figures.
 
-        THE FIRST governing entry that carries one, not a merge. A writer
-        that validates refuses two entries that match the same host and
-        disagree about `credential`, so on such a document there is at most
-        one answer -- but this reads a FILE, which an operator can edit, and
-        a reader that raised or picked arbitrarily on a hand-edited document
-        would turn an editing mistake into a dead workload. First-match is
-        deterministic and matches the order the file states.
+        THE FIRST governing entry that carries one, not a merge. Two entries
+        that match the same host and disagree about `credential` are a
+        mistake in the document, but this reads a FILE, which an operator
+        can edit, and a reader that raised or picked arbitrarily on a
+        hand-edited document would turn an editing mistake into a dead
+        workload. First-match is deterministic and matches the order the file
+        states.
         """
         for entry in policy_governs(host, self.policy):
             if entry.credential:

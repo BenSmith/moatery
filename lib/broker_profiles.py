@@ -37,9 +37,9 @@ class BrokerConfigError(ValueError):
 
 
 # The port an upstream is dialled on. Not a flag: `--host` names a host and
-# the upstream is https://<host>, on the reasoning broker_config gives -- the
-# upstream is the host the policy authorised and nothing else, so there is
-# no scheme, no port and no path for a flag to vary.
+# the upstream is https://<host>, because the upstream is the host the policy
+# authorised and nothing else, so there is no scheme, no port and no path for
+# a flag to vary.
 UPSTREAM_PORT = 443
 
 
@@ -251,10 +251,10 @@ def build_profiles(name, hosts, placeholders=(), auth_headers=(),
             secrets[cred_id] = load(cred_id)
         placeholder = placeholders.get(cred_id)
         if placeholder and placeholder == secrets[cred_id]:
-            # The one startup check that survives generation: it fires on
-            # the mistake generation cannot prevent, a real provider key
-            # pasted into a workload.toml, which is world-readable and, for
-            # a bundle, very likely committed.
+            # It fires on the mistake no writer of the arguments can
+            # prevent: a real provider key pasted where the placeholder
+            # goes, which is configuration -- readable by more than the
+            # broker and, often enough, committed.
             #
             # Compared against the DECRYPTED material, so it catches the key
             # itself rather than a coincidental match with a sealed blob. The
@@ -262,8 +262,8 @@ def build_profiles(name, hosts, placeholders=(), auth_headers=(),
             raise BrokerConfigError(
                 f"{where}: the placeholder for {cred_id!r} is byte-identical "
                 f"to the decrypted credential. The placeholder is the fiction "
-                f"the guest holds and lives in a plain-text workload.toml; if "
-                f"it equals the real key then the real key is in that file. "
+                f"the guest holds and lives in plain-text configuration; if "
+                f"it equals the real key then the real key is there too. "
                 f"Rotate the credential, then put a plausible fake of the "
                 f"same shape here")
         auth_format = auth_formats.get(cred_id, BROKER_DEFAULT_AUTH_FORMAT)
