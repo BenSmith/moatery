@@ -5,60 +5,19 @@ inspector. The inspector itself is lib/inspect_listener.py; this process
 reads the policy, builds the minter, recovers the inherited sockets and
 runs the accept loop until SIGTERM.
 
-WHAT THIS FILE IS, AND WHAT IT IS NOT
+Everything host-specific -- the policy path, the state directory, the
+status and record files, the broker endpoint, the uid served -- is a flag
+the unit writes; nothing is derived. tests/test_closure.py holds that line.
 
-This is the inspector's entrypoint, and it is not a launcher for it. The
-inspector (inspect_listener and everything it imports, this file included)
-takes a policy document, a state directory, a status file, a record file,
-a broker endpoint and the uid it serves, and knows nothing about
-workloads: not any config grammar, not where a workload keeps its state,
-not how a uid becomes a loopback address, not whether the guest on the
-other end is a container or a VM. Every one of those is a fact about how a
-host is laid out, and every one is chosen by whoever writes the unit and
-put on its ExecStart= as an argument. This file derives nothing; it parses.
-tests/test_closure.py holds that line, so the inspector stays startable on
-any host by writing a unit that answers the same questions.
+It serves one uid: its own, or --caller-uid's in a sidecar, where the
+workload is another uid by design. A uid this namespace cannot represent is
+refused at start, since every connection would read as the overflow uid.
 
-WHO IT SERVES
+The policy is read once, here; one that cannot be read fails the start.
 
-Connections from one uid: this process's own unless --caller-uid names
-another. On a host the workload's traffic is re-originated as the user
-the inspector runs as, so its own uid is the workload's. In a sidecar the
-workload is another uid by design -- the uid is what tells the two apart
-in the namespace's rules -- and without the flag every connection would
-be refused as foreign. A uid this user namespace cannot represent is
-refused at start, because every connection would read as the overflow
-uid and be refused the same way, by a listener reporting itself up.
-
-The workload name is taken as a LABEL: the CA subject and the log lines
-carry it. It is a flag rather than argv[1] so that a unit written by hand
-cannot pass a name and nothing else and get a listener that starts,
-serves, and fails every guest handshake looking for a policy it was never
-told the path of.
-
-The guest's clock is NOT the inspector's concern. A leaf is backdated an
-hour, and a guest whose clock is further out than that rejects every leaf;
-that is repaired by whatever owns the guest, and the inspector mints while
-the guest either validates or does not.
-
-WHERE THE POLICY COMES FROM
-
-Wherever --policy says. It is read HERE once, at start. A policy that
-cannot be read is a failed start, never an empty allowlist -- an empty
-allowlist is a listener that refuses everything while reporting itself
-healthy.
-
-WHY IT NEVER BINDS
-
-It is socket-activated: the .socket unit binds the listeners and hands
-them in as inherited fds. This process recovers them from LISTEN_PID /
-LISTEN_FDS and accepts on them; it opens no socket of its own. That is not
-defensiveness -- socket activation is what moves the bind out of the
-workload's security domain and into an inherited fd. A fallback that bound
-the ports itself when the activation environment was missing would
-silently undo that: it would run as the workload user, in the workload's
-domain, and bind the very listener a guest is redirected into. So a
-missing environment is a loud failure, never a second path.
+It never binds. The socket unit binds and hands the listeners in, which
+keeps the bind out of the workload's security domain, so a missing
+activation environment is a failure, never a fallback bind.
 """
 
 import argparse
@@ -68,7 +27,7 @@ import signal
 import sys
 
 # Before the lib imports: the install directory is not this process's to
-# write, and under a confining policy every start would log the attempt.
+# write.
 sys.dont_write_bytecode = True
 
 from inspect_policy import load_policy
@@ -80,13 +39,7 @@ from sd_listen import (
 
 
 def inherited_listening_sockets():
-    """Recover the listening sockets systemd passed in, or fail loudly.
-
-    The mechanics are lib/sd_listen.py's; what is ours is the reason a
-    fallback bind is refused. Binding here rather than accepting the
-    inherited fd would move the bind into the workload's security domain,
-    which is the property the socket unit exists to hold.
-    """
+    """Recover the listening sockets systemd passed in, or fail loudly."""
     return sd_inherited_listening_sockets(
         refusal=(", because a fallback bind would move the bind out of the "
                  "inherited fd and back into the workload's security "
@@ -94,12 +47,9 @@ def inherited_listening_sockets():
 
 
 def raise_fd_limit():
-    """The soft RLIMIT_NOFILE raised to the hard one.
-
-    Each of MAX_CONNECTIONS guest connections may hold UPSTREAMS_MAX
-    upstreams beside itself, which is more than the 1024 a service's soft
-    limit defaults to; the hard limit is the process's to take. Best
-    effort: a limit that cannot be raised leaves the listener as it was.
+    """The soft RLIMIT_NOFILE raised to the hard one: MAX_CONNECTIONS
+    connections, each with up to UPSTREAMS_MAX upstreams, need more than
+    1024. Best effort.
     """
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -115,20 +65,9 @@ UNIX_PREFIX = "unix:"
 
 
 def broker_endpoint(value):
-    """The --broker value as an (address, port) pair, a socket path, or
-    None when absent.
-
-    Handed in, not derived: whoever writes both units chooses the endpoint
-    once and writes it onto this unit's ExecStart= and the broker's
-    `--listen`, which is what keeps the two from drifting, and that writer
-    is the side that is allowed to know where a workload's broker is. A
-    path is absolute, for the reason the broker gives: a relative one is a
-    fact about the cwd the unit chose, not about the flag.
-
-    None is a legitimate value, not an error: a unit written for a policy
-    with no brokered host may leave the flag off, and the inspector turns None
-    into a legible refusal on the first brokered request rather than failing
-    a start that may never see one.
+    """The --broker value as an (address, port) pair, an absolute socket
+    path, or None when absent. None is legitimate: brokered requests are
+    then refused on arrival.
     """
     if value is None:
         return None
@@ -150,15 +89,9 @@ def broker_endpoint(value):
 
 
 def parse_args(argv):
-    """The values the unit hands over, plus the label.
-
-    Every path is required and none has a default, for the reason
-    load_policy gives about the policy in particular: a default is a guess
-    about how the host is laid out, and this program is the one that is not
-    allowed to guess. A unit that leaves one off fails at start with a usage
-    line naming the flag, not on the guest's first dial with an ENOENT. The
-    two that are optional default to a refusal (no broker) and to a fact
-    about this process (its own uid), neither of which is a guess.
+    """The values the unit hands over, plus the label. Every path is
+    required with no default: a default would be a guess about the host's
+    layout.
     """
     parser = argparse.ArgumentParser(
         prog=os.path.basename(argv[0]),
@@ -188,23 +121,17 @@ def parse_args(argv):
 
 def main(argv=None):
     argv = sys.argv if argv is None else argv
-    # Until the record exists there is nothing to reopen, and a HUP's
-    # default action is to end the process: logrotate's arriving during a
-    # start would kill the inspector it meant to keep writing.
+    # A HUP before the record exists would otherwise end the process.
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     try:
         args = parse_args(argv)
     except SystemExit as exc:
-        # argparse's own usage line is already on stderr; what is ours is the
-        # exit status, which is 2 for a bad invocation and 0 for --help.
+        # argparse has printed its usage; ours is the exit status.
         return int(exc.code or 0)
     name = args.name
     policy_path = args.policy
     if args.caller_uid is not None:
-        # Before the sockets, like every other refusal here. From a user
-        # namespace that cannot map the caller's uid every connection reads
-        # as the overflow uid and is refused as foreign, by a listener that
-        # is up and counting.
+        # Before the sockets, like every refusal here.
         try:
             uid_map = open("/proc/self/uid_map").read()
         except OSError as exc:
@@ -219,18 +146,14 @@ def main(argv=None):
     try:
         policy = load_policy(policy_path)
     except (OSError, ValueError) as exc:
-        # Loud, and before the sockets are touched. See load_policy: there is
-        # no empty-policy fallback, because it is indistinguishable from a
-        # legitimate empty allowlist.
+        # No empty-policy fallback: see load_policy.
         print(f"error: could not read {policy_path}: {exc}", file=sys.stderr)
         return 1
     try:
         minter = build_minter(name, args.state_dir, policy)
     except FileNotFoundError as exc:
-        # Before the sockets, like the policy read, and for the same reason: a
-        # listener that accepted connections it could mint no leaf for would
-        # fail every guest handshake with an opaque certificate error while
-        # reporting itself up.
+        # Before the sockets: a listener with no leaf to mint would fail every
+        # handshake while reporting itself up.
         print(f"error: {exc}", file=sys.stderr)
         return 1
     raise_fd_limit()
@@ -246,18 +169,14 @@ def main(argv=None):
                         caller_uid=args.caller_uid)
     print(f"policy loaded from {policy_path}: {policy.summary}", flush=True)
     signal.signal(signal.SIGTERM, lambda *_args: listener.stop())
-    # Rotation is logrotate's, and this is the half of it that lives here:
-    # the snippet renames the file and then HUPs us, rather than using
-    # copytruncate, which races an in-flight write. The handler only sets a
-    # flag -- RequestLog.reopen says why.
+    # logrotate renames the file and HUPs; the handler only sets a flag (see
+    # RequestLog.reopen).
     signal.signal(signal.SIGHUP,
                   lambda *_args: listener.inspection.record.reopen())
     try:
         listener.accept_loop()
     finally:
-        # On the way out as well as on the tick: SIGTERM is the one moment the
-        # figures are complete, and a workload that stops between ticks would
-        # otherwise leave its last half-minute unreported.
+        # On the way out too, so a stop between ticks is still reported.
         listener.write_status()
         listener.log_summary()
         listener.inspection.record.close()

@@ -1,39 +1,25 @@
 #!/usr/bin/python3
 """
-customs-sidecar: the entrypoint of the sidecar image. It is the unit file
-for both programs, written as the one process a container starts with.
-
-The image carries customs-broker and customs-inspect side by side with
-lib/. This process, as the container's root, does what the two units and
-the socket unit do on a host, and nothing the programs do themselves:
+customs-sidecar: the entrypoint of the sidecar image, doing as the
+container's root what the two units and the socket unit do on a host:
 
   - binds the inspector's two planes on the pod's loopback and hands them
-    down as inherited fds, LISTEN_PID/LISTEN_FDS style. The inspector
-    never binds; here the bind is root's, before any privilege is dropped,
-    which is the same property the socket unit holds on a host.
-  - starts the broker as its own uid, listening on a socket path under
-    /run/customs that the workload container has no mount for. The
-    broker's caller is the inspector's uid, and no other.
-  - hands the state volume to the inspector's uid, and mints the egress
-    CA into it on the first start, as that uid, so the workload's trust
-    bundle can be built from it.
-  - starts the inspector as its own uid with the planes as fds 3 and 4,
-    told the workload's uid so that it serves the one caller the pod's
-    rules redirect into it.
-  - stays, as the container's pid 1, to supervise the two. See
-    SUPERVISION.
+    down as fds 3 and 4, LISTEN_PID/LISTEN_FDS style, so the inspector
+    never binds;
+  - starts the broker as its own uid, on a socket under /run/customs that
+    the workload container has no mount for;
+  - hands the state volume to the inspector's uid and mints the egress CA
+    into it on the first start, as that uid;
+  - starts the inspector as its own uid, told the workload's uid;
+  - stays as pid 1 to supervise both.
 
-Two uids in one container is the privilege boundary: the inspector parses
-what the workload sends and holds no key; the broker holds the key and
-parses only what the inspector forwards. Dropping to a uid clears every
-capability, so no DAC_OVERRIDE bridges them.
+The two uids are the privilege boundary: the inspector parses what the
+workload sends and holds no key; the broker holds the key and parses only
+what the inspector forwards. Dropping to a uid clears every capability.
 
-EVERYTHING ELSE IS TOLD. The two flags this takes are the two facts the
-image cannot know -- the workload's label and its uid -- and every flag
-after them is the broker's, passed through untouched: which hosts, which
-credential ids, which placeholders. The credential material is mounted at
-/run/secrets by whoever runs the container, which is the pod's
-LoadCredentialEncrypted=.
+The two flags are the facts the image cannot know, the workload's label and
+uid; every flag after them is the broker's, passed through. The credential
+material is mounted at /run/secrets.
 
 Usage:
   customs-sidecar --name NAME --caller-uid UID [BROKER FLAGS...]
@@ -45,35 +31,25 @@ Usage:
       --secret KEY,target=CRED,uid=201,mode=0400 \\
       IMAGE --name NAME --caller-uid UID --host HOST=CRED ...
 
-The four capabilities are this process's, for the chown of the two
-directories, the connect that sees the broker listening on its 0660
-socket, and the drops; setuid() clears them all,
-so neither program holds one, and nor does this process once both have
-started.
+The four capabilities are for chowning the two directories, connecting to
+the broker's 0660 socket, and dropping uids; neither program holds one, and
+nor does this process once both have started.
 
 SUPERVISION
 
-The pair serves together or not at all, and a container is restarted
-whole, so the container ends when either program does. This process
-waits on both. A stop is forwarded to both, and the container exits 0
-once both have exited. If a program exits unasked, the other is stopped
-(SIGKILL after STOP_GRACE) and the container exits 1, which is what a
-restart policy acts on. A broker left dead under a live inspector would
-keep the container up with every brokered request refused.
+The pair serves together or not at all. A stop is forwarded to both and the
+container exits 0 once both have; if one exits unasked the other is stopped
+(SIGKILL after STOP_GRACE) and the container exits 1, for the restart
+policy.
 
-To signal both without CAP_KILL, this process ends with the inspector's
-uid as its real uid and the broker's as its effective and saved uid.
-kill() is allowed where the sender's real or effective uid is the
-target's real uid, so both are in reach, and with no uid 0 left every
-capability is cleared. Either program can signal this process, which
-only ends the container.
+To signal both without CAP_KILL, this process ends with the inspector's uid
+as its real uid and the broker's as its effective and saved uid: kill() is
+allowed where the sender's real or effective uid is the target's real uid.
+Either program can signal this process, which only ends the container.
 
-It is pid 1 for the same reason, and refuses to start as anything else.
-The runtime delivers a stop to pid 1 from outside the container, where
-uids are no barrier. An init such as --init's runs as root without
-CAP_KILL and cannot signal a process whose uids are not 0, so its stop
-never arrived and the stop timeout's SIGKILL ended every run. As pid 1
-this process also reaps whatever the programs orphan.
+It must be pid 1: an --init runs as root without CAP_KILL and cannot signal
+a process with no uid 0, so a stop never arrives. As pid 1 it also reaps
+orphans.
 """
 
 import argparse
@@ -112,34 +88,25 @@ PLANES = (TLS.inspect_port, CLEARTEXT.inspect_port)
 # The first inherited fd, by the activation convention the inspector reads.
 LISTEN_FDS_START = 3
 
-# The environment the two programs get, and nothing else of this one's.
-# Whatever the container was started with -- a secret passed as a
-# variable included -- would otherwise reach the inspector, the uid that
-# parses the workload's bytes. PATH finds openssl; the rest is locale and
-# trust-store placement the programs may honour.
+# The environment the programs get, and nothing else of this one's, so a
+# secret passed as a variable never reaches the inspector.
 PROGRAM_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "SSL_CERT_FILE",
                "SSL_CERT_DIR")
 DEFAULT_PATH = "/usr/sbin:/usr/bin"
 
-# How long the broker gets to put its socket at the path before the
-# inspector is started; past it the container fails rather than serving a
-# workload whose brokered requests all 502.
+# How long the broker gets to listen before the container fails.
 BROKER_START_TIMEOUT = 10.0
 
-# How long a program gets to exit on SIGTERM before SIGKILL, once the
-# other has exited or a stop has arrived. Under podman's default stop
-# timeout, so a stop ends here rather than in the runtime's SIGKILL.
+# How long a program gets to exit on SIGTERM before SIGKILL, under
+# podman's default stop timeout.
 STOP_GRACE = 5.0
 
 
 def parse_args(argv):
     """The two facts the image cannot know, and the broker's flags after.
 
-    parse_known_args so the broker's vocabulary is not repeated here: a
-    flag the broker grows is passed through without this file changing.
-    The broker's own --listen and --caller-uid are this file's to set and
-    are refused if given, since a second --listen would win the parser and
-    put the broker on an address the pod can reach.
+    The broker's --listen, --caller-uid and --name are this file's to set and
+    are refused if given: a second --listen would win.
     """
     p = argparse.ArgumentParser(
         prog="customs-sidecar",
@@ -174,9 +141,9 @@ def inspector_argv(name, caller_uid):
 
 
 def bind_planes():
-    """The two listeners, bound here as root and handed down as fds 3 and
-    4. Non-blocking is not set: the inspector's accept loop selects on
-    them and expects a blocking accept."""
+    """The two listeners, bound here as root. Left blocking: the inspector
+    selects on them.
+    """
     sockets = []
     for port in PLANES:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -188,16 +155,14 @@ def bind_planes():
 
 
 def prepare_dirs(inspect, broker, group):
-    """The run directory for the socket and the state volume for the CA
-    and the caches, each owned by the uid that writes there. The socket
-    directory is the broker's and the inspector traverses it by group,
-    which is how a path can be dialled but not created or removed by the
-    side that parses the workload's bytes."""
+    """The run directory for the socket, the broker's, and the state volume,
+    the inspector's. The inspector reaches the socket by group, so it can
+    dial it but not remove it.
+    """
     for path, owner in ((Path(RUN_DIR), broker), (Path(STATE), inspect)):
         path.mkdir(mode=0o750, exist_ok=True)
-        # Root's before the chmod: on a restart the directory is already
-        # the owner's, and chmod on another uid's file needs CAP_FOWNER,
-        # which the container need not hold. chown needs CAP_CHOWN only.
+        # Root's before the chmod: chmod on another uid's file needs
+        # CAP_FOWNER, chown only CAP_CHOWN.
         os.chown(path, 0, 0)
         path.chmod(0o750)
         os.chown(path, owner.pw_uid, group.gr_gid)
@@ -205,15 +170,9 @@ def prepare_dirs(inspect, broker, group):
 
 def mint_ca(name, inspect, group):
     """Once, into the volume, on the first start, as the inspector's uid.
-    The inspector refuses to start under a policy that inspects with no CA
-    to mint from, and a volume that starts empty is the ordinary first run.
-    The mint is egress_mint's, the one customs-mint-ca makes on a host.
 
-    Not as root. The volume is the inspector's and outlives every restart,
-    so anything under it is the inspector's to arrange: a root that
-    minted into it and then chowned what it wrote would follow whatever
-    the inspector left there. In a child that has dropped to the
-    inspector's uid, the mint can reach only what that uid already can.
+    Not as root: the volume is the inspector's, and root minting into it
+    would follow whatever the inspector left there.
     """
     pid = os.fork()
     if pid == 0:
@@ -261,9 +220,9 @@ def become(user, group):
 
 
 def start_broker(name, flags, broker, group, sockets):
-    """Fork the broker as its uid. The child closes the planes before it
-    execs: they are the inspector's, and a broker holding them open would
-    keep the ports bound after the inspector went away."""
+    """Fork the broker as its uid, having closed the planes, which are the
+    inspector's.
+    """
     pid = os.fork()
     if pid == 0:
         try:
@@ -280,10 +239,8 @@ def start_broker(name, flags, broker, group, sockets):
 def await_socket(pid):
     """The broker listening at its path, or its exit status if it died.
 
-    Listening, not merely bound: the file appears at bind(), before the
-    broker's listen(), and an inspector started in between has its first
-    brokered request refused. A connect that succeeds is the broker
-    accepting; it is closed without a byte, which the broker ends quietly.
+    Listening, not merely bound: the file appears at bind(), before
+    listen(). The probe connection is closed without a byte.
     """
     deadline = time.monotonic() + BROKER_START_TIMEOUT
     while time.monotonic() < deadline:
@@ -358,8 +315,8 @@ def supervise(children, stopping):
         if deadline is None and stopping:
             end_all(signal.SIGTERM)
             deadline = time.monotonic() + STOP_GRACE
-        # Polled: a blocking wait is resumed after the handler runs, so a
-        # stop would wait on an exit that only the stop can cause.
+        # Polled: a blocking wait resumes after the handler, so a stop would
+        # wait on an exit only the stop can cause.
         pid, status = os.waitpid(-1, os.WNOHANG)
         if pid == 0:
             if deadline is not None and time.monotonic() >= deadline:
@@ -389,9 +346,8 @@ def main(argv=None):
         group = grp.getgrnam(GROUP)
     except KeyError as exc:
         sys.exit(f"the image lacks its user: {exc}")
-    # The pod's rules exempt the two programs' uids from the redirect, and
-    # root can become either: a workload running as any of the three is
-    # never inspected at all.
+    # The pod's rules exempt the programs' uids, and root can become either,
+    # so a workload running as any of them is never inspected.
     if args.caller_uid in (0, inspect.pw_uid, broker.pw_uid):
         sys.exit(f"--caller-uid {args.caller_uid} is root or one of this "
                  f"image's own uids ({inspect.pw_uid}, {broker.pw_uid}), "
@@ -411,8 +367,7 @@ def main(argv=None):
     except egress_mint.MintFailed as exc:
         sys.exit(f"could not mint the egress CA: {exc}")
     sockets = bind_planes()
-    # /run survives a container restart. A socket the last broker left
-    # would read as this one listening before it has bound.
+    # /run survives a restart, and a stale socket would read as listening.
     Path(SOCKET).unlink(missing_ok=True)
     stopping = []
     signal.signal(signal.SIGTERM, lambda signum, _: stopping.append(signum))
