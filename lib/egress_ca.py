@@ -2,14 +2,14 @@
 """The per-workload egress CA, the leaves it signs, and where all of it lives.
 
 One CA per workload rather than one per host, and the directory names, the
-validity windows, the labels of the subtree and the two openssl invocations
-are all here together because they are one decision each spelled in several
-places: the minter creates the directories, whoever labels the state
-directory composes the names here, whoever reports on a workload reads the
-certificate back, and whoever provisions the workload writes the anchor
-into it. A drift between any two of those is a mislabelled directory or an
+validity windows and the two openssl invocations are all here together
+because they are one decision each spelled in several places: the minter
+creates the directories, whoever labels the state directory composes the
+names here, and whoever reports on a workload reads the certificate back.
+A drift between any two of those is a mislabelled directory or an
 untrusted anchor, and both present as a network fault rather than as a
-naming mistake.
+naming mistake. Where the anchor goes inside the workload, and what a
+label is called, are whoever provisions the workload's to decide.
 
 This module takes a STATE DIRECTORY and knows nothing about which workload
 it belongs to or how the caller found it. It imports inspect_document and
@@ -22,43 +22,6 @@ import time
 from pathlib import Path
 
 from inspect_document import normalise_hostname
-
-
-# Where the workload finds the CA whose certificates the inspector's
-# terminated connections are presented under. A path INSIDE the workload,
-# not a host path: whoever provisions the workload puts the file there.
-#
-# /usr/local/share/ca-certificates is the directory `update-ca-certificates`
-# consumes on Debian-family systems; Fedora's anchors live elsewhere. The
-# five variables below name the FILE directly rather than relying on either,
-# because the whole point of the block is to work in a workload whose
-# distribution we do not choose.
-CA_BUNDLE_PATH = "/usr/local/share/ca-certificates/customs.crt"
-
-
-# The environment variables that point a workload's HTTP clients at that
-# bundle. Five, because there is no single one: OpenSSL reads SSL_CERT_FILE,
-# Node reads NODE_EXTRA_CA_CERTS, python-requests reads REQUESTS_CA_BUNDLE,
-# git reads GIT_SSL_CAINFO and pip reads PIP_CERT. A workload missing any one
-# of them fails only in that ecosystem, which is the hardest kind of failure
-# to attribute.
-CA_ENV_VARS = (
-    "SSL_CERT_FILE",
-    "NODE_EXTRA_CA_CERTS",
-    "REQUESTS_CA_BUNDLE",
-    "GIT_SSL_CAINFO",
-    "PIP_CERT",
-)
-
-
-# The variables a provisioner sets in the workload itself, and therefore the
-# ones a placeholder's variable may not be. Derived from the producers rather
-# than listed, so a sixth CA variable cannot leave this behind: the failure a
-# stale copy produces is a silent overwrite, not an error anywhere.
-#
-# No broker variable is reserved, because nothing sets one -- the workload
-# is never told a broker address.
-RESERVED_GUEST_ENV = frozenset(CA_ENV_VARS)
 
 
 # --- The per-workload egress CA ---
@@ -78,29 +41,13 @@ CA_CERT_NAME = "egress-ca.crt"
 
 
 # The two leaf caches live beside the CA, under the same state directory,
-# and their names are here rather than in egress_mint because the labels
-# below have to name the same three directories the minter creates. A drift
-# between the two spellings is a mislabelled directory, which presents as
-# the inspector failing to mint and not as a naming mistake.
+# and their names are here rather than in egress_mint because whoever labels
+# the state directory has to name the same three directories the minter
+# creates. A drift between the two spellings is a mislabelled directory,
+# which presents as the inspector failing to mint and not as a naming
+# mistake.
 LEAF_DIR_NAME = "leaves"
 DENIAL_DIR_NAME = "leaves-denied"
-
-
-# THE PKI SUBTREE HAS ITS OWN LABELS, AND THAT IS THE WHOLE POINT
-#
-# On a host that confines the inspector under SELinux, its domain is granted
-# these two types and nothing else in the state directory: the component
-# terminating workload input reads a private key and writes a leaf cache,
-# and those live beside things it must not reach (a VM's disks, a
-# container's volumes). Three directories with labels of their own, rather
-# than one rule granting the whole directory.
-#
-# Two types, not one, because the permissions genuinely differ. The CA is
-# READ-ONLY to the inspector: an inspector that could rewrite it could
-# replace the anchor the workload trusts, which is unrecoverable without a
-# re-provision. The leaves are read-write because minting them is the job.
-CA_SELINUX_TYPE = "wlinspect_ca_t"
-LEAF_SELINUX_TYPE = "wlinspect_leaf_t"
 
 
 # Ten years. The number follows from never rotating rather than from any
@@ -111,10 +58,10 @@ LEAF_SELINUX_TYPE = "wlinspect_leaf_t"
 # outage, every HTTPS request failing validation on a workload every report
 # calls healthy, for a date nobody wrote down.
 #
-# Distance is not the same as invisibility: the certificate carries notAfter
-# and CA_EXPIRY_WARN_DAYS is the window a report warns inside, so a workload
-# that lives long enough to reach it gets a re-provision SCHEDULED rather
-# than discovered.
+# Distance is not the same as invisibility: the certificate carries
+# notAfter, and whoever reports on a workload reads it back and warns inside
+# a window of its choosing, so a workload that lives long enough to reach it
+# gets a re-provision SCHEDULED rather than discovered.
 CA_VALIDITY_DAYS = 3650
 
 
@@ -125,14 +72,6 @@ CA_VALIDITY_DAYS = 3650
 # survivable; something that steps the guest's clock is. What the backdate
 # buys is that a pause SHORTER than an hour costs the workload nothing.
 CA_BACKDATE_SECONDS = 3600
-
-
-# The window CA_VALIDITY_DAYS' comment already promised: a report warns
-# inside the last year. A year rather than a month because the remedy is a
-# RE-PROVISION -- the workload is rebuilt with a new anchor, not restarted
-# -- and a month's notice for that is notice of an outage rather than of a
-# decision.
-CA_EXPIRY_WARN_DAYS = 365
 
 
 def ca_dir(state_dir) -> Path:
