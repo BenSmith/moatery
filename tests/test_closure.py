@@ -28,6 +28,7 @@ LIB = Path(REPO_ROOT) / "lib"
 BROKER = Path(REPO_ROOT) / "libexec" / "customs-broker"
 INSPECTOR = Path(REPO_ROOT) / "libexec" / "customs-inspect"
 MINT_CA = Path(REPO_ROOT) / "libexec" / "customs-mint-ca"
+SIDECAR = Path(REPO_ROOT) / "container" / "customs-sidecar"
 
 BROKER_FLAGS = frozenset({
     "--name", "--listen", "--caller-uid", "--host",
@@ -211,6 +212,42 @@ class TestTheFlagsAreTheContract(unittest.TestCase):
         so the CA lands where the inspector looks and carries its label."""
         self.assertEqual(self._flags(MINT_CA), {"--name", "--state-dir"})
         self.assertTrue(self._flags(MINT_CA) <= INSPECTOR_FLAGS)
+
+
+class TestNoProgramWritesBytecode(unittest.TestCase):
+    """Every program turns bytecode off before its first lib import. The
+    install directory is not the process's to write, and under a
+    confining policy every start would log the attempt. The broker had
+    no such line while the inspector did."""
+
+    @staticmethod
+    def _first_lib_import(tree):
+        mods = set(_lib_modules())
+        for i, node in enumerate(tree.body):
+            if isinstance(node, ast.ImportFrom) and node.module in mods:
+                return i
+            if isinstance(node, ast.Import) and any(
+                    a.name in mods for a in node.names):
+                return i
+        return None
+
+    @staticmethod
+    def _bytecode_off(tree):
+        for i, node in enumerate(tree.body):
+            if (isinstance(node, ast.Assign)
+                    and ast.unparse(node) == "sys.dont_write_bytecode = True"):
+                return i
+        return None
+
+    def test_every_program_turns_bytecode_off_first(self):
+        for path in (BROKER, INSPECTOR, MINT_CA, SIDECAR):
+            with self.subTest(program=path.name):
+                tree = ast.parse(path.read_text())
+                first = self._first_lib_import(tree)
+                self.assertIsNotNone(first)
+                off = self._bytecode_off(tree)
+                self.assertIsNotNone(off, "never turns bytecode off")
+                self.assertLess(off, first)
 
 
 if __name__ == "__main__":
