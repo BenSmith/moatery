@@ -76,9 +76,10 @@ It is customs-only and has no workloadctl counterpart.
 - **Never push, publish, or open a PR without being asked.** Commit
   freely and often; no unsolicited git-logistics commentary.
 - **A fix that goes to both trees is mirrored.** The workloadctl side
-  is committed on a new branch in the hypervisor repo, never its
-  `main`, with the same change and the same message; merging it there
-  is a separate decision.
+  is committed on the working branch `customs-mirror` in the hypervisor
+  repo (cut from its `main` if it is gone), never on `main`, with the
+  same change and the same message; merging it there is a separate
+  decision.
 
 ## Commands
 

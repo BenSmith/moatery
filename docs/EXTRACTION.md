@@ -86,10 +86,10 @@ nothing it has to think about.
 
 workloadctl cannot require a package that has no release. Until customs
 has a tag and an RPM, workloadctl keeps its copy and the mirror rule
-holds: a fix that matters to both is committed here and on a new branch
-in the hypervisor repo. At the first release the workloadctl copy is
-deleted, not maintained; the branch carrying any unmerged mirror is
-superseded by the dependency.
+holds: a fix that matters to both is committed here and on the
+hypervisor repo's `customs-mirror` branch. At the first release the
+workloadctl copy is deleted, not maintained; whatever of that branch is
+unmerged is superseded by the dependency.
 
 What the switch costs on the workloadctl side, all in the hypervisor
 repo: `Requires: customs` in its spec; its units naming the two
