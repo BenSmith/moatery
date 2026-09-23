@@ -107,6 +107,14 @@ brokered request with a 502.
 A brokered host must be terminated and read as HTTP/1.1, so it cannot be
 spliced or in `http2` (next section).
 
+A brokered request needs a `Content-Length`. The broker reads the body
+whole before it forwards it, and refuses a chunked one with `411 Length
+Required`. The inspector passes that answer to the guest as if the
+provider had sent it, and the record shows the request as forwarded with
+status 411. A client that streams its upload (`Transfer-Encoding:
+chunked`) fails against a brokered host. Provider SDKs send JSON bodies
+with a length and are not affected.
+
 Give a brokered entry `paths`. Without them the guest may call any
 endpoint on the host with the real credential attached, including any
 that echoes a request's headers back in its response, which hands the
