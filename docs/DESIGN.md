@@ -317,7 +317,12 @@ podman run -d --pod POD --name workload --user 1000:1000 --cap-drop all \
 ```
 
 The four capabilities are the entrypoint's: the chown of the two
-directories it hands over, the mint into one of them, and the drops.
+directories it hands over, the connect that sees the broker listening, and
+the drops. The first-start mint runs as the inspector's uid, not as root:
+the volume is the inspector's and outlives restarts, so root writing into
+it would follow whatever the inspector left there. The entrypoint refuses
+a `--caller-uid` of 0, 200 or 201, the uids the rules exempt, and starts
+both programs with a minimal environment rather than the container's.
 
 The entrypoint stays as the container's pid 1 and supervises the pair,
 which serves together or not at all. A stop is forwarded to both

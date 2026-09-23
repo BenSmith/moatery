@@ -110,38 +110,111 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
 
 class TestTheSidecarMintsTheOneWay(unittest.TestCase):
     """The sidecar's first-start mint is egress_mint.mint_ca, the call
-    customs-mint-ca makes on a host, and the chown to the inspector's uid
-    is the only part that is the sidecar's own."""
+    customs-mint-ca makes on a host, made in a child that has already
+    dropped to the inspector's uid. Root never writes into the volume the
+    inspector owns, so nothing the inspector left there can steer it."""
 
     GROUP = mock.Mock(gr_gid=200)
 
-    def _mint(self, minted):
+    def _mint(self, mint_ca):
+        """Run the sidecar's mint_ca with `become` recording into a pipe the
+        parent reads -- mocks survive the fork, their calls do not."""
         mod = _mod()
-        with mock.patch.object(mod.egress_mint, "mint_ca",
-                               return_value=minted) as mint, \
-                mock.patch.object(mod.os, "chown") as chown:
-            result = mod.mint_ca("wl", FAKE_INSPECT, self.GROUP)
-        mint.assert_called_once_with("wl", mod.STATE)
-        return mod, result, chown
+        r, w = os.pipe()
+        self.addCleanup(os.close, r)
 
-    def test_a_fresh_ca_is_handed_to_the_inspector(self):
-        mod, result, chown = self._mint(True)
+        def become(user, group):
+            os.write(w, b"dropped;")
+
+        def mint(name, state):
+            os.write(w, f"mint {name} {state};".encode())
+            return mint_ca()
+
+        with mock.patch.object(mod, "become", become), \
+                mock.patch.object(mod.egress_mint, "mint_ca", mint), \
+                mock.patch.object(mod.os, "chown",
+                                  side_effect=AssertionError("chown")):
+            try:
+                result = mod.mint_ca("wl", FAKE_INSPECT, self.GROUP)
+            finally:
+                os.close(w)
+        return mod, result, os.read(r, 4096).decode()
+
+    def test_a_fresh_ca_is_minted_after_the_drop(self):
+        mod, result, trail = self._mint(lambda: True)
         self.assertTrue(result)
-        key, cert = mod.ca_key_path(mod.STATE), mod.ca_cert_path(mod.STATE)
-        self.assertEqual([c.args for c in chown.call_args_list],
-                         [(key.parent, 200, 200), (key, 200, 200),
-                          (cert, 200, 200)])
+        self.assertEqual(trail, f"dropped;mint wl {mod.STATE};")
 
-    def test_a_kept_ca_is_not_touched(self):
-        _mod_, result, chown = self._mint(False)
+    def test_a_kept_ca_is_reported_as_kept(self):
+        _mod_, result, trail = self._mint(lambda: False)
         self.assertFalse(result)
-        chown.assert_not_called()
+        self.assertTrue(trail.startswith("dropped;"))
+
+    def test_a_failed_mint_fails_the_start(self):
+        mod = _mod()
+
+        def refuse():
+            raise mod.egress_mint.MintFailed("no openssl")
+
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(mod.egress_mint.MintFailed):
+            self._mint(refuse)
 
     def test_no_second_mint_lives_in_the_entrypoint(self):
         """Its own openssl argv would be a second mint for the three
         extensions to drift between."""
         source = (Path(REPO_ROOT) / "container" / "customs-sidecar").read_text()
         self.assertNotIn("ca_openssl_argv", source)
+        self.assertNotIn("os.chown(path, inspect", source)
+
+
+class TestTheProgramsGetAMinimalEnvironment(unittest.TestCase):
+    """The container's environment stays with pid 1. A secret passed with
+    `--secret ...,type=env` would otherwise be in the inspector's."""
+
+    def test_only_the_named_variables_pass(self):
+        mod = _mod()
+        with mock.patch.dict(os.environ, {"PATH": "/p", "LANG": "C.UTF-8",
+                                          "API_KEY": "sk-real"}, clear=True):
+            env = mod.program_env(LISTEN_FDS="2")
+        self.assertEqual(env, {"PATH": "/p", "LANG": "C.UTF-8",
+                               "LISTEN_FDS": "2"})
+
+    def test_a_path_is_given_whatever_the_container_had(self):
+        """The inspector finds openssl on PATH."""
+        mod = _mod()
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(mod.program_env()["PATH"], mod.DEFAULT_PATH)
+
+
+class TestTheBrokerIsListeningBeforeTheInspectorStarts(unittest.TestCase):
+    """The socket file exists from bind(), before listen(): a path check
+    alone started the inspector in a window where its first brokered
+    request was refused."""
+
+    def _await(self, listening):
+        import socket as socket_mod
+        mod = _mod()
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp))
+        path = os.path.join(tmp, "broker.sock")
+        sock = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
+        self.addCleanup(sock.close)
+        sock.bind(path)
+        if listening:
+            sock.listen(1)
+        child = subprocess.Popen(["sleep", "5"])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        with mock.patch.object(mod, "SOCKET", path), \
+                mock.patch.object(mod, "BROKER_START_TIMEOUT", 0.5):
+            return mod.await_socket(child.pid)
+
+    def test_a_bound_socket_that_does_not_listen_is_not_up(self):
+        self.assertEqual(self._await(listening=False), (False, None))
+
+    def test_a_listening_socket_is_up(self):
+        self.assertEqual(self._await(listening=True), (True, None))
 
 
 # Run in a child of its own so that supervise() waits on nothing but the
@@ -251,6 +324,25 @@ class TestTheSidecarStartsTwice(unittest.TestCase):
             ("chown", mod.RUN_DIR, 201),
             ("chown", mod.STATE, 0), ("chmod", mod.STATE),
             ("chown", mod.STATE, 200)])
+
+    def test_an_exempt_caller_uid_is_refused(self):
+        """The rules exempt 200 and 201 from the redirect and root can
+        become either, so a workload running as one is never inspected."""
+        mod = _mod()
+        broker = pwd.struct_passwd(("broker", "x", 201, 200, "", "/", ""))
+        users = {"inspect": FAKE_INSPECT, "broker": broker}
+        for uid in ("0", "200", "201"):
+            with mock.patch.object(mod.os, "getuid", return_value=0), \
+                    mock.patch.object(mod.os, "getpid", return_value=1), \
+                    mock.patch.object(mod.pwd, "getpwnam",
+                                      users.__getitem__), \
+                    mock.patch.object(mod.grp, "getgrnam"), \
+                    mock.patch.object(mod, "prepare_dirs") as prepare, \
+                    self.assertRaises(SystemExit) as caught:
+                mod.main(["customs-sidecar", "--name", "wl", "--caller-uid",
+                          uid, "--host", "h=c"])
+            self.assertIn(f"--caller-uid {uid}", str(caught.exception.code))
+            prepare.assert_not_called()
 
     def test_it_refuses_to_run_under_an_init(self):
         """An init running as root without CAP_KILL cannot deliver a stop
