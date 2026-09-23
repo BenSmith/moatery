@@ -6,10 +6,11 @@
 workloads, to be lifted out of workloadctl into its own project. Read
 `README.md`, then `docs/DESIGN.md` (how the pair applies to a rootless
 container, a pod sidecar, a VM, and cosy), `docs/POLICY.md` (the policy
-document) and `docs/EXTRACTION.md` (which modules lift, which stay, and
-the copy-vs-dependency decision). `examples/` holds shape-1 user units
-and a logrotate configuration, installed to `/usr/libexec/customs/` and
-run end to end on the proving host.
+document) and `docs/EXTRACTION.md` (the dependency decision, the
+identifiers workloadctl imports, and what the first release switches).
+`examples/` holds shape-1 user units and a logrotate configuration,
+installed to `/usr/libexec/customs/` and run end to end on the proving
+host.
 
 ## Where the code came from
 
@@ -42,16 +43,16 @@ fix that matters to both goes to both. At the release the copy there is
 deleted.
 
 The prose is renamed: nothing under `lib/` or `libexec/` says
-"workloadctl", cites its docs, or narrates history. Module names and
-every identifier workloadctl imports are unchanged (`docs/PLAN.md` lists
-the boundary). "Guest" and "workload" remain as the words for the thing
-behind the inspector. Diffing against workloadctl is a diff of prose,
-the two entrypoints' names, and what step 4 of the plan added: the
+"workloadctl", cites its docs, uses its vocabulary (renderer, `validate`,
+substrate, SELinux labelling) or narrates history. Module names and
+every identifier workloadctl imports are unchanged (`docs/EXTRACTION.md`
+lists them). "Guest" and "workload" remain as the words for the thing
+behind the inspector. Diffing against workloadctl is a diff of prose and
+messages, the two entrypoints' names, and the shape-1b flags: the
 broker's `--listen unix:PATH` (`UnixServer`, `peer_uid_unix`), the
-inspector's `--broker unix:PATH` and `--caller-uid`, the record naming a
-unix upstream, and the `userns_ranges` column fix (mirrored to
-workloadctl on a branch; the flags reach workloadctl with the
-dependency, not by mirror).
+inspector's `--broker unix:PATH` and `--caller-uid`, and the record
+naming a unix upstream. Fixes are mirrored to workloadctl on a branch;
+the flags reach it with the dependency, not by mirror.
 
 `libexec/customs-mint-ca` is customs-only too: the one CA mint
 (`egress_mint.mint_ca`), which the sidecar's first start also calls.

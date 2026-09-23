@@ -1,88 +1,63 @@
-# What lifts out of workloadctl
+# customs and workloadctl
 
-Computed 2026-09-22 from the two entrypoints' import closures in
-`workloadctl/lib/` (the closure tests `test_broker_closure.py` and
-`test_inspector_closure.py` hold these sets to contain no workload-side
-module).
-
-## customs-broker ← `libexec/agent-broker`
-
-4 modules:
-
-```
-broker_profiles  broker_request  broker_server  peer_identity
-```
-
-## customs-inspect ← `libexec/workload-inspect-listener`
-
-21 modules:
-
-```
-egress_ca  egress_mint  egress_plane  egress_record  egress_relay
-egress_status  egress_upstream  h2_framing  http_framing  http_request
-http_target  inspect_counters  inspect_document  inspect_http
-inspect_listener  inspect_policy  inspect_scope  inspect_tls
-peer_identity  sd_listen  tls_hello
-```
-
-## Union
-
-24 modules, ~358 KB, two entrypoints. `peer_identity` is the one module
-both share (caller identification by the uid owning the far end of a TCP
-connection, read from `/proc/net/tcp`).
-
-## Not lifted
-
-Anything that renders the policy document or the units: `egress_policy`
-(the JSON writer), `broker_config` (the argv builder), `gen_egress`,
-`gen_container`, `gen_vm`, `workload_addr`. Those are workloadctl's
-opinion about where the values come from; customs takes the values.
-
-Also not lifted: the workloadctl tests. The unit tests for these modules
-would come across with them; the manual rigs (`broker_rig.py`,
-`container_egress_rig.py`) are workloadctl-shaped and would be replaced
-by a customs-shaped one.
-
-## Copied
-
-All 24 modules and both entrypoints, verbatim, on 2026-09-22, plus
-`tests/__init__.py`, `tests/covhelper.py` and the six unit-test modules
-whose lib imports lie entirely inside the closure:
-`test_broker_config`, `test_broker_identity`, `test_broker_request`,
-`test_inspect_terminate`, `test_mint`, `test_vm_status`. workloadctl's
-two closure tests were replaced by `test_closure.py`.
-
-`test_inspect_listener.py` (228 tests) came across with
-`tests/policy_document.py` standing in for `egress_policy`'s renderers --
-a hand-written writer of the document, since customs ships only its
-reader -- and the one test that read the RPM spec dropped. The other
-twelve partial modules are workloadctl's own (arming, diagnose, units,
-generator) and stay.
+customs is the egress inspector and credential broker lifted out of
+workloadctl, whose copy lives in the hypervisor repo. This is how the two
+relate: which is the dependency, what the interface between them is, and
+what happens at customs' first release.
 
 ## Decision: dependency
 
-Decided 2026-09-22, with steps 1 and 4 of `PLAN.md` behind it. The two
-models were: a copy (two trees, workloadctl keeps its own) or a
+There were two models: a copy (two trees, workloadctl keeps its own) or a
 dependency (one tree; workloadctl's RPM requires customs and its units
 run `customs-broker` and `customs-inspect`).
 
-The copy model's cost was to be measured in fixes that had to go to
-both trees. The count is one -- `peer_identity.userns_ranges` reading
-the wrong column of `uid_map` -- and it is a caller-identity check in a
-credential broker, found by a shape workloadctl does not run, sitting on
-an unmerged branch in the hypervisor repo. That is the copy model
-working as designed: every shared fix becomes a merge someone must
-remember, and the fixes flow one way, since the shapes here exercise
-code paths workloadctl's own layouts never reach.
+Under the copy model every shared fix becomes a merge someone must
+remember. The fixes also flow one way, because the shapes here exercise
+code paths that workloadctl's own layouts never reach. The first such fix
+was `peer_identity.userns_ranges` reading the wrong column of `uid_map`: a
+caller-identity check in a credential broker, found by a shape
+workloadctl does not run.
 
-The dependency model's cost was an RPM dependency and the imported
-identifiers becoming a published interface. The second half is paid:
-the rename kept every module name and every identifier workloadctl
-imports, and `test_closure.py` holds that boundary. The flags added
-here are off unless given, so workloadctl running this code gains
-nothing it has to think about.
+The dependency model costs an RPM dependency and turns the identifiers
+workloadctl imports into a published interface. The flags customs adds
+are off unless given, so workloadctl running this code gains nothing it
+has to think about.
 
-### Until the first release
+## The interface
+
+Module names are unchanged from workloadctl, and so is every identifier
+its shipped code imports from `lib/`:
+
+```
+broker_profiles   BROKER_DEFAULT_AUTH_FORMAT BROKER_DEFAULT_AUTH_HEADER
+egress_ca         CA_BUNDLE_PATH CA_DIR_NAME CA_ENV_VARS
+                  CA_EXPIRY_WARN_DAYS CA_SELINUX_TYPE DENIAL_DIR_NAME
+                  LEAF_DIR_NAME LEAF_SELINUX_TYPE RESERVED_GUEST_ENV
+                  ca_cert_path ca_dir ca_key_path ca_openssl_argv
+                  denial_dir leaf_dir
+egress_mint       pem_fingerprint
+egress_plane      CLEARTEXT PLANES TLS
+egress_record     DROP_BROKER_UNREACHABLE DROP_MISDIRECTED
+                  DROP_MISDIRECTED_LISTED DROP_NOT_HTTP
+                  DROP_NOT_HTTP_POLICY DROP_REASONS LOG_ID_FIELD
+                  LOG_REQ_FIELD RECORD_DECISIONS RECORD_MODES
+egress_status     BoundedCounts OTHER_KEY STATUS_TOP_N clear_status
+                  write_status
+inspect_document  INSPECT_DIGEST_KEY INSPECT_DIGEST_SHORT TLS_DEFAULT
+                  TLS_MODES VmPolicyEntry hostname_control_character
+                  hostname_match inspect_digest_short
+                  inspect_policy_digest normalise_hostname
+                  policy_governs
+sd_listen         NotSocketActivated inherited_listening_sockets
+```
+
+Some of these are unused inside customs (`CA_BUNDLE_PATH`, the SELinux
+types, `clear_status`, `leaf_dir`, `denial_dir`); they are here for
+workloadctl and are not dead code. workloadctl's tests import further
+names from the closure. Nothing here tests this list yet; the first
+release adds that test.
+
+## Until the first release
 
 workloadctl cannot require a package that has no release. Until customs
 has a tag and an RPM, workloadctl keeps its copy and the mirror rule
@@ -92,8 +67,13 @@ workloadctl copy is deleted, not maintained; whatever of that branch is
 unmerged is superseded by the dependency.
 
 What the switch costs on the workloadctl side, all in the hypervisor
-repo: `Requires: customs` in its spec; its units naming the two
-entrypoints here (or two symlinks under its own libexec); its twelve
-test modules that import partially from the closure importing from the
-installed package; its two closure tests retired in favour of
-`test_closure.py` here. Nothing changes in customs.
+repo:
+
+- `Requires: customs` in its spec.
+- Its units naming the two entrypoints here (or two symlinks under its
+  own libexec).
+- Its test modules that import partially from the closure importing
+  from the installed package.
+- Its two closure tests retired in favour of `test_closure.py` here.
+
+Nothing changes in customs.
