@@ -1,26 +1,12 @@
 """Who owns the far end of an accepted connection?
 
-Shared by `libexec/customs-broker` and `libexec/customs-inspect`, which
-both need to answer the same question about a caller and have no business
-answering it two ways. The userns helpers at the end are the precondition for
-the answer being truthful: the kernel translates a uid through the reader's
-namespace, so a process that cannot map a workload's uid sees the overflow
-uid instead and every such caller collapses into one identity.
-
-TWO FAMILIES, ONE QUESTION. On a listener bound to a path, SO_PEERCRED is
-the answer: the credentials the kernel recorded at connect(), read off the
-socket. On a listener bound to an address SO_PEERCRED yields nothing usable
--- it is AF_UNIX-only -- so the check goes to the kernel's socket table
-instead, finding the peer's row in /proc/net and reading its owner. Neither
-is a handshake: the owner is recorded by the kernel and there is nothing for
-a caller to participate in or lie about.
-
-WHY THE UID AND NOT THE ADDRESS. The host's networking re-originates every
-workload flow -- passt for a VM, pasta for a container -- as a host socket
-owned by that workload's own user. The source address is therefore identical
-for all of them and carries no information; the uid is assigned by the host, is
-unreachable from inside the workload, and is the same primitive the host's
-egress rules already match on.
+Shared by the broker and the inspector. On a socket path the answer is
+SO_PEERCRED; on an address it is the owner of the peer's row in the
+kernel's socket table. The uid, not the source address: the host's
+networking re-originates every workload's flows as that workload's own
+user, so the address says nothing. The kernel reports uids through the
+reader's user namespace, so the helpers at the end check that the uids
+that matter can be represented at all.
 """
 
 import ipaddress
@@ -30,26 +16,17 @@ from pathlib import Path
 
 PROC_NET_TCP = ("/proc/net/tcp", "/proc/net/tcp6")
 
-# Recovers what a connection was aimed at before the host translated it.
-# Two of them, one per family, and they are NOT interchangeable: the v4 option
-# lives under SOL_IP and returns a sockaddr_in, the v6 one under SOL_IPV6 and
-# returns a sockaddr_in6. Asking for the v4 one on a v6 socket does not fall
-# back, it fails -- which is how a v6 half of this lookup goes silently
-# inert.
+# What a connection was aimed at before the host translated it: one option
+# per family, not interchangeable.
 SO_ORIGINAL_DST = 80
 IPV6_ORIGINAL_DST = 80
-# Asked for as socket.IPPROTO_IPV6, never socket.SOL_IPV6: Python defines no
-# such name, so writing it raises AttributeError -- which, swallowed by the
-# tolerant except around the lookup, would leave the v6 branch inert in
-# exactly the way it exists to prevent -- and reads as correct.
+# Asked as socket.IPPROTO_IPV6: Python has no SOL_IPV6, and the
+# AttributeError would be swallowed by the lookup's tolerant except.
 
 
 def _norm(addr):
-    """Canonical address, with v4-mapped v6 collapsed to plain v4.
-
-    A dual-stack listener reports peers as ::ffff:a.b.c.d while the row for the
-    same socket may sit in either table, so both sides of a comparison have to
-    be flattened or an exact match never happens.
+    """Canonical address, with v4-mapped v6 collapsed to plain v4, so a
+    dual-stack peer compares equal to its row in either table.
     """
     ip = ipaddress.ip_address(addr)
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
@@ -66,13 +43,9 @@ def _proc_addr(text):
 def local_endpoints(sock):
     """Every endpoint this connection's local end may be recorded under.
 
-    Both callers sit behind a destination rewrite, and the *client* socket
-    keeps recording the address it dialled rather than the one we ended up
-    bound to. Matching only getsockname() therefore misses precisely the
-    traffic the redirect creates -- and misses it as a refusal, which looks
-    like a config error rather than a lookup that cannot match. SO_ORIGINAL_DST
-    recovers what the caller aimed at; both are accepted so the untranslated
-    path (local testing) keeps working.
+    The peer's row records the address it dialled, not the one the
+    redirect delivered it to, so SO_ORIGINAL_DST is read as well as
+    getsockname().
     """
     endpoints = [tuple(sock.getsockname()[:2])]
     try:
@@ -81,22 +54,9 @@ def local_endpoints(sock):
         endpoints.append((socket.inet_ntoa(packed), port))
     except (OSError, struct.error):
         pass  # no conntrack entry, or this is a v6 socket: try v6 below
-    # BOTH FAMILIES, and the v6 half is not symmetry for its own sake. A
-    # redirect that puts traffic here can have a v6 rule of its own, so a
-    # v6 dial arrives translated exactly as a v4 one does -- but
-    # SO_ORIGINAL_DST under SOL_IP raises on that socket, which would leave
-    # this list holding only getsockname(). The peer's row in
-    # /proc/net/tcp6 records the address it DIALLED, so nothing would
-    # match, the lookup would return None, and the caller would be admitted
-    # and counted as unresolved. The host's rules still cover it, so the
-    # only symptom would be a counter climbing: a hardening layer degrading
-    # to inert with nothing saying so, which is the shape this whole module
-    # exists to refuse.
-    #
-    # sockaddr_in6 is 28 bytes -- family, port, flowinfo, 16-byte address,
-    # scope id -- and the scope id is dropped deliberately: it qualifies a
-    # link-local address for a sender, and both sides of the comparison here
-    # come from /proc, which records none.
+    # Both families: a v6 dial is translated too, and without its original
+    # address nothing would match and every v6 caller would be admitted as
+    # unresolved. The scope id is dropped, since /proc records none.
     try:
         raw = sock.getsockopt(socket.IPPROTO_IPV6, IPV6_ORIGINAL_DST, 28)
         port, packed = struct.unpack("!2xH4x16s4x", raw)
@@ -109,23 +69,10 @@ def local_endpoints(sock):
 def _peer_rows(rows, locals_, peer):
     """(uid, inode) of every row that is `peer`'s end of this connection.
 
-    The peer's row is this connection mirrored: its local address is our
-    remote and its remote is our local. `locals_` is every endpoint that
-    "our local" may be recorded as -- see local_endpoints, which explains
-    why there is more than one.
-
-    The port test before the split is a filter, not a shortcut: the row we
-    want carries the peer's port in its local column, so a line without
-    that hex anywhere cannot be it. The peer's port is ephemeral and
-    therefore nearly unique, so `in` -- which runs in C -- rejects almost
-    every row before Python touches it. Measured over a 1638-row table:
-    1.188ms to split and hex-decode every row, 0.034ms with the filter,
-    same uid. 34x, and it scales with the host's socket count, which is
-    not something a caller should be able to make a listener pay per
-    connection.
-
-    The survivors are checked in full. This narrows the work without
-    widening the match.
+    That row is this connection mirrored: its local address is our remote,
+    its remote one of `locals_`. The port substring test is a cheap filter
+    before the full parse, since a caller should not be able to make every
+    connection pay for the host's whole table.
     """
     want_local = (_norm(peer[0]), peer[1])
     want_remotes = {(_norm(host), port) for host, port in locals_}
@@ -151,11 +98,7 @@ def _peer_rows(rows, locals_, peer):
 
 def peer_uid_from(rows, locals_, peer):
     """uid owning `peer`'s socket, given /proc/net/tcp data lines, or None.
-
-    inode 0 is a socket with no owning process -- a TIME_WAIT remnant,
-    which the kernel reports with uid 0, or a socket its owner has closed.
-    Reading that as identity would silently attribute the request to root,
-    so such a row names nobody.
+    A row with inode 0 has no owning socket and names nobody, not root.
     """
     for uid, inode in _peer_rows(rows, locals_, peer):
         if inode != 0:
@@ -164,13 +107,9 @@ def peer_uid_from(rows, locals_, peer):
 
 
 def peer_orphaned_from(rows, locals_, peer):
-    """Whether `peer`'s row is there and owned by no socket.
-
-    A peer that wrote its request and closed before we looked leaves its
-    end as an orphan: the kernel keeps the row, with inode 0, until the
-    close completes. Its data is still ours to read, and nothing says who
-    sent it -- a state a caller can put itself in on purpose, so it is
-    told apart from a row that is merely absent.
+    """Whether `peer`'s row is there and owned by no socket: the caller
+    wrote and closed before it was looked up, which any caller can choose
+    to do.
     """
     found = list(_peer_rows(rows, locals_, peer))
     return bool(found) and all(inode == 0 for _uid, inode in found)
@@ -196,12 +135,8 @@ def peer_uid(locals_, peer):
 
 
 def peer_caller(locals_, peer):
-    """(uid or None, orphaned) for the far end of an accepted connection.
-
-    One read of each table for both answers. `orphaned` is True when the
-    peer's row is there and no socket owns it: the caller closed before it
-    could be identified. See peer_orphaned_from for why that is not the
-    same as a row that could not be found.
+    """(uid or None, orphaned) for the far end of an accepted connection,
+    from one read of each table.
     """
     orphaned = False
     for rows in _proc_tables():
@@ -220,16 +155,8 @@ SO_PEERCRED_FORMAT = "3i"
 def peer_uid_unix(sock):
     """uid owning the far end of an accepted AF_UNIX connection, or None.
 
-    No table to scan and no row to race: the kernel recorded the peer's
-    credentials at connect() and they are read off the socket. Translated
-    through the reader's namespace like the /proc column is, so the userns
-    helpers below apply to this answer too.
-
-    Asked of a socket that is not AF_UNIX, the kernel does not refuse: it
-    answers pid 0, uid -1, gid -1, which a comparison would turn into a
-    refusal of every caller with nothing saying why. So the family is
-    checked here and the wrong one raises, and a -1 -- no credentials on
-    the socket -- is None like an unfindable row is.
+    On another family the kernel answers uid -1 rather than refusing, so the
+    family is checked and the wrong one raises.
     """
     if sock.family != socket.AF_UNIX:
         raise OSError(f"SO_PEERCRED answers only for AF_UNIX, not "
@@ -242,20 +169,8 @@ def peer_uid_unix(sock):
 
 def userns_ranges(uid_map):
     """The uid ranges this namespace can represent, as (start, count), in
-    the namespace's OWN numbering.
-
-    /proc/net and SO_PEERCRED translate a uid through the *reader's*
-    namespace, so an owner outside these ranges reads as the overflow uid
-    instead. Enough of those and every caller collapses into one identity,
-    with the broker still serving traffic and no error anywhere.
-
-    The first column of uid_map, not the second. A line reads
-    `inside outside count`, and the uid a program is told and the uids the
-    kernel reports to it are both inside values; the outside column is the
-    parent's numbering, which nothing here ever sees. The two coincide in
-    the initial namespace and under PrivateUsers=, and differ in a rootless
-    container, where reading the outside column refuses every uid the
-    container has.
+    the namespace's own numbering: the first column of uid_map, which is
+    what the kernel reports to a reader here.
     """
     ranges = []
     for line in uid_map.splitlines():
@@ -277,17 +192,9 @@ def userns_maps_everything(uid_map):
 
 
 def unmappable_uids(uids, uid_map):
-    """The uids among `uids` this namespace cannot represent.
-
-    Checked against the uids that actually matter rather than against the shape
-    of the map, because a namespace can be restricted and still map the whole
-    workload range -- refusing that would be a false alarm, and an operator who
-    hits one learns to route around the check.
-
-    Uids, not names: the broker is told the uid of its one caller on its
-    command line and never looks a workload user up, so this answers about
-    the number it was given. A passwd lookup here would be the one
-    workload-side fact in either daemon's process.
+    """The uids among `uids` this namespace cannot represent. Checked
+    against the uids that matter, since a restricted namespace can still
+    map the whole workload range.
     """
     ranges = userns_ranges(uid_map)
     return [uid for uid in uids

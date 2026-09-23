@@ -1,17 +1,8 @@
 """Recovering the listeners a .socket unit passed in.
 
-For a program that is socket-activated and never binds: it takes its
-sockets from systemd and refuses to open one of its own, for a reason that
-is the program's -- which is why `refusal` is a parameter rather than a
-sentence written here. The inspector's bind must stay in the inherited fd
-to keep it out of the workload's security domain; another program's port
-may be privileged where the process is not. An operator who hits this
-needs the reason that applies to the program they are looking at, so each
-supplies its own.
-
-Only the *reason* differs. Reading LISTEN_PID/LISTEN_FDS, refusing an
-activation environment that belongs to another process, and turning the fd
-range into sockets are the same for every program, and are here.
+For a program that is socket-activated and never binds. `refusal` is the
+caller's own reason for refusing to bind, since that reason differs by
+program.
 """
 import os
 import socket
@@ -22,14 +13,10 @@ class NotSocketActivated(Exception):
 
 
 def inherited_listening_sockets(*, refusal: str) -> list[socket.socket]:
-    """Recover the sockets systemd passed in, or fail loudly.
+    """The sockets systemd passed in, fds 3 .. 3+LISTEN_FDS, or raise.
 
-    Reads LISTEN_PID and LISTEN_FDS; the fds are 3 .. 3+LISTEN_FDS.
-    socket.socket(fileno=fd) recovers each one's family and type from the fd on
-    Linux, so this does not have to be told which of them is which.
-
-    `refusal` completes the sentence explaining why no fallback bind happens;
-    it is appended to "It refuses to open a socket of its own".
+    `refusal` completes the sentence "It refuses to open a socket of its
+    own".
     """
     listen_pid = os.environ.get("LISTEN_PID")
     listen_fds = os.environ.get("LISTEN_FDS")

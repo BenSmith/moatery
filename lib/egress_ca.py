@@ -1,20 +1,9 @@
 #!/usr/bin/env python3
 """The per-workload egress CA, the leaves it signs, and where all of it lives.
 
-One CA per workload rather than one per host, and the directory names, the
-validity windows and the two openssl invocations are all here together
-because they are one decision each spelled in several places: the minter
-creates the directories, whatever manages the state directory from outside
-names them, and whoever reports on a workload reads the certificate back.
-A drift between any two of those is a misnamed directory or an untrusted
-anchor, and both present as a network fault rather than as a naming
-mistake. Where the anchor goes inside the workload is whoever provisions
-the workload's to decide.
-
-This module takes a STATE DIRECTORY and knows nothing about which workload
-it belongs to or how the caller found it. It imports inspect_document and
-nothing above it. Nothing here runs openssl or touches the filesystem; it
-builds paths and argv, and lib/egress_mint.py is what executes them.
+Paths and openssl argv only; lib/egress_mint.py runs them. The directory
+names are here because whatever manages the state directory from outside
+has to name the same ones the minter creates.
 """
 
 import ipaddress
@@ -26,51 +15,28 @@ from inspect_document import normalise_hostname
 
 # --- The per-workload egress CA ---
 #
-# One CA per workload, generated like the SSH host keypair: idempotent, made
-# once, NEVER churned, and created before the workload that trusts it.
-#
-# Per-workload scoping is what makes the key affordable. It lives in the
-# workload's state directory, owned by the uid the workload runs as, and the
-# only party trusting it is the workload that uid already owns, so an escape
-# stealing it gains the ability to impersonate sites TO ITSELF. A single
-# host-wide CA shared by every workload would be a genuine crown jewel.
+# One per workload, made once and never churned, in the workload's state
+# directory. Only that workload trusts it, so a stolen key impersonates
+# sites to the workload itself.
 
 CA_DIR_NAME = "ca"
 CA_KEY_NAME = "egress-ca.key"
 CA_CERT_NAME = "egress-ca.crt"
 
 
-# The two leaf caches live beside the CA, under the same state directory,
-# and their names are here rather than in egress_mint because whatever
-# manages the state directory from outside has to name the same three
-# directories the minter creates. A drift between the two spellings is a
-# misnamed directory, which presents as the inspector failing to mint and
-# not as a naming mistake.
+# The two leaf caches, beside the CA.
 LEAF_DIR_NAME = "leaves"
 DENIAL_DIR_NAME = "leaves-denied"
 
 
-# Ten years. The number follows from never rotating rather than from any
-# threat estimate: a CA that expires is a CA that must be replaced, replacing
-# it means re-provisioning the workload, so the validity is the real upper
-# bound on a workload's life. Ten years puts that boundary beyond the
-# hardware's, which is the point -- anything shorter schedules a total
-# outage, every HTTPS request failing validation on a workload every report
-# calls healthy, for a date nobody wrote down.
-#
-# Distance is not the same as invisibility: the certificate carries
-# notAfter, and whoever reports on a workload reads it back and warns inside
-# a window of its choosing, so a workload that lives long enough to reach it
-# gets a re-provision SCHEDULED rather than discovered.
+# Ten years. A CA is never rotated, since replacing one means
+# re-provisioning the guest, so its validity bounds the workload's life;
+# the certificate's notAfter is reported, so the date is visible.
 CA_VALIDITY_DAYS = 3650
 
 
-# notBefore is backdated an hour for clock skew. Clock drift is ~10 ppm
-# (about five minutes a year), so this covers roughly 1,200 years of it --
-# and exactly ONE HOUR of a paused VM's lost time, which a paused guest does
-# not recover on its own. The backdate is not what makes a long pause
-# survivable; something that steps the guest's clock is. What the backdate
-# buys is that a pause SHORTER than an hour costs the workload nothing.
+# notBefore is backdated an hour, so a guest clock up to an hour behind,
+# a paused VM's included, still accepts a fresh leaf.
 CA_BACKDATE_SECONDS = 3600
 
 
@@ -99,9 +65,9 @@ def denial_dir(state_dir) -> Path:
 
 
 def ca_subject(name: str) -> str:
-    """The CA's subject. Names the workload, because an operator reading a
-    certificate error inside a workload needs to know which CA it came
-    from."""
+    """The CA's subject, naming the workload, so a certificate error inside
+    it says which CA it came from.
+    """
     return f"/CN=customs egress CA ({name})"
 
 
@@ -109,23 +75,9 @@ def ca_openssl_argv(name: str, key_path, cert_path, *,
                     now: float) -> list[str]:
     """One `openssl req -x509` invocation that mints the CA.
 
-    THE THREE EXTENSIONS ARE NOT DECORATION. Python 3.14's ssl (OpenSSL 3.5)
-    rejects a chain whose CA lacks a Subject Key Identifier
-    with `certificate verify failed: Missing Authority Key Identifier`, and
-    then -- once that is added -- with `CA cert does not include key usage
-    extension`. curl, Go and Node accept the same CA without any of them, so a
-    CA missing them works everywhere until a Python client tries, and presents
-    as a trust failure indistinguishable from "the guest never installed our
-    CA". They are asserted by parsing the certificate, not by matching this
-    argv: what matters is what OpenSSL emitted, not what we asked for.
-
-    `-not_before` is used rather than letting notBefore default to now, so the
-    hour of skew tolerance is a property of the certificate rather than of when
-    the process happened to run. Requires OpenSSL 3.5, which is what Fedora 43
-    and 44 ship.
-
-    ECDSA P-256 to match the leaves: RSA-2048 minting is slow enough to be
-    noticeable on a cold cache.
+    The three extensions are required: without a Subject Key Identifier and
+    keyUsage, Python's ssl rejects the chain where curl, Go and Node accept
+    it. `-not_before` needs OpenSSL 3.5. ECDSA P-256, as the leaves are.
     """
     not_before = time.strftime(
         "%Y%m%d%H%M%SZ", time.gmtime(now - CA_BACKDATE_SECONDS))
@@ -148,28 +100,20 @@ def ca_openssl_argv(name: str, key_path, cert_path, *,
 #
 # What the CA above signs, one per exact name the guest asks for.
 
-# Thirty days. Short because nothing renews these -- the working-set cache
-# re-mints inside 24 h of expiry and that is the whole rotation story -- and
-# because a leaf that leaked is a leaf valid for one host, for a month, signed
-# by a CA one guest trusts. Long enough that a VM which runs for a fortnight
-# never re-mints its working set.
+# Thirty days: nothing renews a leaf except the cache re-minting it, and a
+# leaked one is valid for one host.
 LEAF_VALIDITY_DAYS = 30
 
 
-# Re-mint once a leaf is inside this of notAfter. A day, so a long-running
-# connection opened just under the wire still outlives its certificate by an
-# order of magnitude.
+# Re-mint once a leaf is within a day of notAfter.
 LEAF_RENEW_WITHIN_SECONDS = 86400
 
 
 class LeafRefused(ValueError):
     """A name that will not be minted for, with the reason in the message.
 
-    Raised BEFORE openssl is reached, which is the point: every character of
-    the name below travels into an `-addext` argument, and `subjectAltName`
-    takes a comma-separated list. A name carrying a comma would add extensions
-    of the guest's choosing to a certificate the host signs. Nothing downstream
-    of here re-checks, so this function is the boundary.
+    Raised before openssl: the name goes into an `-addext` argument, and a
+    comma in it would add extensions of the guest's choosing.
     """
 
 
@@ -185,23 +129,10 @@ _LEAF_LABEL_CHARS = frozenset(
 def leaf_san(name: str) -> str:
     """The subjectAltName value for one name, or raise LeafRefused.
 
-    ALLOWLIST, NOT DENYLIST. The obvious spelling of this check is to reject
-    the characters that hurt -- comma, newline, `=` -- and it is the wrong
-    shape: the set of characters that mean something to openssl's extension
-    parser is openssl's to change, and a name is guest-chosen input reaching a
-    subprocess argument. So the check names what is permitted and refuses the
-    rest, which is a rule that cannot rot.
-
-    An IP literal becomes an `IP:` SAN rather than a `DNS:` one. A `DNS:`
-    entry holding an address does not match when a client connects to that
-    address -- so minting one would produce a certificate that verifies
-    nowhere, and the failure would present as an unexplained handshake error
-    rather than as a refusal.
-
-    `_` is permitted in a label though RFC 1035 forbids it: it is common in
-    real service names, and every client this design faces resolves and
-    validates such names. Refusing them would break traffic the allowlist
-    authorised, which is the failure this whole design exists to avoid.
+    An allowlist of characters, not a denylist: what openssl's extension
+    parser treats as special is openssl's to change. `_` is allowed,
+    against RFC 1035, because real service names use it. An IP literal gets
+    an `IP:` SAN, since a `DNS:` one holding an address matches nothing.
     """
     name = normalise_hostname(name)
     if not name:
@@ -212,11 +143,8 @@ def leaf_san(name: str) -> str:
     except ValueError:
         address = None
     if address is not None:
-        # A SCOPED ADDRESS IS REFUSED, and not for tidiness. `ip_address`
-        # takes anything after a `%` as an IPv6 scope id and keeps it in
-        # the string, commas included, so `fe80::1%a,DNS:victim.example`
-        # parses as an address and would reach -addext whole. No SAN can
-        # name a scope, so nothing is lost by refusing one.
+        # A scoped address is refused: ip_address keeps whatever follows `%`,
+        # commas included.
         if getattr(address, "scope_id", None):
             raise LeafRefused(f"a scoped address in {name!r}")
         return f"IP:{address}"
@@ -241,26 +169,9 @@ def leaf_openssl_argv(name: str, ca_key, ca_cert,
                          key_path, cert_path, *, now: float) -> list[str]:
     """One `openssl req -x509 -CA` invocation that mints a leaf for `name`.
 
-    A single process, not a CSR and a sign: `req -x509` takes `-CA`/`-CAkey`
-    since OpenSSL 3.0 and does both, which halves the cost of the thing the
-    token bucket exists to ration.
-
-    THE SAN IS CRITICAL, AND THAT IS LOAD-BEARING. The subject is empty (there
-    is no meaningful CN for a name the host does not own), and RFC 5280 says a
-    certificate with an empty subject MUST mark subjectAltName critical.
-    Without the flag, Python's ssl rejects the chain with
-    `Subject empty and Subject Alt Name extension not critical` -- a verify
-    failure whose message names neither the SAN value nor the CA, so it reads
-    like a trust problem and sends a reader to the anchor.
-
-    THE SAN CARRIES THE EXACT NAME, NEVER THE ALLOWLIST PATTERN THAT MATCHED.
-    A `*.example.com` entry authorises the guest to reach names under it; a
-    leaf minted for `*.example.com` would be a certificate the guest could use
-    against any of them, including ones a later narrowing of the list removes.
-    One name asked for, one name signed.
-
-    notBefore is backdated by the same hour the CA is, for the same reason
-    and with the same caveat -- see CA_BACKDATE_SECONDS.
+    The subject is empty, so RFC 5280 requires a critical SAN, and Python
+    rejects the chain without it. The SAN is the exact name asked for,
+    never the pattern that matched it.
     """
     not_before = time.strftime(
         "%Y%m%d%H%M%SZ", time.gmtime(now - CA_BACKDATE_SECONDS))

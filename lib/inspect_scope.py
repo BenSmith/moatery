@@ -1,16 +1,9 @@
 """
 inspect_scope: what every connection decision is made against.
 
-One workload's inspector holds five things that a connection decision reads and
-never replaces: the policy, the counters, the per-request record, the upstream
-pool and the minter. The accept loop, the ceiling and the status file are not
-among them -- those belong to the process (lib/inspect_listener.py) and no
-decision consults them. Bundling the five here is what lets the TLS plane and
-the request loop be functions with one named dependency instead of methods on
-the object that also owns the sockets.
-
-The two behaviours the bundle has are the two every path needs: a log line,
-and a record for a whole connection where there are no requests.
+A workload's policy, counters, record, upstream pool and minter, bundled so
+the planes are functions with one dependency. The accept loop, the ceiling
+and the status file belong to the process (lib/inspect_listener.py).
 """
 
 import json

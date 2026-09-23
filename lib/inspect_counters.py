@@ -1,10 +1,7 @@
 """inspect_counters: what the egress inspector reports about itself.
 
-The writer of the `--status` file. Whatever reads it agrees with this on
-the document's shape only because the listener writes exactly
-`Counters.snapshot()` and nothing composes a second one. `egress_status`
-holds the machinery -- the bounded per-host map and the atomic replace --
-and no figure of its own.
+The writer of the `--status` file, which is exactly `Counters.snapshot()`.
+`egress_status` holds the bounded per-host map and the atomic replace.
 """
 
 import threading
@@ -19,84 +16,19 @@ from tls_hello import TLS_EXT_ECH
 class Counters:
     """What the listener reports, and the only place any of it is defined.
 
-    Emitted, not rendered: whatever reports on a workload reads these and
-    adds no figure of its own. The counter lives beside
-    the code that creates the failure it counts, not beside the code that
-    displays it, so a path can be debugged from its own figures.
+    `ech_seen` counts the encrypted_client_hello extension wherever it
+    appears, which GREASE dominates, so it measures capability. `ech_alarm`
+    counts the extension on a hello whose name matched no list, which is
+    real ECH reaching for somewhere policy refuses.
 
-    THE TWO ECH NUMBERS, AND WHY THEY ARE TWO
+    `dispositions` is not one unit: a TLS decision is per connection
+    (`spliced`, `terminated`) and a cleartext or terminated one per request
+    (`forwarded`); `dropped` is whichever was refused. `drop_reasons` sums
+    to `dropped` exactly. `bumped` is how a refusal was delivered, not a
+    decision, so it stands outside `dispositions`.
 
-    `ech_seen` counts the encrypted_client_hello extension wherever it appears.
-    That is a CAPABILITY metric and is dominated by GREASE: a modern client
-    sends the real 0xfe0d codepoint with deliberately fake contents on ordinary
-    connections, so this number moves as soon as such a client is installed in
-    the guest and says nothing about intent.
-
-    `ech_alarm` counts the PAIR -- extension present and the name landed on no
-    list -- which is the signature of real ECH being used to reach somewhere
-    policy would refuse. Counting only the first is how a tripwire ends up
-    permanently lit and therefore ignored; counting only the second loses the
-    "when did this guest become ECH-capable" question entirely.
-
-    A hello with no readable name counts toward the alarm on the same footing
-    as one whose name was refused. Both are "the extension was there and the
-    name matched nothing", and an ECH hello that also withholds SNI is the
-    stronger version of the signal, not a weaker one.
-
-    WHAT `dispositions` COUNTS, AND WHY IT IS NOT ONE UNIT
-
-    A TLS decision is taken once per CONNECTION -- one hello, one name, one
-    splice or one close. A cleartext decision is taken once per REQUEST,
-    because a kept-alive connection carries several and each is authorised
-    separately. So `spliced` counts connections, `forwarded` counts requests,
-    and `dropped` counts whichever the refusal was.
-
-    That is not reconcilable into a single unit and is deliberately not
-    disguised as one: a listener that reported only connections would hide
-    every request after the first on a keep-alive, which is the majority of
-    them, and one that reported only requests would have nothing to say about a
-    spliced tunnel that carries no requests this process can see. Each figure
-    is exact for its own plane. Summing across the three is the operation that
-    means nothing.
-
-    `drop_reasons` reconciles with `dropped` exactly -- every drop lands in one
-    reason, DROP_UNCLASSIFIED included.
-
-    `terminated` is the third connection figure and joins `spliced` on its own
-    footing: one hello, one name, one completed handshake, after which the
-    REQUESTS inside it are counted by `forwarded` exactly as the cleartext
-    plane's are. A workload reading terminated=1 forwarded=40 had one HTTPS
-    connection carrying forty authorised requests, which is the reading
-    `spliced` can never produce.
-
-    THE PER-HOST MAPS ARE A DIFFERENT KIND OF FIGURE
-
-    `dispositions` and `drop_reasons` answer "what happened, how often".
-    `per_host` answers "to which host", and only for the reasons whose remedy
-    is written against a name -- an internal destination missing an entry, an
-    upstream this host cannot verify, a host wanting a client certificate, a
-    host not speaking HTTP, and a host that did not speak h2 after being told
-    it would. All but the first are the operator's list of `splice`
-    candidates, which is the whole reason they are per host.
-
-    `not HTTP` is TWO of those figures rather than one, split by whether a
-    `policy` entry named the host. Merged, an operator reading a
-    single total can see that some host needs splicing but not that some OTHER
-    host has method and path rules that never ran; and those two facts have
-    different remedies, the second of which includes deleting the policy entry
-    (the policy is refused with `splice` and `policy` on one host). See
-    PER_HOST_REASONS.
-
-    They are bounded top-N with a counted overflow because the keys come from
-    the guest. `per_host_totals` is exact regardless: the top-N can lose which
-    names, never how many.
-
-    `bumped` IS NOT A DISPOSITION and is reported outside that map on purpose.
-    A bump is a refusal DELIVERED THROUGH a completed handshake, so it is
-    already counted in `dropped` under its own reason; the figure says how the
-    guest was told, not what was decided. Putting it in `dispositions` would
-    break the one property that map has -- every connection or request in
-    exactly one bucket -- to record something that is not a decision.
+    The per-host maps are bounded, since their keys can come from the guest;
+    `per_host_totals` stays exact.
     """
 
     def __init__(self, policy=None, top_n=STATUS_TOP_N):
@@ -104,87 +36,34 @@ class Counters:
         self.dispositions = {"spliced": 0, "terminated": 0, "forwarded": 0,
                              "dropped": 0}
         self.bumped = 0
-        # Records the per-request sink could not take. HAS A WRITER, which is
-        # the whole point of it being here rather than a journal line: the
-        # WARNING is emitted once per process, so a sink that has been broken
-        # since boot is invisible to anyone who was not tailing at the moment
-        # it failed. This is the reading that survives, and a non-zero here
-        # means the record is incomplete -- which a reader must know before
-        # concluding a guest made no requests.
+        # Records the per-request sink could not take. The warning is logged
+        # once; this is what shows the record is incomplete.
         self.record_failures = 0
-        # Connections whose requests are NOT in the record, because nothing in
-        # them was decoded: an h2 session is relayed at frame level by design.
-        # Named rather than left to look like silence -- without it a reader
-        # counting requests in the file concludes the guest made none, when
-        # what happened is that this listener cannot see them. The connection
-        # itself IS recorded (mode "h2"); this is the count of how many such
-        # blind spots there are.
+        # h2 sessions, whose requests are not in the record: nothing in them
+        # was decoded.
         self.h2_unrecorded = 0
-        # Connections whose caller the peer-identity lookup could not name.
-        # Not a drop: they are admitted (see _handle). Counted because the
-        # alternative is a hardening layer that degrades to inert with nothing
-        # anywhere saying so -- a counter with no writer reads 0, and so does
-        # a check that never resolves.
+        # Connections admitted whose caller the lookup could not name.
         self.caller_unresolved = 0
-        # Pre-seeded from DROP_REASONS rather than grown on first use. A reason
-        # absent from the file and a reason reading zero are the same fact and
-        # must look the same, or an operator reads "no key" as "not measured".
+        # Pre-seeded, so an absent reason and a zero one look the same.
         self.drop_reasons = {reason: 0 for reason in DROP_REASONS}
         self._unclassified = 0
         self.ech_seen = 0
         self.ech_alarm = 0
         self.per_host = {reason: BoundedCounts(top_n)
                          for reason in PER_HOST_REASONS}
-        # THE CREDENTIAL FIGURES. Two breakdowns of one total, because the two
-        # questions an operator has are different: `per_host` answers "which of
-        # my brokered hosts is the guest actually using", and `per_credential`
-        # answers "is this key being used at all" -- which is the one that
-        # catches a policy entry pointing at a credential the guest never
-        # triggers, and the one worth reading before rotating a key.
-        #
-        # BoundedCounts on both, like every other per-name figure here, and the
-        # bound is free rather than defensive: unlike the guest-chosen names in
-        # `per_host`, both key spaces come off this workload's own file and are
-        # already bounded by it.
-        #
-        # NEVER THE CREDENTIAL ITSELF, only its name. The material is
-        # in the broker's process and this one has never seen it, which is
-        # the whole point of the broker -- a figure carrying it would put it
-        # in a file a metrics exporter publishes.
+        # Brokered requests, by host and by credential name, never the
+        # material: this process has never seen it.
         self.credentialed = 0
         self.credentialed_hosts = BoundedCounts(top_n)
         self.per_credential = BoundedCounts(top_n)
-        # A brokered request the ORIGIN refused for want of authorisation, on a
-        # request this inspector considers fully authorised. The failure worth
-        # counting rather than merely naming: the guest sent
-        # a placeholder whose shape the provider does not accept, or the broker
-        # attached material the provider has retired, and every layer of ours
-        # reports success. Without this figure that is an hour of reading a
-        # record whose every line says `decision=forward`.
-        #
-        # 401 AND 403 BOTH, and no other status. 401 is the shape a provider
-        # that wants a credential returns; 403 is the shape one that got a
-        # credential without the right scope returns, which is the same
-        # operator question with a different remedy. A 5xx is the provider
-        # failing and is not this.
+        # Brokered requests the origin answered 401 or 403: every layer of
+        # ours succeeded and the provider still said no.
         self.credential_unauthorized = 0
-        # `internal_refusals` is the per-host figure for DROP_INTERNAL under
-        # the key the status document and the exporter name it by.
+        # The per-host DROP_INTERNAL figure, under the key the status
+        # document names it by.
         self.internal_refusals = self.per_host[DROP_INTERNAL]
-        # The lists as LOADED, not as written in the file: the file can have
-        # changed since the load, and the question an operator has is what
-        # this process is actually enforcing.
-        #
-        # EVERY list this process enforces, and a key added here whenever one
-        # is added there. Three of these decide something on their own --
-        # `splice` exempts a host from termination, `http2` changes what is
-        # offered on both legs, `policy` decides individual requests -- so a
-        # status file naming only `hosts` and `internal` answers "what is this
-        # process enforcing" with a subset, in a file whose whole purpose is
-        # that the answer is not a guess. `policy` carries the rules and not
-        # just the names: which hosts are governed is half the question, and
-        # what they are governed BY is the half an operator is reading this
-        # for.
+        # Every list as loaded, which is what this process enforces whatever
+        # the file now says.
         self.lists = {
             "tls": policy.tls if policy else TLS_DEFAULT,
             "hosts": list(policy.hosts) if policy else [],
@@ -195,23 +74,14 @@ class Counters:
                 {"host": e.host,
                  "methods": None if e.methods is None else list(e.methods),
                  "paths": None if e.paths is None else list(e.paths),
-                 # Unconditional here, unlike the policy DOCUMENT, which emits
-                 # the key only where it is set. The sparseness there buys a
-                 # stable digest across a fleet; this file is digested by
-                 # nobody, and an operator asking "which hosts are brokered"
-                 # should not have to tell a missing key from a null one.
                  "credential": e.credential}
                 for e in policy.policy
             ] if policy else [],
         }
 
     def record_hello(self, hello, on_a_list: bool) -> None:
-        """The ECH tripwire. Called once per readable ClientHello.
-
-        `on_a_list` is the decision already taken, passed in rather than
-        recomputed: a tripwire that matched the lists a second time could
-        disagree with the decision it is describing.
-        """
+        """The ECH tripwire, once per readable ClientHello. `on_a_list` is
+        the decision already taken, not matched again."""
         if TLS_EXT_ECH not in hello.extensions:
             return
         with self._lock:
@@ -230,9 +100,7 @@ class Counters:
             self.dispositions["terminated"] += 1
 
     def record_write_failure(self) -> None:
-        """One record the sink refused. Passed to RequestLog as its callback
-        rather than called from the write path, so the counter cannot drift
-        from the failures it counts."""
+        """One record the sink refused: RequestLog's failure callback."""
         with self._lock:
             self.record_failures += 1
 
@@ -247,11 +115,8 @@ class Counters:
             self.h2_unrecorded += 1
 
     def record_bump(self) -> None:
-        """One handshake completed solely to deliver a refusal legibly.
-
-        Always paired with a `record_drop` naming the reason; see the class
-        docstring for why the two are not one call.
-        """
+        """One handshake completed to deliver a refusal; the refusal itself
+        is counted by record_drop."""
         with self._lock:
             self.bumped += 1
 
@@ -260,32 +125,20 @@ class Counters:
             self.dispositions["forwarded"] += 1
 
     def record_drop(self, reason: str, host: str = None) -> None:
-        """One refused connection or request, by reason.
-
-        The reason strings are the log's, deliberately the same ones: an
-        operator who greps a reason out of the journal and then looks for
-        it in the status file must find the same word.
-        """
+        """One refused connection or request, by reason, spelled as the
+        journal spells it."""
         with self._lock:
             self.dispositions["dropped"] += 1
             if reason in self.drop_reasons:
                 self.drop_reasons[reason] += 1
             else:
-                # Counted, not discarded: sum(drop_reasons) == dropped has to
-                # hold unconditionally or an operator reconciling the two maps
-                # is reconciling against a number that quietly lost rows.
+                # Counted, so drop_reasons still sums to dropped.
                 self._unclassified += 1
             if host and reason in self.per_host:
                 self.per_host[reason].add(host)
 
     def record_credentialed(self, host: str, credential: str) -> None:
-        """One request sent to the broker instead of to the origin.
-
-        Counted where the dial SUCCEEDS, not where the policy says a credential
-        applies: a broker that is down raises DROP_BROKER_UNREACHABLE and the
-        request reached no provider, so counting it here would report a
-        credential as used on a request that never carried one.
-        """
+        """One request sent to the broker, counted once its dial succeeds."""
         with self._lock:
             self.credentialed += 1
             self.credentialed_hosts.add(host)

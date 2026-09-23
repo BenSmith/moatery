@@ -21,23 +21,15 @@ from inspect_document import (
     hostname_bad_character, hostname_control_character, normalise_hostname,
 )
 
-# The ceiling on how much is read looking for a complete ClientHello, in bytes.
-# A real one is a few hundred bytes; post-quantum key shares push it over a
-# single TCP segment but nowhere near this. The bound exists because the read
-# loop is otherwise driven by lengths the GUEST writes: without it, a peer that
-# opens a record and dribbles it holds a slot and grows a buffer for as long as
-# the idle timeout allows.
+# The ceiling on a ClientHello, in bytes. A post-quantum one spans more
+# than a segment and is nowhere near this; the bound is there because every
+# length in the hello is the guest's.
 CLIENTHELLO_MAX = 16384
 
 # How long a peek that found nothing new waits before asking again, in
-# seconds. A socket with a timeout is non-blocking underneath, so MSG_WAITALL
-# does not wait: while part of the hello is already buffered, poll() reports
-# the socket readable and the peek returns that same part at once. A hello
-# larger than one segment -- the default post-quantum hello is, at 1500 MTU
-# -- is routinely caught between its segments, so no progress means "wait",
-# not "refuse". The whole read is bounded by the socket's own timeout, taken
-# once for the hello rather than per read, so a dribbling peer holds its
-# slot for one timeout and no longer.
+# seconds. Under a socket timeout MSG_WAITALL does not wait, and a hello
+# larger than one segment is often peeked between its segments, so no
+# progress means wait. The socket's timeout bounds the whole hello.
 PEEK_POLL = 0.01
 
 TLS_HANDSHAKE = 0x16
@@ -45,33 +37,23 @@ TLS_CLIENT_HELLO = 0x01
 TLS_EXT_SERVER_NAME = 0x0000
 TLS_SNI_HOST_NAME = 0x00
 
-# RFC 9460 / draft-ietf-tls-esni: encrypted_client_hello. Read by the tripwire
-# only -- the parser skips it by its length like every other extension, and
-# must keep doing so. Nothing here decrypts it and nothing here can: the point
-# of the tripwire is that an ECH hello is UNREADABLE, and what is observable is
-# that one was attempted.
+# RFC 9460 encrypted_client_hello, read by the ECH tripwire only; the
+# parser skips it by its length like any other extension.
 TLS_EXT_ECH = 0xfe0d
 
 
 class HelloUnreadable(Exception):
     """The first bytes are not a ClientHello this can read a name out of.
 
-    A DISTINCT condition from "the name is not allowlisted", and the two must
-    stay distinguishable in the log and in the counters. They fail the
-    connection identically, so an operator with one bucket for both cannot tell
-    a guest reaching for a host it may not have from a guest speaking something
-    that is not TLS on the TLS port — which is the tunnelling signature.
+    Counted apart from a name that is not allowlisted: something that is not
+    TLS on the TLS port is the tunnelling signature.
     """
 
 
 class ClientHello(NamedTuple):
-    """What the peek extracts. `server_name` is None when the hello carries no
-    SNI extension at all, which is legal TLS and simply unallowlistable here.
-
-    `extensions` is every extension type in wire order, GREASE values included.
-    Nothing in this unit reads it; the ECH tripwire does, and recording it in
-    the parse rather than re-walking the buffer later is what keeps there being
-    one parser.
+    """What the peek extracts. `server_name` is None for a hello with no
+    SNI. `extensions` is every extension type in wire order, for the ECH
+    tripwire.
     """
 
     server_name: str
@@ -79,13 +61,9 @@ class ClientHello(NamedTuple):
 
 
 class _Reader:
-    """A length-checked cursor over a byte string.
-
-    Every field in a ClientHello is preceded by a length the PEER wrote, so
-    every read here is bounds-checked and a short one raises HelloUnreadable
-    rather than returning a truncated field. Slicing past the end of a bytes
-    object in Python returns a short result silently, which for a parser driven
-    by attacker-supplied lengths is the whole bug class.
+    """A length-checked cursor over a byte string. Every length is the
+    peer's, and Python's slicing returns a short result silently, so a short
+    read raises instead.
     """
 
     def __init__(self, buf):
@@ -114,16 +92,9 @@ class _Reader:
 def _parse_server_name(data: bytes):
     """The first host_name in a server_name extension, or None.
 
-    Non-ASCII is refused rather than decoded: a name on the wire is punycode by
-    RFC 6066, so bytes that are not ASCII are either a different encoding of a
-    name — which would match a pattern differently from the way it was written
-    — or not a name at all.
-
-    A control character is refused for the second reason, which ASCII-ness does
-    not cover: this name is logged and written into the status document, and a
-    bare LF inside it forges a journal record. See
-    `hostname_control_character`. So is anything else no host name is spelled
-    with, which forges a field inside one; see `hostname_bad_character`.
+    Non-ASCII is refused, since a name on the wire is punycode (RFC 6066).
+    So is a control character, or any character no name is spelled with,
+    since this name goes into journal lines.
     """
     r = _Reader(data)
     entries = _Reader(r.take(r.u16()))
@@ -139,15 +110,13 @@ def _parse_server_name(data: bytes):
                     "RFC 6066 puts one on the wire") from None
             ch = hostname_control_character(name)
             if ch is not None:
-                # The character is named with !r and nothing else of the name
-                # is: quoting the whole thing would put the injected bytes in
-                # the record this refusal exists to keep clean.
+                # Only the character is quoted: the whole name would put
+                # the injected bytes into the line.
                 raise HelloUnreadable(
                     f"the server_name carries the control character {ch!r}, "
                     "which no name has and which forges a line in this log")
             ch = hostname_bad_character(normalise_hostname(name))
             if ch is not None:
-                # Named with !r alone, for the reason above.
                 raise HelloUnreadable(
                     f"the server_name carries {ch!r}, which no host name is "
                     "spelled with")
@@ -158,16 +127,9 @@ def _parse_server_name(data: bytes):
 def parse_client_hello(msg: bytes) -> ClientHello:
     """Parse a ClientHello handshake body (the 4-byte header already stripped).
 
-    GREASE (RFC 8701) needs no handling of its own and gets none: a GREASE
-    extension is a well-formed extension with a reserved type, so it is skipped
-    by its length like any other. Code that special-cased it would be code that
-    could get the list of reserved values wrong.
-
-    An ECH ClientHello parses like any other and yields the name it carries —
-    the cover name from the ECHConfig. That name is matched against the lists
-    exactly like a cleartext one; the tripwire keys on the ECH EXTENSION being
-    present, never on an absent or unexpected name, because an ECH hello has a
-    perfectly ordinary-looking one.
+    GREASE needs no case of its own: it is a well-formed extension, skipped
+    by its length. An ECH hello parses like any other and yields its cover
+    name.
     """
     r = _Reader(msg)
     r.take(2)              # legacy_version
@@ -176,9 +138,7 @@ def parse_client_hello(msg: bytes) -> ClientHello:
     r.take(r.u16())        # cipher_suites
     r.take(r.u8())         # legacy_compression_methods
     if r.remaining() == 0:
-        # Legal, and pre-TLS1.3 only: a hello with no extension block has no
-        # SNI and so no name to match. Not an error — it is a readable hello
-        # that names nothing, which the caller reports as such.
+        # No extension block, which is legal before TLS 1.3: no SNI.
         return ClientHello(None, ())
     exts = _Reader(r.take(r.u16()))
     name = None
