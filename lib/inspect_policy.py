@@ -182,7 +182,7 @@ def load_policy(path):
     Deliberately without a default: a missing or unreadable document must fail
     the start. The tempting fallback — an empty policy — is the worst of the
     options, because an empty `hosts` list is a valid configuration (a workload
-    reachable only through `allow`), so the listener could not tell "the
+    whose every host is a `policy` entry), so the listener could not tell "the
     operator allowed nothing" from "the file was not there" and would enforce
     the strictest reading of a policy it never read.
     """
@@ -214,10 +214,10 @@ def load_policy(path):
             + ", ".join(repr(m) for m in TLS_MODES))
     hosts = _names(doc, "hosts", path)
     internal = _names(doc, "internal", path)
-    # Tolerated absent, unlike `hosts`: a policy document written before this
-    # key existed is a policy with no internal entries, which is the common
-    # case and not an error. `hosts` gets no such tolerance because there the
-    # empty reading and the missing reading are different configurations.
+    # Every list is tolerated absent and reads as empty, `hosts` included: a
+    # document that names no host admits nothing, which is the refusal an
+    # absent list would have to mean anyway. It is the FILE whose absence
+    # fails the start, not a key.
     splice = _names(doc, "splice", path)
     # NOT normalised here, unlike `internal`: these are fnmatch PATTERNS and
     # hostname_match normalises both sides at the point of comparison.
