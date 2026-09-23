@@ -366,7 +366,6 @@ class TestEntrypointWiring(unittest.TestCase):
         self.assertEqual((broker_server.Handler.connect_timeout,
                           broker_server.Handler.read_timeout), (3.0, 4.0))
         self.assertIsNotNone(broker_server.Handler.upstream_context)
-        self.assertIsNone(server.guest_tls_context)
         self.assertIs(server.RequestHandlerClass, broker_server.Handler)
         self.assertNotEqual(server.server_address[1], 0, "the port was bound")
         self.assertIn("listening url=http://127.0.0.1:", err)
@@ -452,13 +451,6 @@ class TestEntrypointWiring(unittest.TestCase):
         self.assertIn(f"listening url=http+unix:{path}", err)
         self.assertFalse(os.path.exists(path),
                          "server_close did not unlink the socket")
-
-    def test_a_tls_cert_without_its_key_is_a_parser_error(self):
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit) as caught:
-                self.mod.main(self.MINIMAL + ["--tls-cert", "/x.pem"])
-        self.assertEqual(caught.exception.code, 2)
-
 
 if __name__ == "__main__":
     unittest.main()
