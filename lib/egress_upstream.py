@@ -305,9 +305,10 @@ def tls_failure(host, exc):
     if "CERTIFICATE_REQUIRED" in code:
         return (DROP_CLIENT_CERT,
                 f"{host} requires a client certificate, which this "
-                f"inspector cannot present on the guest's behalf. Set "
-                f"tls = \"splice\" for this workload so the guest's own "
-                f"handshake reaches {host}.")
+                f"inspector cannot present on the guest's behalf. Add "
+                f"{host} to the policy's `splice` list, and drop any "
+                f"`policy` entry for it, so the guest's own handshake "
+                f"reaches {host}.")
     if isinstance(exc, ssl.SSLCertVerificationError):
         detail = getattr(exc, "verify_message", None) or str(exc)
         return (DROP_UNVERIFIED,

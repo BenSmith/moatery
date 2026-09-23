@@ -291,10 +291,9 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
             reason = DROP_BROKER_UNREACHABLE
             text = (f"{req.host} is brokered and this workload's "
                     f"credential broker did not answer ({exc}). The "
-                    f"request was NOT sent to {req.host}: check the "
-                    f"broker's unit on the host, and check audit.log -- a "
-                    f"missing SELinux rule on this dial presents exactly "
-                    f"like a broker that is down.")
+                    f"request was NOT sent to {req.host}: check that "
+                    f"the broker's unit is running, and that its --listen "
+                    f"is the endpoint this inspector's --broker names.")
         else:
             reason = dial_failure_reason(
                 req.host, insp.policy.internal)
@@ -362,9 +361,9 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
                 f"certificate, this is one of the two ways that arrives -- "
                 f"under TLS 1.3 the demand can land after the handshake "
                 f"succeeded, leaving a reset rather than a named alert -- "
-                f"and it must then be spliced: set tls = \"splice\" for "
-                f"this workload so the guest's own handshake reaches "
-                f"{req.host}.'")
+                f"and it must then be spliced: add {req.host} to the "
+                f"policy's `splice` list, and drop any `policy` entry for "
+                f"it, so the guest's own handshake reaches {req.host}.'")
             return _refuse(client, conn, req, 502, "Bad Gateway")
         if req.expects_continue:
             # AFTER policy, and by us. The natural implementation answers a

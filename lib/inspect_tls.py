@@ -485,14 +485,14 @@ def wrap_guest(conn, leaf, alpn=UPSTREAM_ALPN):
 def _serve_h2(insp, tls_conn, where, host, upstream):
     """Relay one h2 session at the frame level, refusing what is not h2.
 
-    THE POINT OF THE CHECK IS WHAT THE KEY MEANS. Without it
-    An `http2` entry names a byte relay -- no Host binding, no `paths`,
+    THE POINT OF THE CHECK IS WHAT THE KEY MEANS. Without it, an
+    `http2` entry names a byte relay -- no Host binding, no `paths`,
     no `methods`, and nothing establishing that the bytes are h2 at all --
     so a guest reaches a full policy opt-out on any host somebody listed
     for performance. With it the key means what it says: this host speaks
     h2, and the cost is that `:authority` goes unread. That is still a
-    bypass (true fronting stays open here), which is why validation makes
-    it carry a written `reason` and refuses it beside a `policy` entry.
+    bypass (true fronting stays open here), which is why load_policy
+    refuses it beside a `policy` entry.
 
     NOTHING IS DECODED. The preface is checked, frame headers are counted,
     and every byte is passed through unaltered -- stream ids untouched, the

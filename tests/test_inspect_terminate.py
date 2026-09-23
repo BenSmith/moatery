@@ -649,7 +649,7 @@ class TestTheClientCertificateCase(TerminationCase):
         self.assertTrue(response.endswith(b"\r\n\r\nBad Gateway\n"),
                         response)
         self.assertIn("client certificate", out.getvalue())
-        self.assertIn('tls = "splice"', out.getvalue())
+        self.assertIn("`splice` list", out.getvalue())
         self.assertEqual(origin.requests, [],
                          "the request must not reach an origin that will "
                          "refuse the session")
@@ -2048,8 +2048,8 @@ class TestARedialThatCannotBeVerifiedSaysSo(TerminationCase):
         self.assertNotIn(DROP_UNVERIFIED, log)
 
     def test_a_dead_broker_is_named_in_the_journal_not_to_the_guest(self):
-        """The broker sentence names the broker, SELinux and audit.log --
-        three facts about the sandbox. It reached the guest's body once."""
+        """The broker sentence names the broker and its --listen -- facts
+        about the sandbox. It reached the guest's body once."""
         mod = _mod()
         with unittest.mock.patch.object(
                 Policy, "credential_for", return_value="api-key"):
@@ -2059,10 +2059,10 @@ class TestARedialThatCannotBeVerifiedSaysSo(TerminationCase):
                         response)
         self.assertIn(DROP_BROKER_UNREACHABLE, log)
         self.assertIn("credential broker did not answer", log)
-        self.assertIn("audit.log", log)
+        self.assertIn("--listen", log)
 
     def test_a_head_that_never_left_is_named_in_the_journal(self):
-        """The client-certificate sentence names `tls = "splice"`."""
+        """The client-certificate sentence names the `splice` list."""
         mod = _mod()
         up = unittest.mock.Mock()
         up.sock.sendall.side_effect = ConnectionResetError("reset")
@@ -2084,4 +2084,4 @@ class TestARedialThatCannotBeVerifiedSaysSo(TerminationCase):
         self.assertTrue(response.endswith(b"\r\n\r\nBad Gateway\n"),
                         response)
         self.assertIn("was not delivered", out.getvalue())
-        self.assertIn('tls = "splice"', out.getvalue())
+        self.assertIn("`splice` list", out.getvalue())

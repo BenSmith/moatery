@@ -118,13 +118,13 @@ DROP_NOT_H2 = "not HTTP/2"
 # DROP_UNREACHABLE. "The provider is down" and "this workload's credential
 # broker is down" need different operator responses -- the first is somebody
 # else's outage, the second is a unit on this host that failed to start, or
-# a mandatory-access rule missing for the dial, which the relay sees as an
-# OSError and would otherwise count as a dead upstream: a policy gap wearing
-# a network error's clothes. Merged into the generic reason, such a denial
-# is indistinguishable from a provider outage, and a filter on the reason
-# would have nothing that selects it. `upstream unreachable` says "the
-# provider is down, wait"; this says "a unit on this host is not answering,
-# look at the broker's unit and at audit.log".
+# one listening somewhere other than where the inspector dials, which the
+# relay sees as an OSError and would otherwise count as a dead upstream: a
+# configuration fault wearing a network error's clothes. Merged into the
+# generic reason, it is indistinguishable from a provider outage, and a
+# filter on the reason would have nothing that selects it. `upstream
+# unreachable` says "the provider is down, wait"; this says "a unit on this
+# host is not answering, look at the broker's unit and its --listen".
 DROP_BROKER_UNREACHABLE = "credential broker unreachable"
 
 DROP_REASONS = (
