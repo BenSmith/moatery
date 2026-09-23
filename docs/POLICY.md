@@ -107,6 +107,11 @@ brokered request with a 502.
 A brokered host must be terminated and read as HTTP/1.1, so it cannot be
 spliced or in `http2` (next section).
 
+Give a brokered entry `paths`. Without them the guest may call any
+endpoint on the host with the real credential attached, including any
+that echoes a request's headers back in its response, which hands the
+guest the key.
+
 ## Refused at start
 
 Three combinations describe a rule that could never run, and the
@@ -134,8 +139,37 @@ checked once per connection and nothing inside it is seen. It is for a
 client that cannot be given the CA, and `"tls": "splice"` applies it to
 every host.
 
+Nothing inside means the `Host` header too. A spliced name on a shared
+front, such as a CDN that routes by `Host`, reaches every other site behind
+that front: the guest names the allowed host in its handshake and another
+in its request. Splice only names whose servers answer for themselves.
+
 Under `"inspect"` the workload must trust the inspector's CA before it
 first runs; see [DESIGN.md](DESIGN.md), "The same in every shape".
+
+## `http2`
+
+A host in `http2` is terminated, offered h2, and relayed frame by frame
+without decoding. What that gives up, beside `methods` and `paths` (which
+is why a `policy` entry cannot name such a host):
+
+- The `:authority` of each request is not read, so it is not held to the
+  name the session was opened for, as `Host` is on HTTP/1.1 (a mismatch
+  there is answered 421). On a shared front that routes by authority, the
+  guest reaches other sites through the listed name, as it can through a
+  spliced one.
+- The record carries one line for the whole session, not one per request,
+  and the status file's `h2_unrecorded` counts those sessions.
+
+List a host here only if it is trusted as a whole, as with `splice`.
+
+## Upgrades
+
+A request with `Upgrade` (a WebSocket, say) is authorised like any other,
+by its method and path. Once the origin answers `101 Switching Protocols`,
+what flows on the connection is relayed without being read, so an entry's
+`methods` and `paths` bound the upgrade request and nothing after it. An
+upgrade to `h2c` is never forwarded.
 
 ## `internal`
 
