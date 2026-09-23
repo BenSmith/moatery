@@ -1,0 +1,9 @@
+[Unit]
+Description=Rotate the customs request record daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

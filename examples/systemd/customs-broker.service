@@ -1,0 +1,23 @@
+# The credential broker for one workload, as a user unit. Edit the
+# --host, --placeholder and --auth-* flags and the credential line for
+# the provider; `customs-broker --help` lists them all.
+#
+# --caller-uid is %U: in shape 1 the broker's one caller is the inspector,
+# which runs as this user. 127.129.0.1 is an address pasta does not map
+# into the container, so the workload cannot dial it.
+
+[Unit]
+Description=customs credential broker
+
+[Service]
+ExecStart=/usr/libexec/customs/customs-broker --name example \
+    --listen 127.129.0.1:8081 --caller-uid %U \
+    --host api.example.com=example \
+    --placeholder example=sk-placeholder \
+    --auth-header example=Authorization \
+    "--auth-format=example=Bearer {secret}"
+LoadCredentialEncrypted=example:%E/customs/example.cred
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

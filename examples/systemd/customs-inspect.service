@@ -1,0 +1,20 @@
+# The egress inspector, started by customs-inspect.socket on the first
+# connection. It reads the policy once, here; restart it to apply an
+# edit. It refuses to start without the CA under %S/customs/ca
+# (examples/README.md mints it).
+
+[Unit]
+Description=customs egress inspector
+Requires=customs-inspect.socket
+Wants=customs-broker.service
+After=customs-broker.service
+
+[Service]
+ExecStart=/usr/libexec/customs/customs-inspect --name example \
+    --policy %E/customs/policy.json \
+    --state-dir %S/customs \
+    --status %S/customs/status.json \
+    --record %L/customs/requests.log \
+    --broker 127.129.0.1:8081
+StateDirectory=customs
+LogsDirectory=customs

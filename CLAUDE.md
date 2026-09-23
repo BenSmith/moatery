@@ -5,8 +5,11 @@
 `customs` is the egress inspector + credential broker pair for sandboxed
 workloads, to be lifted out of workloadctl into its own project. Read
 `README.md`, then `docs/DESIGN.md` (how the pair applies to a rootless
-container, a pod sidecar, a VM, and cosy) and `docs/EXTRACTION.md` (which
-modules lift, which stay, and the copy-vs-dependency decision).
+container, a pod sidecar, a VM, and cosy), `docs/POLICY.md` (the policy
+document) and `docs/EXTRACTION.md` (which modules lift, which stay, and
+the copy-vs-dependency decision). `examples/` holds shape-1 user units
+and a logrotate configuration, installed to `/usr/libexec/customs/` and
+run end to end on the proving host.
 
 ## Where the code came from
 
@@ -84,7 +87,7 @@ It is customs-only and has no workloadctl counterpart.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 579)
+just test     # all unit tests (unittest discover; 581)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user

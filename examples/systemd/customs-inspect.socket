@@ -1,0 +1,13 @@
+# The inspector's two listeners. They are bound here, by systemd, and
+# handed to the inspector; it never binds a socket itself. The ports are
+# fixed: the inspector treats 8443 as TLS and 8080 as cleartext.
+
+[Unit]
+Description=customs egress inspector listeners
+
+[Socket]
+ListenStream=127.0.0.1:8443
+ListenStream=127.0.0.1:8080
+
+[Install]
+WantedBy=sockets.target
