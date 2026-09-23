@@ -104,17 +104,16 @@ def request_framing(path, headers):
     raw = declared[0] if declared else None
     if raw is None or raw.strip() == "":
         return 0, None
-    try:
-        length = int(raw)
-    except ValueError:
+    raw = raw.strip(" \t")
+    # ASCII digits and nothing else, which is RFC 9110 §8.6's grammar. int()
+    # is wider: it takes a sign, `1_000` and non-ASCII digits, each a
+    # spelling a parser elsewhere on the path reads as another number or
+    # none. A sign is the worst of them: rfile.read(-1) reads to EOF, so
+    # the handler would block until the caller chose to close.
+    if not (raw.isascii() and raw.isdigit()):
         return 0, (400, "bad-content-length",
                    "Content-Length is not a number\n")
-    if length < 0:
-        # int("-1") is not a size. Unchecked, it reaches rfile.read(-1),
-        # which reads to EOF -- so the handler blocks until the caller
-        # chooses to close, holding a slot for as long as it likes.
-        return 0, (400, "bad-content-length",
-                   "Content-Length is negative\n")
+    length = int(raw)
     if length > MAX_REQUEST_BYTES:
         return length, (413, "body-too-large", "request body too large\n")
     return length, None
