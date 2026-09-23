@@ -62,7 +62,7 @@ container's environment, and one real request that reaches the provider
 carrying the sealed key.
 
 ```bash
-python3 tests/manual/shape1_rig.py                  # 16 rows
+python3 tests/manual/shape1_rig.py                  # every row green
 python3 tests/manual/shape1_rig.py --without-rules  # must go red
 ```
 
@@ -97,18 +97,19 @@ the shape-1 recipe as `DESIGN.md` had it, which is now corrected:
   `--network pasta:--map-host-loopback=169.254.1.3`, a dedicated address.
 - the container's resolver is pasta's forwarder (`169.254.1.1`), not the
   gateway; the DNS rule names that address.
-- the policy's TLS mode is `"inspect"`, not `"terminate"`. The loader does
-  not validate the value, so the misspelling would have started a listener
-  that refuses every terminated handshake for want of a minter.
+- the policy's TLS mode is `"inspect"`, not `"terminate"`. The loader did
+  not then validate the value, so the misspelling would have started a
+  listener that refuses every terminated handshake for want of a minter.
+  It refuses an unknown mode at start now.
 - the inspector recognises exactly ports 8080 and 8443 as its planes, so
   "each container gets its own inspector port" is not something the
   program supports today: one inspected container per host loopback.
 
 And two facts for the packaging step: the entrypoints find `lib/` by
 `sys.path` only, so a checkout needs `PYTHONPATH` in the unit (an install
-puts them side by side); and nothing here mints the CA — under workloadctl
-`workload-vm-inspect up` does — so the operator does, with
-`egress_ca.ca_openssl_argv`, before the socket is first activated.
+puts them side by side); and nothing minted the CA, so the operator had
+to, before the socket was first activated. `customs-mint-ca` is that
+step now.
 
 `SO_ORIGINAL_DST` on a host socket whose DNAT happened a namespace away
 falls back to `getsockname()` cleanly: `caller_unresolved` is 0 and the
@@ -124,7 +125,7 @@ the sidecar's own `/run`, the key as a podman secret, and one real request
 that reaches the provider carrying it.
 
 ```bash
-python3 tests/manual/shape1b_rig.py                  # 18 rows; builds the image
+python3 tests/manual/shape1b_rig.py                  # builds the image first
 python3 tests/manual/shape1b_rig.py --without-rules  # must go red
 python3 tests/manual/shape1b_rig.py --no-build       # reuse the last image
 ```

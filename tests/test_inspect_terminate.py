@@ -1,9 +1,9 @@
-"""workload-inspect-listener: the terminated TLS plane (rung 3 T5, T6).
+"""customs-inspect: the terminated TLS plane.
 
-Rung 2's plane spliced: it read a name and replayed the guest's own bytes. This
-one TERMINATES -- the listener completes the guest's handshake with a leaf its
-own CA signed, opens a separately verified session to the origin, and authorises
-every request inside.
+A spliced connection reads a name and replays the guest's own bytes. This
+plane TERMINATES -- the listener completes the guest's handshake with a leaf
+its own CA signed, opens a separately verified session to the origin, and
+authorises every request inside.
 
 WHY THESE TESTS ARE END TO END AND NOT ARGV ASSERTIONS
 
@@ -260,7 +260,7 @@ class TerminationCase(unittest.TestCase):
     def _listener(self, mod, origin, *, hosts=("localhost",), trust=True,
                   minter=None, http2=(), entries=()):
         out = io.StringIO()
-        # `entries` is [[vm.network.policy]] as (host, methods, paths) triples.
+        # `entries` is the `policy` list as (host, methods, paths) triples.
         policy = Policy(
             tls="inspect", hosts=tuple(hosts), http2=tuple(http2),
             policy=tuple(VmPolicyEntry(host=h, methods=m, paths=pa)
@@ -700,7 +700,7 @@ class TestTheHostHeaderIsPinnedToTheServerName(TerminationCase):
         self.assertEqual(origin.requests, [])
         # The ALLOWLISTED half: `other.example` is on this workload's list, so
         # the mismatch is a client reusing a session across two names it was
-        # given, not a guest reaching for one it was not. See T7.
+        # given, not a guest reaching for one it was not.
         status = listener.status()
         self.assertEqual(
             status["drop_reasons"][
@@ -713,10 +713,11 @@ class TestTheHostHeaderIsPinnedToTheServerName(TerminationCase):
             {"other.example": 1})
 
     def test_a_name_on_no_list_inside_the_session_is_the_other_figure(self):
-        """Rung 4 T7. Same refusal, same 421, different figure.
+        """Same refusal, same 421, different figure.
 
-        This is the attack §4's binding exists to close -- a guest reusing a
-        session it was granted to reach a name it never was -- and an operator
+        This is the attack the name binding exists to close -- a guest
+        reusing a session it was granted to reach a name it never was -- and
+        an operator
         reading a merged count could not tell it from the coalescing client
         above. `admits` decides which figure and nothing else: the request is
         refused either way, and it is refused BEFORE the allowlist check, so
@@ -747,8 +748,8 @@ class TestTheHostHeaderIsPinnedToTheServerName(TerminationCase):
         self.assertNotIn("(allowlisted)", out.getvalue())
 
     def test_neither_binding_figure_is_a_policy_denial(self):
-        """Rung 4 T7. `not allowlisted` and `not permitted by policy` stay at
-        zero through both, or the figure §4 asks to be read at a glance is
+        """`not allowlisted` and `not permitted by policy` stay at zero
+        through both, or the binding figure, meant to be read at a glance, is
         being read out of a bucket three different decisions land in."""
         mod = _mod()
         origin = _Origin(self.origin_pem)
@@ -765,7 +766,7 @@ class TestTheHostHeaderIsPinnedToTheServerName(TerminationCase):
 
     def test_a_trailing_root_dot_is_the_same_name(self):
         """`localhost.` and `localhost` are one name, and a naive comparison
-        rejects a legitimate request. §4's normalisation, as a fixture."""
+        rejects a legitimate request. Name normalisation, as a fixture."""
         mod = _mod()
         origin = _Origin(self.origin_pem)
         self.addCleanup(origin.close)
@@ -813,7 +814,7 @@ class TestTheHostHeaderIsPinnedToTheServerName(TerminationCase):
         self.assertEqual(len(origin.requests), 1)
 
     def test_a_denied_host_mid_connection_leaves_its_neighbours_alone(self):
-        """Rung 4 T7, §7.3. Three requests on ONE session: good, bound out,
+        """Three requests on ONE session: good, bound out,
         good. The 421 is the middle one's alone -- pinning to the first Host
         or tearing the connection down would either send a later request to an
         upstream it never authorised or lose one that was authorised.
@@ -910,9 +911,9 @@ class TestUpgradesAreRelayedAfterThePolicyCheck(TerminationCase):
         self.assertIn(b"Connection: upgrade", upstream)
 
     def test_a_policy_entry_decides_which_endpoint_may_be_upgraded(self):
-        """Rung 4 T8, §8. `Upgrade:` is an ordinary HTTP request -- method,
-        path and Host are all plain text -- so `paths` still decides WHICH
-        endpoint may be upgraded, which §8 calls most of its value.
+        """`Upgrade:` is an ordinary HTTP request -- method, path and Host are
+        all plain text -- so `paths` still decides WHICH endpoint may be
+        upgraded, which is most of its value.
 
         The origin is the same one that answers 101 to anything, so a listener
         that let the request through would produce a 101 here. It never sees
@@ -1054,7 +1055,7 @@ class TestARedirectOffTheAllowlistIsNamedWhereBothNamesAreKnown(
         self.assertEqual(redirect_target("https://cdn.elsewhere:8443/x")[0],
                          "cdn.elsewhere")
 
-    # --- rung 4 T8: the target its own policy entry will refuse ---
+    # --- the target its own policy entry will refuse ---
 
     def _policy_listener(self, mod, origin, methods=None, paths=("/ok/*",)):
         return self._listener(
@@ -1062,7 +1063,7 @@ class TestARedirectOffTheAllowlistIsNamedWhereBothNamesAreKnown(
             entries=(("other.example", methods, paths),))
 
     def test_a_target_its_policy_entry_refuses_names_both_hosts(self):
-        """The half rung 3 could not have. The target IS allowlisted, so the
+        """The other half. The target IS allowlisted, so the
         `not allowlisted` note stays silent, and the guest's next connection
         ends in a 403 naming a host and a path with nothing tying either back
         to the site that sent it there."""
@@ -1299,7 +1300,7 @@ class TestWhatCountsAsTheStartOfARequest(unittest.TestCase):
         """`PRI * HTTP/2.0` IS a request line; what it is not is one this
         listener speaks ON THIS PATH. It gets the parser's 400, not a close.
         The preface-and-frame check that reads it properly is reached only for
-        a host in [[vm.network.http2]]; a host that is not in that list and
+        a host in the `http2` list; a host that is not in that list and
         opens with the preface anyway is a client ignoring the ALPN, and it is
         answered rather than closed."""
         self.check(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", True)
@@ -1316,8 +1317,8 @@ class TestWhatCountsAsTheStartOfARequest(unittest.TestCase):
 
 @unittest.skipUnless(_have_openssl(), "openssl is not installed")
 class TestNonHttpInsideATerminatedSessionIsClosed(TerminationCase):
-    """Rung 3 T6. Before termination these bytes were spliced and neither end
-    noticed; now this listener is the one reading them."""
+    """Spliced, these bytes pass and neither end notices; terminated, this
+    listener is the one reading them."""
 
     NOT_HTTP = bytes(range(32)) + b"\x00" * 8
 
@@ -1345,10 +1346,10 @@ class TestNonHttpInsideATerminatedSessionIsClosed(TerminationCase):
         self.assertEqual(reasons[DROP_TIMED_OUT], 0)
 
     def test_the_remedy_it_names_is_the_PER_HOST_key(self):
-        """Rung 4 tier 6. Rung 3 could only say `tls = "splice"`, which gives
-        up inspection for every OTHER name on the workload to fix one host.
-        [[vm.network.splice]] exists now, and the line has to name it -- an
-        operator does what the log tells them, so a line naming the wrong hatch
+        """`"tls": "splice"` gives up inspection for every OTHER name on the
+        workload to fix one host. The `splice` list fixes the one, and the
+        line has to name it -- an operator does what the log tells them, so a
+        line naming the wrong hatch
         is how a workload ends up spliced whole."""
         origin = _Origin(self.origin_pem)
         self.addCleanup(origin.close)
@@ -1406,18 +1407,18 @@ class TestNonHttpInsideATerminatedSessionIsClosed(TerminationCase):
 
 @unittest.skipUnless(_have_openssl(), "openssl is not installed")
 class TestTheNonHttpRefusalIsSplitByPolicy(TerminationCase):
-    """Rung 4 tier 6. The same wire failure, two figures, because the two have
+    """The same wire failure, two figures, because the two have
     different remedies -- and the second remedy includes a DELETION the first
     does not.
 
-    A host with no policy entry needs one line: put it in
-    [[vm.network.splice]]. A host with a policy entry needs that line AND the
-    entry removed, because `validate` refuses a host that is in both. Merged
+    A host with no policy entry needs one line: put it in the `splice` list.
+    A host with a policy entry needs that line AND the entry removed,
+    because load_policy refuses a host that is in both. Merged
     into one count an operator can see that something needs splicing but not
     that some of their method and path rules never ran, and nothing at startup
     could have told them -- whether a host speaks HTTP is not knowable from the
-    file, which is why §8 made this a runtime report rather than a validation
-    rule.
+    file, which is why this is a runtime report rather than a refusal at
+    start.
     """
 
     NOT_HTTP = bytes(range(32)) + b"\x00" * 8
@@ -1453,7 +1454,8 @@ class TestTheNonHttpRefusalIsSplitByPolicy(TerminationCase):
         """The split is asked of the policy's matcher, not of a literal host
         string. An entry written `*.example` governs `api.example`, and a check
         comparing names would put that host in the wrong bucket -- the same
-        defect §3's widening trap is about, one plane along."""
+        defect the composition rule's widening trap is about, one plane
+        along."""
         origin = _Origin(self.origin_pem)
         self.addCleanup(origin.close)
         mod = _mod()
@@ -1530,7 +1532,7 @@ class TestTheNonHttpRefusalIsSplitByPolicy(TerminationCase):
 
 @unittest.skipUnless(_have_openssl(), "openssl is not installed")
 class TestAnHttp2HostIsRelayedAtFrameLevel(TerminationCase):
-    """Rung 4 T4/T5. [[vm.network.http2]], end to end through a real handshake.
+    """The `http2` list, end to end through a real handshake.
 
     THIS IS THE TEST THE UNIT ONES CANNOT REPLACE. Every part of this feature
     can be individually green while the seam is inert: the ALPN swap chooses a
@@ -1719,7 +1721,7 @@ class TestAnHttp2HostIsRelayedAtFrameLevel(TerminationCase):
         the weaker thing it is. What actually binds `http2` to h2 is the
         preface and the opening SETTINGS, both of which are checked before a
         byte moves. Closing this residual means decoding frames properly,
-        which is §16's HPACK work.
+        which is HPACK work.
         """
         mod = _mod()
         origin = self._h2_origin(follow=True)
@@ -1787,7 +1789,7 @@ class TestAnHttp2HostIsRelayedAtFrameLevel(TerminationCase):
         itself: ALPN_H2 says at length that a server speaking only HTTP/1.1
         COMPLETES this handshake and selects nothing, with no alert. So the
         fixture is not exotic -- it is the ordinary web server somebody added
-        to [[vm.network.http2]] by mistake.
+        to the `http2` list by mistake.
         """
         origin = _Origin(self.origin_pem, alpn=("http/1.1",))
         self.addCleanup(origin.close)
@@ -1880,7 +1882,7 @@ class TestAnHttp2HostIsRelayedAtFrameLevel(TerminationCase):
 
 
 class TestWhatTheStatusFileCarriesFromARealExchange(TerminationCase):
-    """Rung 3 T8, through the seam rather than over the counters. A figure that
+    """Through the seam rather than over the counters. A figure that
     is only ever moved by a test calling record_drop is a figure nothing on the
     live path is known to move."""
 
@@ -1895,8 +1897,9 @@ class TestWhatTheStatusFileCarriesFromARealExchange(TerminationCase):
                          {self.HOST: 1})
 
     def test_the_ca_an_operator_must_install_is_in_the_status(self):
-        """Rung 5 compares this against the anchor in the guest. Nothing else
-        produces the value -- this process is what mints with it."""
+        """An operator compares this against the anchor in the guest.
+        Nothing else produces the value -- this process is what mints with
+        it."""
         origin = _Origin(self.origin_pem)
         self.addCleanup(origin.close)
         mod = _mod()
@@ -2033,7 +2036,7 @@ class TestARedialThatCannotBeVerifiedSaysSo(TerminationCase):
         The reason is `internal destination` rather than `upstream
         unreachable`, and that is _dial_failure_reason being right: the host
         here is `localhost`, which resolves into loopback, and a name resolving
-        into private space with no [[vm.network.internal]] entry is a config an
+        into private space with no `internal` entry is a config an
         operator is one line from fixing. Asserted as the specific string rather
         than "not the TLS one", or the test would still pass if the split
         collapsed back into a single arm.

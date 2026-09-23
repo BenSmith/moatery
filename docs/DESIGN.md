@@ -340,11 +340,11 @@ is strictly simpler. In either sidecar variant the CA private key lives
 in the pod; a workload-container escape is a host escape, so this is not
 a new exposure, but it is worth saying.
 
-Proved by `tests/manual/shape1b_rig.py`: 18 rows, red without the
-rules. The probe that is new here: from the workload, the broker's
-socket path is ENOENT -- not ECONNREFUSED, which would mean the path
-exists and the mount is shared -- and nothing but the two planes listens
-on TCP in the pod.
+Proved by `tests/manual/shape1b_rig.py`, red without the rules. The
+probe that is new here: from the workload, the broker's socket path is
+ENOENT -- not ECONNREFUSED, which would mean the path exists and the
+mount is shared -- and nothing but the two planes listens on TCP in the
+pod.
 
 ## Shape 2: a VM
 

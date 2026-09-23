@@ -337,8 +337,8 @@ class TestIdentifyRefusals(unittest.TestCase):
     namespace cannot map -- because both make every caller look alike, which is
     the failure the port exists to remove.
 
-    The flag is gone (ADR 007 decision 6: an instance serves one workload and
-    its config is generated from that workload's own TOML), so the distinction
+    The flag is gone (an instance serves one workload, whose uid it is
+    told on its command line), so the distinction
     those tests drew has collapsed into "every unlisted caller is refused". They
     are kept, with the labels asserted, because the labels are what a log reader
     uses to tell the three refusals apart -- and "unidentified" logged for all

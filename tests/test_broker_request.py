@@ -431,8 +431,8 @@ class TestTheBodyBudgetIsShared(BrokerServerCase):
     A request body is buffered whole before it is forwarded. MAX_REQUEST_BYTES
     bounds one of them and MAX_PER_CALLER bounds one caller's connections, so
     every individual request stays legal while the sum does not: 32 connections
-    each sending 64 MiB reserved 2 GiB. On a hypervisor that is memory the VMs
-    are using.
+    each sending 64 MiB reserved 2 GiB. On a host that is memory the
+    workloads are using.
     """
 
     def test_a_request_past_the_shared_budget_is_refused(self):
@@ -755,7 +755,7 @@ class TestEveryApiMethodIsRelayed(BrokerServerCase):
 
 
 class TestTheHostSelectsTheCredential(BrokerServerCase):
-    """ADR 007 decision 3, at the request boundary rather than at config load.
+    """Keyed by Host, at the request boundary rather than at startup.
 
     The key is (workload, Host). What has to hold is that the header SELECTS a
     row and supplies nothing else: an unlisted Host gets no credential at all
@@ -831,7 +831,7 @@ class TestTheHostSelectsTheCredential(BrokerServerCase):
         self.assertEqual(self.seen, [])
 
     def test_a_body_claiming_another_destination_changes_nothing(self):
-        """§14's assertion shape. The profile is resolved from this instance's
+        """The profile is resolved from this instance's
         own table; the only thing the caller contributes is which row."""
         sock = self.connect()
         payload = b'{"host":"api.github.com"}'

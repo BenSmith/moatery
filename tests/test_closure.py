@@ -2,9 +2,7 @@
 """lib/ is exactly the two programs' import closures, and nothing in it
 knows what a workload is.
 
-In workloadctl the pair sat beside the generator that renders their policy
-document and their command lines, and two closure tests held the line
-between the two sides. Here there is no other side: every module in lib/
+There is no other side here to hold a line against: every module in lib/
 must be reachable from customs-broker or customs-inspect, and neither
 closure may reach anything but lib/ and the standard library. The
 workload-side property survives as absences -- no TOML reader, no passwd

@@ -253,7 +253,7 @@ class TestExplicitTimeout(unittest.TestCase):
 class TestCeiling(unittest.TestCase):
     """Above the ceiling a connection is refused, not queued.
 
-    §7.7.1: an unbounded accept queue turns a guest's connection storm into
+    An unbounded accept queue turns a guest's connection storm into
     memory growth; a refused connection is a fast, countable failure. The
     rejection path runs synchronously in the accept loop, so these drive
     _handle directly and read the log without a thread race.
@@ -448,7 +448,7 @@ class TestListenerSource(unittest.TestCase):
             self.assertNotIn("8443", source)
 
 
-# --- rung 2: the TLS plane ---
+# --- the TLS plane ---
 
 
 def _hello_bytes(extensions=b"", *, server_name="example.com"):
@@ -652,8 +652,8 @@ class TestPolicyLoading(unittest.TestCase):
 
     def test_the_minter_is_built_on_the_state_dir_it_was_handed(self):
         """build_minter derives nothing from the name. The state directory
-        is an argument, so a unit that keeps its CA somewhere workloadctl
-        would not is a `--state-dir`, not a patch."""
+        is an argument, so a unit that keeps its CA somewhere unusual is a
+        `--state-dir`, not a patch."""
         state = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, state)
         for path in (os.path.join(state, "ca.crt"),
@@ -680,7 +680,7 @@ class TestPolicyLoading(unittest.TestCase):
         self.assertEqual(set(built), {"name", "state_dir"}, built)
 
     def test_the_document_carries_the_internal_list_through(self):
-        """The listener's copy of [[vm.network.internal]] authorises nothing --
+        """The listener's copy of `internal` authorises nothing --
         it is what tells a wildcard-trap refusal apart from a host that is
         simply down. Dropped on load, every internal-destination refusal is
         misfiled as 'upstream unreachable' and the counter that exists to name
@@ -1316,7 +1316,7 @@ class TestTlsPlane(unittest.TestCase):
         self.assertEqual(dial.call_args.args[0], ("example.com", 443))
 
     def test_the_upstream_is_dialled_by_name_not_by_address(self):
-        """§7.4. The address the guest aimed at is this inspector's own
+        """The address the guest aimed at is this inspector's own
         listener -- the redirect already rewrote it -- so resolving the
         authorised name here is what makes the destination the one the policy
         named rather than one the guest chose."""
@@ -1345,7 +1345,7 @@ class TestTlsPlane(unittest.TestCase):
 
 
 class TestPerHostSplice(unittest.TestCase):
-    """[[vm.network.splice]] -- HLD §11 hatch 2, on a terminating listener.
+    """The `splice` list, on a terminating listener.
 
     The key exists before the messages that name it: every non-HTTP refusal
     this rung writes tells the operator to splice the host, and a remedy
@@ -1487,13 +1487,12 @@ class TestPerHostSplice(unittest.TestCase):
 
 
 class TestHttp2Framing(unittest.TestCase):
-    """The check that makes [[vm.network.http2]] mean SPEAKS H2, not EXEMPT.
+    """The check that makes an `http2` entry mean SPEAKS H2, not EXEMPT.
 
     Without it a listed host is a byte relay -- no Host binding, no `paths`, no
     `methods`, and nothing establishing the bytes are h2 -- so a guest reaches
     a full policy opt-out on any host somebody added for performance, by
-    writing different first bytes. That is the shape HLD §8 reversed itself to
-    remove, surviving one key along.
+    writing different first bytes -- a policy opt-out by another name.
     """
 
     @staticmethod
@@ -1590,7 +1589,7 @@ class TestHttp2Framing(unittest.TestCase):
 class TestHttp2AlpnSelection(unittest.TestCase):
     """Which protocol each leg offers, chosen from configuration alone.
 
-    §6 requires the upstream leg up BEFORE a leaf is minted, so nothing here
+    The upstream leg is up BEFORE a leaf is minted, so nothing here
     can sniff the guest and then speak what came back. And the offer BINDS
     NOBODY -- a server offering http/1.1 alone facing a client offering h2
     alone completes the handshake with no protocol negotiated and no alert -- so
@@ -1812,7 +1811,7 @@ def _read_all(sock):
 
 
 class TestPolicyGovernsIsAskedWhereThereIsNoRequest(unittest.TestCase):
-    """Rung 4 tier 6. `governs` is not `permits` with the arguments left off.
+    """`governs` is not `permits` with the arguments left off.
 
     `permits` answers "was this request allowed"; `governs` is asked about a
     connection that never carried a request at all, and answers the operator's
@@ -1891,7 +1890,7 @@ class TestARefusalSaysNothingOfTheInspector(_CleartextRig):
 
 
 class TestPolicyEnforcement(_CleartextRig):
-    """[[vm.network.policy]] applied to a real request, over real sockets.
+    """`policy` entries applied to a real request, over real sockets.
 
     The cleartext plane because it is the same request loop the terminated
     plane runs -- `_serve_one_request` is shared -- and it can be driven
@@ -1957,7 +1956,7 @@ class TestPolicyEnforcement(_CleartextRig):
                 self.assertNotIn(leak, body)
 
     def test_a_policy_host_is_reachable_without_appearing_in_hosts(self):
-        """§3: a name in `policy` need not also appear in `hosts`. A listener
+        """A name in `policy` need not also appear in `hosts`. A listener
         that admitted on `hosts` alone would refuse every host of a workload
         whose entire allowlist is written as policy entries -- and report it as
         `not allowlisted` for a name the file plainly carries."""
@@ -2003,7 +2002,7 @@ class TestPolicyEnforcement(_CleartextRig):
         self.assertEqual(len(dialled), 1)
 
     def test_the_path_matched_is_the_NORMALISED_one(self):
-        """Rung 3 landed normalisation ahead of the matcher precisely for this:
+        """Normalisation runs ahead of the matcher precisely for this:
         `/v2/../admin` matches `/v2/*` as written and resolves at the origin to
         `/admin`."""
         log, sent, dialled = self._run(
@@ -3375,7 +3374,7 @@ class TestCounters(unittest.TestCase):
         self.assertEqual(listener.status()["dispositions"]["spliced"], 1)
 
     def test_every_per_host_reason_has_its_own_map(self):
-        """Rung 3 T8. Each of these is a refusal an operator acts on by NAME --
+        """Each of these is a refusal an operator acts on by NAME --
         an entry to add, a root to install, a workload to splice -- so the
         figure has to say which host, not only how many."""
         mod, listener, _ = self._listener()
@@ -3398,7 +3397,7 @@ class TestCounters(unittest.TestCase):
                          listener.status()["per_host"])
 
     def test_the_allowlisted_half_of_the_binding_rejection_is_named(self):
-        """Rung 4 T7. The key space is this workload's own file, so unlike the
+        """The key space is this workload's own file, so unlike the
         un-allowlisted half there is no unbounded set of guest-chosen names --
         and WHICH pair of names a client is coalescing is the whole question."""
         mod, listener, _ = self._listener()
@@ -3410,9 +3409,10 @@ class TestCounters(unittest.TestCase):
             {"other.example": 1})
 
     def test_the_two_binding_rejections_are_two_figures(self):
-        """Rung 4 T7. A non-zero binding count is either an attack or a broken
-        assumption in §4, and one bucket cannot say which. Both are counted,
-        both under their own reason, and neither lands on a policy figure."""
+        """A non-zero binding count is either an attack or a broken
+        assumption about coalescing, and one bucket cannot say which. Both
+        are counted, both under their own reason, and neither lands on a
+        policy figure."""
         mod, listener, _ = self._listener()
         listener.inspection.counters.record_drop(DROP_MISDIRECTED, "evil.example")
         listener.inspection.counters.record_drop(DROP_MISDIRECTED_LISTED,
@@ -3584,12 +3584,11 @@ class TestStatusFile(unittest.TestCase):
 
 
 class TestTargetNormalisation(unittest.TestCase):
-    """Rung 3 T7. The table, and the encoded-separator cases it exists for.
+    """The table, and the encoded-separator cases it exists for.
 
-    Nothing here changes a disposition -- there is no `paths` key until rung 4.
-    What it fixes is the string: the one this listener acts on and the one the
-    origin acts on have to be the same string BEFORE a matcher is written
-    against either.
+    Nothing here asserts a disposition. What it fixes is the string: the one
+    this listener acts on and the one the origin acts on have to be the same
+    string BEFORE a matcher is written against either.
     """
 
     def norm(self, target):
@@ -3722,7 +3721,7 @@ class TestCallerIdentity(unittest.TestCase):
     into the workload's egress records, so the records described traffic the
     workload never sent.
 
-    The identification is `lib/peer_identity.py` (shared with agent-broker),
+    The identification is `lib/peer_identity.py` (shared with the broker),
     which reads /proc/net rather than using SO_PEERCRED -- that is AF_UNIX-only
     and yields nothing on a listener bound to an address.
     """

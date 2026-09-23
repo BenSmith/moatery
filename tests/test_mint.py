@@ -1,4 +1,4 @@
-"""Leaf minting, the two caches, and the token bucket (rung 3 T4).
+"""Leaf minting, the two caches, and the token bucket.
 
 The certificates here are REAL -- minted by the same openssl argv the listener
 will run -- and the assertions read them back rather than reading the argv. An
@@ -185,10 +185,10 @@ class TestTheMintedLeaf(unittest.TestCase):
                                egress_ca.LEAF_VALIDITY_DAYS, delta=1)
 
     def test_a_real_client_completes_a_real_handshake_against_it(self):
-        """The proof the rung actually needs, and the only one that counts.
+        """The proof that actually counts.
 
-        T1 could show a Python client PARSING the CA as an anchor, which is not
-        verification -- load_verify_locations reads a file and says nothing
+        A test can show a Python client PARSING the CA as an anchor, which is
+        not verification -- load_verify_locations reads a file and says nothing
         about a chain. This is the deferred half: a genuine TLS session, the CA
         as the only anchor, the hostname checked. It is what caught the
         critical-SAN requirement.
@@ -556,8 +556,9 @@ class TestTheTwoCachesCannotEvictEachOther(_MinterCase):
 
 
 class TestOverflowDiffersByDisposition(_MinterCase):
-    """The part of T4 most worth getting right -- and the part where the design
-    deliberately accepts, as an overflow, the behaviour it rejects as a default."""
+    """The part of minting most worth getting right -- and the part where the
+    design deliberately accepts, as an overflow, the behaviour it rejects as
+    a default."""
 
     def test_a_denial_does_not_wait_on_an_empty_bucket(self):
         slept = []
@@ -664,8 +665,8 @@ class TestTheMinterKnowsNothingAboutTheGuest(unittest.TestCase):
 
 
 class TestWhatTheMinterReports(_MinterCase):
-    """Rung 3 T8. The figures exist here because this is where the events are;
-    rendering them is a later rung's work over numbers that by then exist."""
+    """The figures exist here because this is where the events are; reading
+    them is whatever reports on the status file."""
 
     def test_the_denial_figures_are_subsets_of_the_totals(self):
         """The split is the signal: legitimate traffic mints a few working-set

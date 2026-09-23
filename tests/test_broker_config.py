@@ -36,7 +36,7 @@ def refused(fn, *args, **kwargs):
 
 
 class TestTheListenAddressIsNotDefaulted(unittest.TestCase):
-    """ADR 007's "first detail that will bite".
+    """The first detail that will bite: the listen address.
 
     An instance must bind the address derived for ITS workload. A default of
     127.0.0.1 puts one workload's broker where every other workload's inspector
@@ -132,7 +132,7 @@ class TestProfiles(unittest.TestCase):
         self.assertEqual(profile.name, "agent/api.example.com")
 
     def test_the_table_is_keyed_by_host(self):
-        """ADR 007 decision 3. The key that makes one workload able to hold
+        """Keyed by Host: the key that makes one workload able to hold
         several credentials, and the reason a Host cannot be a default."""
         profiles = build(["api.example.com=anthropic-key",
                           "api.github.com=github-token"])
@@ -152,7 +152,7 @@ class TestProfiles(unittest.TestCase):
     def test_the_upstream_is_the_host_and_nothing_else(self):
         """`upstream` was a key and could carry a port and, once, a path.
         A base path was prepended to every forwarded request, which
-        rewrites the very path [[vm.network.policy]].paths admitted: a
+        rewrites the very path a `policy` entry's `paths` admitted: a
         guest's /repos/myorg/x, checked against that pattern, would leave
         as /v1/repos/myorg/x. There is no flag for it now: the profile's
         host IS the Host and its port is the one https port."""
