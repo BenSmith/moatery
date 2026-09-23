@@ -215,6 +215,7 @@ def build_profiles(name, hosts, placeholders=(), auth_headers=(),
 
     Returns {host: Profile}, the host through normalise_host.
     """
+    from_env = load is None and not os.environ.get("CREDENTIALS_DIRECTORY")
     load = load or load_credential
     if not hosts:
         raise BrokerConfigError(
@@ -285,6 +286,19 @@ def build_profiles(name, hosts, placeholders=(), auth_headers=(),
             auth_value=auth_value,
         )
 
+    # ONE VARIABLE IS ONE KEY. CUSTOMS_BROKER_SECRET answers every
+    # credential id with the same value, so two ids under it would send
+    # one provider's key to the other provider's host -- attached by this
+    # broker, over verified TLS, to a party that was never meant to hold
+    # it. The fallback is for one credential or none.
+    if from_env and len(secrets) > 1:
+        raise BrokerConfigError(
+            f"--host names {len(secrets)} credentials "
+            f"({', '.join(sorted(secrets))}) and $CREDENTIALS_DIRECTORY is "
+            f"not set: CUSTOMS_BROKER_SECRET is one value, and every one of "
+            f"them would be sent that value. Run under systemd with "
+            f"LoadCredentialEncrypted=, or name one credential")
+
     # A credential described but never selected is refused rather than
     # ignored: the description that went unapplied may have been meant for
     # a host spelled wrong on another flag.
@@ -305,7 +319,8 @@ def load_credential(name):
     systemd puts LoadCredentialEncrypted= material on a tmpfs at 0400 owned by
     the service user, which is why the broker never needs to read a file the
     rest of the host can see. Falls back to an env var only to keep local
-    development possible.
+    development possible, and then for one credential id: build_profiles
+    refuses a second, which would be sent the same value.
     """
     creds_dir = os.environ.get("CREDENTIALS_DIRECTORY")
     if creds_dir:
