@@ -80,8 +80,9 @@ Version 0.1.0, not yet released. Both programs have run end to end as
 part of a larger host manager, and on their own on a real host in two
 shapes: a rootless container (`tests/manual/shape1_rig.py`) and a
 sidecar in a pod (`tests/manual/shape1b_rig.py`). The VM and cosy shapes
-are designed, not proved. `just test` runs the unit tests; `just lint`
-runs ruff.
+are designed, not proved. DNS is not yet controlled: a workload can
+still exfiltrate through its resolver ([DESIGN.md](docs/DESIGN.md), "DNS").
+`just test` runs the unit tests; `just lint` runs ruff.
 
 ## Licence
 

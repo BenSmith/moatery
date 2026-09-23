@@ -72,8 +72,9 @@ off (`--no-map-gw`) and so has to be asked for:
   loopback. A second needs the planes to become a flag, or a second
   loopback address the socket unit binds and pasta maps.
 - DNS goes to pasta's forwarder (`169.254.1.1`, its `--dns-forward`),
-  which asks the host's resolver. No synthesising responder is needed:
-  the redirect keys on the port and the match is on SNI.
+  which asks the host's resolver. Routing needs nothing more: the
+  redirect keys on the port and the match is on SNI. What that leaves
+  open is under "DNS" below.
 
 `--network host` and `--network none` are out of scope: the first
 leaves no namespace to hold the rules, the second no egress to inspect.
@@ -126,6 +127,30 @@ accept line above), so that when a dial into private space fails the
 inspector can report `internal destination` -- a name with no accept
 line, one edit from working -- rather than `upstream unreachable`. With no
 rule loaded that dial succeeds, and the list only changes the report.
+
+## DNS: an open channel, not yet closed
+
+The allowlist governs HTTP and HTTPS destinations. It does not govern
+DNS. Both recipes below accept port 53 to pasta's forwarder, and the
+forwarder asks the host's resolver on the workload's behalf, so the
+workload can put arbitrary data in query names and read arbitrary data
+back in answers. That is an exfiltration channel in every shape, and
+nothing in customs inspects a query or records one.
+
+Dropping port 53 does not close it without breaking the workload: the
+workload needs names to resolve for its clients to dial them at all.
+What closes it is a resolver that never forwards. It answers every A
+and AAAA query, for any name, with the inspector's address, and every
+other type with an empty answer. That is enough for the redirect, and
+it is correct, because the inspector dials the name it authorised and
+never the address the workload was given. With no upstream socket in the
+responder, a query has nowhere to go. Its empty answer to HTTPS/SVCB
+queries also withholds the ECH configurations that would hide a name
+from the inspector.
+
+customs does not have that responder yet. Until it does, treat DNS as
+outside the control: log it at the host resolver if it matters, and do
+not describe a customs-inspected workload as unable to exfiltrate.
 
 ## Shape 1: a rootless podman container
 

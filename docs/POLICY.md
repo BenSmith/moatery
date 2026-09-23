@@ -71,8 +71,9 @@ network error. The reason is in the record, not the response.
   resolution and collapsing of duplicate slashes. `*` matches `/`. An
   empty list permits no path.
 - `credential`: the id of a credential the broker holds for this host.
-  Present, the request goes to the broker instead of the origin (see
-  below).
+  It belongs to the HOST, not to the entry: present on any entry matching
+  a host, it sends every permitted request to that host to the broker
+  instead of the origin (see below).
 
 `methods` and `paths` inside one entry are a cross product: two of each
 permit all four combinations.
@@ -87,13 +88,17 @@ of them permits it. So:
 - a narrower entry cannot carve an exception out of a wider one.
 
 Where two matching entries name a `credential`, the first in the file is
-used.
+used, for every request to the host.
 
 ## Brokered hosts
 
-An entry with a `credential` sends each permitted request to the broker
-named by `customs-inspect --broker`, and the broker attaches the real
-credential. The broker selects the credential by the request's `Host`,
+A host that any matching entry gives a `credential` is brokered: every
+request to it that the entries permit goes to the broker named by
+`customs-inspect --broker`, including a request only a credential-less
+entry permits, and the broker attaches the real credential. So
+`{"host": "api.x", "methods": ["GET"]}` beside
+`{"host": "api.x", "methods": ["POST"], "credential": "k"}` brokers the
+GET too. The broker selects the credential by the request's `Host`,
 from its own `--host HOST=ID` flags, so the two must agree: the entry's
 `credential` names the id in the record, and the broker's flag decides
 what is sent. An inspector started without `--broker` refuses every
