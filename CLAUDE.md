@@ -53,6 +53,9 @@ unix upstream, and the `userns_ranges` column fix (mirrored to
 workloadctl on a branch; the flags reach workloadctl with the
 dependency, not by mirror).
 
+`libexec/customs-mint-ca` is customs-only too: the one CA mint
+(`egress_mint.mint_ca`), which the sidecar's first start also calls.
+
 `container/` is the shape-1b sidecar image: `Containerfile` and
 `customs-sidecar`, the entrypoint that is the unit file as a process.
 It is customs-only and has no workloadctl counterpart.
@@ -87,7 +90,7 @@ It is customs-only and has no workloadctl counterpart.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 585)
+just test     # all unit tests (unittest discover; 599)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user

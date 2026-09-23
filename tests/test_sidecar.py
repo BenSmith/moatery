@@ -14,10 +14,11 @@ import contextlib
 import io
 import pwd
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from egress_plane import CLEARTEXT, TLS
-from tests import load_script
+from tests import REPO_ROOT, load_script
 
 FAKE_INSPECT = pwd.struct_passwd(("inspect", "x", 200, 200, "", "/", ""))
 
@@ -99,6 +100,42 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
         mod = _mod()
         self.assertEqual(set(mod.PLANES),
                          {TLS.inspect_port, CLEARTEXT.inspect_port})
+
+
+class TestTheSidecarMintsTheOneWay(unittest.TestCase):
+    """The sidecar's first-start mint is egress_mint.mint_ca, the call
+    customs-mint-ca makes on a host, and the chown to the inspector's uid
+    is the only part that is the sidecar's own."""
+
+    GROUP = mock.Mock(gr_gid=200)
+
+    def _mint(self, minted):
+        mod = _mod()
+        with mock.patch.object(mod.egress_mint, "mint_ca",
+                               return_value=minted) as mint, \
+                mock.patch.object(mod.os, "chown") as chown:
+            result = mod.mint_ca("wl", FAKE_INSPECT, self.GROUP)
+        mint.assert_called_once_with("wl", mod.STATE)
+        return mod, result, chown
+
+    def test_a_fresh_ca_is_handed_to_the_inspector(self):
+        mod, result, chown = self._mint(True)
+        self.assertTrue(result)
+        key, cert = mod.ca_key_path(mod.STATE), mod.ca_cert_path(mod.STATE)
+        self.assertEqual([c.args for c in chown.call_args_list],
+                         [(key.parent, 200, 200), (key, 200, 200),
+                          (cert, 200, 200)])
+
+    def test_a_kept_ca_is_not_touched(self):
+        _mod_, result, chown = self._mint(False)
+        self.assertFalse(result)
+        chown.assert_not_called()
+
+    def test_no_second_mint_lives_in_the_entrypoint(self):
+        """Its own openssl argv would be a second mint for the three
+        extensions to drift between."""
+        source = (Path(REPO_ROOT) / "container" / "customs-sidecar").read_text()
+        self.assertNotIn("ca_openssl_argv", source)
 
 
 if __name__ == "__main__":

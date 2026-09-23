@@ -175,9 +175,10 @@ podman start NAME
 workload process exists until the rules are in. Step 5 is per-start; a
 wrapper or a user unit with `ExecStartPre=` makes it persistent.
 
-Before step 3 the CA has to exist. The programs do not mint it; the
-operator does, once, into the state directory (examples/README.md has
-the command). The inspector refuses to start without it, by name.
+Before step 3 the CA has to exist: `customs-mint-ca --name x
+--state-dir DIR`, once, with the inspector's own `--state-dir`. It keeps
+a CA that is already there, and prints the certificate's path for the
+bundle. The inspector refuses to start without it, by name.
 
 An unlisted host is not a closed connection: under `"inspect"` the
 inspector completes the handshake under a leaf its own CA minted for the
@@ -370,8 +371,9 @@ none of them `NET_ADMIN`; a cosy container on a custom network gains
 
 ## What customs does not do, on purpose
 
-It allocates no uid, writes no units, loads no rules, mints no CA outside
-the sidecar, installs nothing in the workload, and keeps no guest's clock.
+It allocates no uid, writes no units, loads no rules, installs nothing in
+the workload, and keeps no guest's clock. It mints the CA only when told
+to (`customs-mint-ca`, or the sidecar's first start).
 Those are host management: they depend on how a host is laid out, and
 whoever lays it out does them. `tests/test_closure.py` holds both
 programs to importing nothing that knows what a workload is.

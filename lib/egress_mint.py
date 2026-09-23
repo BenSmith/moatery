@@ -1,5 +1,6 @@
 """
-egress_mint — minting leaf certificates for a workload's egress inspector.
+egress_mint — minting a workload's egress CA once, and the leaf certificates
+its inspector presents.
 
 The back half of bump-then-403. The inspector reads a name out of a ClientHello
 without answering it, decides what the name deserves, and then -- for both
@@ -51,7 +52,7 @@ from typing import NamedTuple
 from inspect_document import normalise_hostname
 from egress_ca import (
     DENIAL_DIR_NAME, LEAF_DIR_NAME, LEAF_RENEW_WITHIN_SECONDS, LeafRefused,
-    ca_cert_path, ca_key_path, leaf_openssl_argv,
+    ca_cert_path, ca_key_path, ca_openssl_argv, leaf_openssl_argv,
 )
 
 # --- sizes ---
@@ -127,6 +128,62 @@ class MintThrottled(Exception):
 
 class MintFailed(Exception):
     """openssl refused to sign, with its own words in the message."""
+
+
+def mint_ca(name: str, state_dir, *, now: float | None = None,
+            runner=subprocess.run) -> bool:
+    """Mint the workload's egress CA into `state_dir`, unless it is there.
+
+    True if this call minted it, False if a key and a certificate were
+    already present, which are left exactly as they are: the workload's
+    trust bundle is built from that certificate, and a second mint would
+    make every leaf fail against a bundle nobody rebuilt.
+
+    Half a CA -- a key with no certificate, or the reverse -- is refused,
+    not repaired. Either half alone is useless, but which one an operator
+    has is theirs to decide, and a mint would overwrite the other.
+
+    The one mint, for every placement: the sidecar's entrypoint and
+    `customs-mint-ca` both call this, so the three extensions
+    ca_openssl_argv explains are applied the same way everywhere.
+    """
+    key, cert = ca_key_path(state_dir), ca_cert_path(state_dir)
+    have_key, have_cert = key.exists(), cert.exists()
+    if have_key and have_cert:
+        return False
+    if have_key or have_cert:
+        present, missing = (key, cert) if have_key else (cert, key)
+        raise MintFailed(
+            f"{present} is there and {missing} is not; remove the one "
+            f"that is there to mint a new CA, or restore the other")
+    try:
+        key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=key.parent) as tmp:
+            staged_key = Path(tmp) / key.name
+            staged_cert = Path(tmp) / cert.name
+            argv = ca_openssl_argv(
+                name, staged_key, staged_cert,
+                now=time.time() if now is None else now)
+            try:
+                result = runner(argv, capture_output=True, text=True,
+                                timeout=60)
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise MintFailed(f"could not run openssl: {exc}") from exc
+            if result.returncode != 0:
+                detail = ((result.stderr or "")
+                          + (result.stdout or "")).strip()
+                raise MintFailed(
+                    f"openssl refused to mint the CA for {name!r}: {detail}")
+            os.chmod(staged_key, 0o600)
+            # The key first: a stop between the two leaves a key and no
+            # certificate, which the next call refuses by name, rather than
+            # a certificate a later mint would orphan.
+            os.replace(staged_key, key)
+            os.replace(staged_cert, cert)
+    except OSError as exc:
+        raise MintFailed(
+            f"could not write the CA into {key.parent}: {exc}") from exc
+    return True
 
 
 class Leaf(NamedTuple):
@@ -689,5 +746,5 @@ __all__ = [
     "DENIAL_CACHE_MAX", "LEAF_CACHE_MAX",
     "MINT_BUCKET_CAPACITY", "MINT_BUCKET_REFILL_PER_SECOND",
     "MINT_WAIT_SECONDS", "Leaf", "LeafCache", "LeafRefused", "MintFailed",
-    "MintThrottled", "Minter", "TokenBucket",
+    "MintThrottled", "Minter", "TokenBucket", "mint_ca",
 ]

@@ -432,5 +432,6 @@ def build_minter(name, state_dir, policy):
         if not os.path.exists(path):
             raise FileNotFoundError(
                 f"tls = 'inspect' terminates, which needs this workload's "
-                f"egress CA, and {path} is not there")
+                f"egress CA, and {path} is not there; `customs-mint-ca "
+                f"--name {name} --state-dir {state_dir}` makes one")
     return Minter(name, state_dir)

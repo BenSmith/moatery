@@ -55,14 +55,14 @@ import grp
 import os
 import pwd
 import socket
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-from egress_ca import ca_cert_path, ca_key_path, ca_openssl_argv
+import egress_mint
+from egress_ca import ca_cert_path, ca_key_path
 from egress_plane import CLEARTEXT, TLS
 
 HERE = Path(__file__).resolve().parent
@@ -164,13 +164,12 @@ def prepare_dirs(inspect, broker, group):
 def mint_ca(name, inspect, group):
     """Once, into the volume, on the first start. The inspector refuses to
     start under a policy that inspects with no CA to mint from, and a
-    volume that starts empty is the ordinary first run."""
-    key, cert = ca_key_path(STATE), ca_cert_path(STATE)
-    if key.exists() and cert.exists():
+    volume that starts empty is the ordinary first run. The mint is
+    egress_mint's, the one customs-mint-ca makes on a host; what is this
+    process's is handing the result to the inspector's uid."""
+    if not egress_mint.mint_ca(name, STATE):
         return False
-    key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    subprocess.run(ca_openssl_argv(name, key, cert, now=time.time()),
-                   check=True, capture_output=True)
+    key, cert = ca_key_path(STATE), ca_cert_path(STATE)
     for path in (key.parent, key, cert):
         os.chown(path, inspect.pw_uid, group.gr_gid)
     return True
@@ -244,8 +243,12 @@ def main(argv=None):
         sys.exit(f"no policy at {POLICY}; mount one (ro)")
 
     prepare_dirs(inspect, broker, group)
-    if mint_ca(args.name, inspect, group):
-        print(f"egress CA minted into {STATE}", file=sys.stderr, flush=True)
+    try:
+        if mint_ca(args.name, inspect, group):
+            print(f"egress CA minted into {STATE}", file=sys.stderr,
+                  flush=True)
+    except egress_mint.MintFailed as exc:
+        sys.exit(f"could not mint the egress CA: {exc}")
     sockets = bind_planes()
     pid = start_broker(args.name, broker_flags, broker, group, sockets)
     up, status = await_socket(pid)

@@ -19,7 +19,6 @@ HERE = Path(__file__).resolve().parent
 CHECKOUT = HERE.parent.parent
 sys.path.insert(0, str(CHECKOUT / "lib"))
 
-from egress_ca import ca_cert_path, ca_key_path, ca_openssl_argv  # noqa
 
 NAME = "rig"
 # stub_provider.py's server_version, which a brokered response must carry.
@@ -96,15 +95,13 @@ def preflight(tools, ports):
 
 def mint_ca(state):
     """The per-workload CA, once, kept across runs like an SSH host key.
-    The operator's job in shape 1, with the program's own openssl argv;
-    the sidecar entrypoint's in shape 1b."""
-    key, cert = ca_key_path(state), ca_cert_path(state)
-    if key.exists() and cert.exists():
-        say(f"  CA present: {cert}")
-        return
-    key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    run(ca_openssl_argv(NAME, key, cert, now=time.time()))
-    say(f"  CA minted: {cert}")
+    The operator's job in shape 1, done the operator's way: by running
+    customs-mint-ca from the checkout. The sidecar entrypoint's in shape
+    1b."""
+    done = run([sys.executable, str(CHECKOUT / "libexec" / "customs-mint-ca"),
+                "--name", NAME, "--state-dir", str(state)],
+               env={**os.environ, "PYTHONPATH": str(CHECKOUT / "lib")})
+    say(f"  {done.stderr.strip()}")
 
 
 def write_bundle(ca_pem, bundle):

@@ -9,7 +9,7 @@ modules under `lib/` in the same directory:
 sudo install -d /usr/libexec/customs
 sudo install -m 0644 lib/*.py /usr/libexec/customs/
 sudo install -m 0755 libexec/customs-broker libexec/customs-inspect \
-    /usr/libexec/customs/
+    libexec/customs-mint-ca /usr/libexec/customs/
 ```
 
 The workload's name in these files is `example`, and the brokered
@@ -47,19 +47,12 @@ systemd-creds --user encrypt --name=example - ~/.config/customs/example.cred
 chmod 0600 ~/.config/customs/example.cred
 ```
 
-The egress CA. The programs do not mint it; this runs the inspector's own
-`openssl` invocation into its state directory:
+The egress CA, into the inspector's state directory. Run again, it keeps
+the CA that is there; either way it prints the certificate's path.
 
 ```
-python3 -c '
-import subprocess, sys, time
-sys.path.insert(0, "/usr/libexec/customs")
-from egress_ca import ca_cert_path, ca_key_path, ca_openssl_argv
-state, name = sys.argv[1:]
-ca_key_path(state).parent.mkdir(mode=0o700, parents=True)
-subprocess.run(ca_openssl_argv(name, ca_key_path(state), ca_cert_path(state),
-                               now=time.time()), check=True)
-' ~/.local/state/customs example
+/usr/libexec/customs/customs-mint-ca --name example \
+    --state-dir ~/.local/state/customs
 ```
 
 The bundle the workload trusts: the CA over the system store. The

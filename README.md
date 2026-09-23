@@ -28,6 +28,9 @@ the inspector's policy, one JSON document:
   dials the provider itself, from outside the workload. The placeholder
   never leaves loopback; the key never enters the workload.
 
+A third, **customs-mint-ca**, makes the per-workload CA once, before the
+inspector first starts.
+
 The workload cannot name the broker, cannot choose to use it, and cannot
 be pointed at another workload's. The only thing that dials the broker is
 that workload's own inspector.

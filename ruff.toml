@@ -3,7 +3,8 @@
 # explodes paired argv lists).
 line-length = 79
 include = ["lib/*.py", "libexec/customs-broker", "libexec/customs-inspect",
-           "container/customs-sidecar", "tests/manual/*.py"]
+           "libexec/customs-mint-ca", "container/customs-sidecar",
+           "tests/manual/*.py"]
 
 [lint]
 select = ["E4", "E7", "E9", "F", "E501"]
@@ -11,4 +12,5 @@ select = ["E4", "E7", "E9", "F", "E501"]
 [lint.per-file-ignores]
 # sys.dont_write_bytecode has to be set before the lib imports it governs.
 "libexec/customs-inspect" = ["E402"]
+"libexec/customs-mint-ca" = ["E402"]
 "container/customs-sidecar" = ["E402"]

@@ -842,6 +842,129 @@ class TestTheCountersAreWrittenUnderTheLockTheyAreReadWith(unittest.TestCase):
             "every counter write must go through Minter._bump, which is the "
             "only place that takes the lock `snapshot` reads with")
 
+class TestTheCAIsMintedOnce(unittest.TestCase):
+    """egress_mint.mint_ca: the one mint, shared by customs-mint-ca and the
+    sidecar's entrypoint. Real openssl, as for the leaves."""
+
+    def setUp(self):
+        self.state = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.key = egress_ca.ca_key_path(self.state)
+        self.cert = egress_ca.ca_cert_path(self.state)
+
+    def test_it_mints_a_ca_with_its_key_private(self):
+        self.assertTrue(egress_mint.mint_ca("wl-test", self.state))
+        self.assertEqual(self.key.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.key.parent.stat().st_mode & 0o777, 0o700)
+        self.assertIn("wl-test", _certificate(self.cert, "-subject"))
+        ext = _certificate(self.cert, "-ext",
+                           "basicConstraints,keyUsage,subjectKeyIdentifier")
+        self.assertIn("CA:TRUE", ext)
+        self.assertIn("Certificate Sign", ext)
+        self.assertIn("Subject Key Identifier", ext)
+        self.assertEqual(sorted(p.name for p in self.key.parent.iterdir()),
+                         sorted([self.key.name, self.cert.name]),
+                         "the staging directory was left behind")
+
+    def test_the_leaves_it_signs_verify_under_it(self):
+        """The CA this makes is one the Minter signs under, which is the
+        only thing it is for."""
+        egress_mint.mint_ca("wl-test", self.state)
+        leaf = egress_mint.Minter("wl-test", self.state).leaf(
+            "api.example.com", denied=False)
+        verify = subprocess.run(
+            ["openssl", "verify", "-CAfile", str(self.cert), str(leaf.path)],
+            capture_output=True, text=True)
+        self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
+
+    def test_a_second_call_keeps_the_first(self):
+        egress_mint.mint_ca("wl-test", self.state)
+        before = (self.key.read_bytes(), self.cert.read_bytes())
+        runner = mock.Mock()
+        self.assertFalse(
+            egress_mint.mint_ca("wl-test", self.state, runner=runner))
+        runner.assert_not_called()
+        self.assertEqual((self.key.read_bytes(), self.cert.read_bytes()),
+                         before)
+
+    def test_half_a_ca_is_refused_and_left_as_it_is(self):
+        for present, missing in ((self.key, self.cert),
+                                 (self.cert, self.key)):
+            with self.subTest(present=present.name):
+                present.parent.mkdir(mode=0o700, exist_ok=True)
+                present.write_text("half")
+                missing.unlink(missing_ok=True)
+                runner = mock.Mock()
+                with self.assertRaises(egress_mint.MintFailed) as caught:
+                    egress_mint.mint_ca("wl-test", self.state, runner=runner)
+                self.assertIn(str(present), str(caught.exception))
+                self.assertIn(str(missing), str(caught.exception))
+                runner.assert_not_called()
+                self.assertEqual(present.read_text(), "half")
+                self.assertFalse(missing.exists())
+                present.unlink()
+
+    def test_openssl_refusing_is_a_mint_failure_in_its_words(self):
+        def refuse(argv, **_kw):
+            return subprocess.CompletedProcess(argv, 1, "",
+                                               "unknown option -not_before")
+        with self.assertRaises(egress_mint.MintFailed) as caught:
+            egress_mint.mint_ca("wl-test", self.state, runner=refuse)
+        self.assertIn("unknown option -not_before", str(caught.exception))
+        self.assertFalse(self.key.exists())
+        self.assertFalse(self.cert.exists())
+
+
+class TestCustomsMintCa(unittest.TestCase):
+    """The entrypoint: the mint, and the certificate's path on stdout."""
+
+    def setUp(self):
+        from tests import load_script
+        self.mod = load_script("libexec/customs-mint-ca")
+        self.state = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def _run(self, *argv):
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = self.mod.main(["customs-mint-ca", *argv])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_it_mints_and_prints_the_certificate(self):
+        code, out, err = self._run("--name", "wl-test",
+                                   "--state-dir", str(self.state))
+        self.assertEqual(code, 0, err)
+        cert = egress_ca.ca_cert_path(self.state)
+        self.assertEqual(out, f"{cert}\n")
+        self.assertIn("minted", err)
+        self.assertIn("wl-test", _certificate(cert, "-subject"))
+
+    def test_run_again_it_keeps_the_ca_and_still_prints_it(self):
+        self._run("--name", "wl-test", "--state-dir", str(self.state))
+        cert = egress_ca.ca_cert_path(self.state)
+        first = cert.read_bytes()
+        code, out, err = self._run("--name", "wl-test",
+                                   "--state-dir", str(self.state))
+        self.assertEqual(code, 0, err)
+        self.assertIn("kept", err)
+        self.assertEqual(out, f"{cert}\n")
+        self.assertEqual(cert.read_bytes(), first)
+
+    def test_half_a_ca_is_an_error_naming_it(self):
+        key = egress_ca.ca_key_path(self.state)
+        key.parent.mkdir(mode=0o700)
+        key.write_text("half")
+        code, out, err = self._run("--name", "wl-test",
+                                   "--state-dir", str(self.state))
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn(str(key), err)
+
+    def test_both_flags_are_required(self):
+        with mock.patch("sys.stderr"):
+            self.assertEqual(self._run("--name", "wl-test")[0], 2)
+            self.assertEqual(self._run("--state-dir", str(self.state))[0], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,7 @@ from tests import REPO_ROOT
 LIB = Path(REPO_ROOT) / "lib"
 BROKER = Path(REPO_ROOT) / "libexec" / "customs-broker"
 INSPECTOR = Path(REPO_ROOT) / "libexec" / "customs-inspect"
+MINT_CA = Path(REPO_ROOT) / "libexec" / "customs-mint-ca"
 
 BROKER_FLAGS = frozenset({
     "--name", "--listen", "--caller-uid", "--host",
@@ -97,6 +98,7 @@ class TestTheScannerSeesTheTree(unittest.TestCase):
     def test_the_entrypoints_exist(self):
         self.assertTrue(BROKER.exists())
         self.assertTrue(INSPECTOR.exists())
+        self.assertTrue(MINT_CA.exists())
 
     def test_the_closures_are_not_trivial(self):
         mods = _lib_modules()
@@ -122,8 +124,16 @@ class TestLibIsTheClosure(unittest.TestCase):
 
     def test_the_closures_reach_only_lib_and_the_stdlib(self):
         mods = _lib_modules()
-        files = [BROKER, INSPECTOR] + [mods[m] for m in mods]
+        files = [BROKER, INSPECTOR, MINT_CA] + [mods[m] for m in mods]
         self.assertEqual(sorted(_foreign(files, mods)), [])
+
+    def test_the_ca_minter_is_inside_the_inspector_closure(self):
+        """customs-mint-ca is the inspector's first-start step run on its
+        own, and brings no module of its own into lib/."""
+        mods = _lib_modules()
+        minter = _closure(MINT_CA, mods)
+        self.assertIn("egress_mint", minter)
+        self.assertEqual(sorted(minter - _closure(INSPECTOR, mods)), [])
 
     def test_the_broker_closure_is_the_four_broker_modules(self):
         mods = _lib_modules()
@@ -146,11 +156,12 @@ class TestNothingKnowsWhatAWorkloadIs(unittest.TestCase):
         mods = _lib_modules()
         return {**{m: mods[m].read_text() for m in mods},
                 BROKER.name: BROKER.read_text(),
-                INSPECTOR.name: INSPECTOR.read_text()}
+                INSPECTOR.name: INSPECTOR.read_text(),
+                MINT_CA.name: MINT_CA.read_text()}
 
     def test_nothing_reads_toml(self):
         mods = _lib_modules()
-        files = [BROKER, INSPECTOR] + list(mods.values())
+        files = [BROKER, INSPECTOR, MINT_CA] + list(mods.values())
         readers = sorted(f.name for f in files if "tomllib" in _imports(f))
         self.assertEqual(readers, [])
 
@@ -160,7 +171,7 @@ class TestNothingKnowsWhatAWorkloadIs(unittest.TestCase):
         closure is its twin (the inspector's closure mentions the prefix
         in prose about the host it came from)."""
         mods = _lib_modules()
-        files = [BROKER, INSPECTOR] + list(mods.values())
+        files = [BROKER, INSPECTOR, MINT_CA] + list(mods.values())
         lookups = sorted(f.name for f in files if "pwd" in _imports(f))
         self.assertEqual(lookups, [])
         broker = _closure(BROKER, mods)
@@ -196,6 +207,12 @@ class TestTheFlagsAreTheContract(unittest.TestCase):
 
     def test_the_inspector_takes_exactly_the_handed_flags(self):
         self.assertEqual(self._flags(INSPECTOR), INSPECTOR_FLAGS)
+
+    def test_the_ca_minter_takes_two_of_the_inspectors(self):
+        """The same --name and --state-dir the inspector's unit is given,
+        so the CA lands where the inspector looks and carries its label."""
+        self.assertEqual(self._flags(MINT_CA), {"--name", "--state-dir"})
+        self.assertTrue(self._flags(MINT_CA) <= INSPECTOR_FLAGS)
 
 
 if __name__ == "__main__":

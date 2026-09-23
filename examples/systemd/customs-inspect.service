@@ -1,7 +1,7 @@
 # The egress inspector, started by customs-inspect.socket on the first
 # connection. It reads the policy once, here; restart it to apply an
-# edit. It refuses to start without the CA under %S/customs/ca
-# (examples/README.md mints it).
+# edit. It refuses to start without the CA under %S/customs/ca, which
+# customs-mint-ca makes (examples/README.md).
 
 [Unit]
 Description=customs egress inspector
