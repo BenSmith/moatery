@@ -104,26 +104,35 @@ Stopping that is a rule on the programs' own outbound sockets, and
 customs loads no rules. Whoever runs it writes one, where the shape gives
 them somewhere to put it:
 
-- **Shape 1b (sidecar):** the pod's netns holds the programs' sockets as
-  uids 200 and 201, so the rule goes in the filter chain of the recipe
-  below, before `meta skuid { 200, 201 } accept`. These lines load; the
-  shape-1b rig does not yet exercise them (its stand-in provider is on a
-  TEST-NET address, which this rule would drop):
+- **Shape 1b (sidecar):** the pod's netns holds the programs' sockets, and
+  the recipe below already marks their connections (`ct mark 0x1`, copied
+  onto every packet as `meta mark 0x1`) so the egress chain can exempt
+  them. The rule goes in that egress chain, before its blanket
+  `meta mark 0x1 accept`, which today lets the programs out to anywhere.
+  It keys on the mark and the destination -- both readable at the egress
+  hook -- not on `meta skuid`, which matches only a packet that still
+  carries the program's socket.
+  These lines load; the shape-1b rig does not yet exercise them (its
+  stand-in provider is on a TEST-NET address, which this rule would drop):
 
   ```
-  ct state established,related accept
-  ip daddr 169.254.1.1 udp dport 53 accept
-  ip daddr 169.254.1.1 tcp dport 53 accept
   # one line per address an `internal` name resolves to, e.g.
-  # meta skuid { 200, 201 } ip daddr 10.0.0.5 tcp dport 443 accept
-  meta skuid { 200, 201 } ip daddr { 0.0.0.0/8, 10.0.0.0/8,
+  # meta mark 0x1 ip daddr 10.0.0.5 tcp dport 443 accept
+  meta mark 0x1 ip daddr { 0.0.0.0/8, 10.0.0.0/8,
       100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
       192.168.0.0/16 } drop
-  meta skuid { 200, 201 } ip6 daddr { ::1, fc00::/7, fe80::/10 } drop
+  meta mark 0x1 ip6 daddr { ::1, fc00::/7, fe80::/10 } drop
   ```
 
-  `established,related` comes first because the inspector's replies to
-  the workload go out over loopback as uid 200.
+  No `ct state established,related` line: it does not load in a netdev
+  egress hook, and it is not needed, because this hook is on the pod's
+  egress device and the inspector's replies to the workload go out over
+  loopback, which never crosses it. For the same reason the loopback and
+  link-local entries in the drop set never reach this chain; they are
+  belt-and-suspenders, and what it actually enforces is the routable
+  private space (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+  `100.64.0.0/10`), the addresses a public name resolving inward would
+  send the programs to.
 - **Shapes 1, 2 and 3 with the programs on the host:** there is no rule
   to write without root. The programs' sockets are the user's, like
   everything else the user runs, and the host has no namespace of theirs
@@ -188,20 +197,35 @@ podman create --network pasta:--map-host-loopback=169.254.1.3 \
 podman init NAME          # netns exists, entrypoint not yet running
 # 5. rules into the netns — this replaces meta skuid. The DNS address is
 #    the first nameserver in the container's resolv.conf (podman inspect
-#    -f '{{.ResolvConfPath}}'), which is pasta's forwarder.
-podman unshare nsenter -t "$(podman inspect -f '{{.State.Pid}}' NAME)" -n nft -f - <<'NFT'
+#    -f '{{.ResolvConfPath}}'), which is pasta's forwarder. The drop is a
+#    netdev egress hook, not an output filter: an output `policy drop`
+#    fails a UDP send with EPERM, a tell no real network gives, where the
+#    egress hook drops the packet after send() returns. It hangs on the
+#    egress device — pasta names it after the host's default route, so it
+#    is derived, not fixed — and loopback never crosses it. The hook sees
+#    the link layer as well as IP, so ARP and neighbour discovery are let
+#    through: dropped, the netns loses its gateway's address once the
+#    neighbour entry ages out, and every dial fails until it is
+#    re-learned. They reach only pasta.
+DEV=$(ip route show default | awk '{print $5}')
+podman unshare nsenter -t "$(podman inspect -f '{{.State.Pid}}' NAME)" -n nft -f - <<NFT
 table inet customs {
   chain out {
     type nat hook output priority -100
     tcp dport 443 dnat ip to 169.254.1.3:8443
     tcp dport 80  dnat ip to 169.254.1.3:8080
   }
-  chain filter {
-    type filter hook output priority 0; policy drop
-    oif lo accept
+}
+table netdev customs {
+  chain egress {
+    type filter hook egress device "$DEV" priority 0; policy drop
+    meta protocol arp accept
+    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert,
+                  nd-router-solicit } accept
     ip daddr 169.254.1.3 tcp dport { 8443, 8080 } accept
     ip daddr 169.254.1.1 udp dport 53 accept
     ip daddr 169.254.1.1 tcp dport 53 accept
+    counter comment "dropped"
   }
 }
 NFT
@@ -304,8 +328,9 @@ podman run -d --pod POD --name sidecar --restart on-failure \
     --secret KEY,target=CRED,uid=201,gid=200,mode=0400 \
     customs-sidecar --name NAME --caller-uid 1000 \
     --host api.example.com=CRED --placeholder CRED=sk-placeholder
+DEV=$(ip route show default | awk '{print $5}')
 podman unshare nsenter -t $(podman inspect -f '{{.State.Pid}}' sidecar) -n \
-    nft -f - <<'RULES'
+    nft -f - <<RULES
 table inet customs {
   chain out {
     type nat hook output priority -100
@@ -313,12 +338,22 @@ table inet customs {
     tcp dport 443 dnat ip to 127.0.0.1:8443
     tcp dport 80  dnat ip to 127.0.0.1:8080
   }
-  chain filter {
-    type filter hook output priority 0; policy drop
-    meta skuid { 200, 201 } accept
-    oif lo accept
+  chain tag {
+    type filter hook output priority mangle
+    meta skuid { 200, 201 } ct mark set 0x1
+    meta mark set ct mark
+  }
+}
+table netdev customs {
+  chain egress {
+    type filter hook egress device "$DEV" priority 0; policy drop
+    meta protocol arp accept
+    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert,
+                  nd-router-solicit } accept
+    meta mark 0x1 accept
     ip daddr 169.254.1.1 udp dport 53 accept
     ip daddr 169.254.1.1 tcp dport 53 accept
+    counter comment "dropped"
   }
 }
 RULES
@@ -327,6 +362,18 @@ podman run -d --pod POD --name workload --user 1000:1000 --cap-drop all \
     -e SSL_CERT_FILE=/usr/local/share/ca-certificates/egress-ca.crt … \
     IMAGE
 ```
+
+The programs' upstream dials leave by the same device as the workload's
+disallowed egress, so the egress chain has to tell them apart. It cannot
+read the uid: `meta skuid` needs the packet to carry the program's
+socket, and the segments a connection sends after that socket is gone --
+the FIN and RST of a program that exited, TIME_WAIT's ACKs -- carry none.
+The `tag` chain reads the uid at the output hook instead, stores it as a
+mark on the connection, and copies that onto every packet of the
+connection, which the egress hook can read. The mark needs no capability
+in the programs: `SO_MARK` would need `CAP_NET_ADMIN`, which the sidecar
+does not hold. A source address would need none either, but the workload
+shares the netns and could bind the same one.
 
 The four capabilities are the entrypoint's: the chown of the two
 directories it hands over, the connect that sees the broker listening, and

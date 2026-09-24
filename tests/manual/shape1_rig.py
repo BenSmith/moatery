@@ -21,6 +21,11 @@ THE ROWS
 
   premise   the container's bounding set holds no CAP_NET_ADMIN; the rules
             are in its netns. Without the first, the second is a suggestion.
+  silent    a filtered UDP send returns rc=0 while the egress chain's drop
+            counter moves. The drop is a netdev egress hook, not an output
+            filter: an output `policy drop` fails the send with EPERM, a
+            tell no real network gives. The counter proves the packet was
+            dropped, not delivered.
   request   from inside, with the placeholder, the provider answers 200 and
             reports that the REAL key arrived; the container's environment
             holds only the placeholder; the inspector's record names the
@@ -39,11 +44,11 @@ THE ROWS
             stub distinguishes at all.
 
 `--without-rules` skips loading the netns rules and changes nothing else.
-The `premise`, `request` and `unlisted` rows must go red -- the inspector
-is never even activated -- and a run where they stay green is measuring
-nothing. `--broker-over-tcp` puts the broker on 127.129.0.1:8081 instead
-of the socket path, and the broker's no-TCP and other-uid rows must go
-red.
+The `premise`, `silent`, `request` and `unlisted` rows must go red -- the
+inspector is never even activated, and with no egress chain the drop
+counter is absent -- and a run where they stay green is measuring nothing.
+`--broker-over-tcp` puts the broker on 127.129.0.1:8081 instead of the
+socket path, and the broker's no-TCP and other-uid rows must go red.
 
 WHAT THIS RIG TELLS THE DESIGN
 
@@ -229,11 +234,23 @@ def in_netns(pid, argv, **kw):
                 *argv], **kw)
 
 
+def default_route_device():
+    """The host's default-route interface, whose name pasta mirrors into the
+    netns as the device egress leaves by."""
+    return run(["ip", "route", "show", "default"]).stdout.split()[4]
+
+
 def load_rules(pid, dns):
     """What replaces `meta skuid`: the rules see only this netns's traffic.
-    nat output runs before filter output, so the filter matches on the
-    translated destination and the accept line names the inspector's
-    ports, not 80 and 443."""
+    nat output runs before the egress hook, so the accept lines name the
+    inspector's translated ports, not 80 and 443.
+
+    The drop is a netdev egress hook, not an output filter. An output
+    `policy drop` fails a UDP send with EPERM, which no real network does;
+    the egress hook drops the packet after send() has returned and counts
+    it. It hangs on the pasta device, so loopback never crosses it and no
+    `oif lo accept` is needed."""
+    dev = default_route_device()
     planes = f"{{ {INSPECT_TLS}, {INSPECT_CLEARTEXT} }}"
     rules = f"""
 table inet customs {{
@@ -242,17 +259,19 @@ table inet customs {{
     tcp dport 443 dnat ip to {LOOPBACK_MAP}:{INSPECT_TLS}
     tcp dport 80  dnat ip to {LOOPBACK_MAP}:{INSPECT_CLEARTEXT}
   }}
-  chain filter {{
-    type filter hook output priority 0; policy drop
-    oif lo accept
+}}
+table netdev customs {{
+  chain egress {{
+    type filter hook egress device "{dev}" priority 0; policy drop
     ip daddr {LOOPBACK_MAP} tcp dport {planes} accept
     ip daddr {dns} udp dport 53 accept
     ip daddr {dns} tcp dport 53 accept
+    counter comment "dropped"
   }}
 }}
 """
     in_netns(pid, ["nft", "-f", "-"], input=rules)
-    say("  rules loaded into the container's netns")
+    say(f"  rules loaded into the container's netns (egress on {dev})")
 
 
 def exec_in(argv, timeout=30):
@@ -297,6 +316,36 @@ else:
 """
 
 
+# One UDP datagram, reporting send() outcome only: "sent" or the OSError
+# class. A netdev egress drop returns "sent"; an output-hook drop, EPERM.
+UDP_SEND = """
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    s.sendto(b"x", (sys.argv[1], int(sys.argv[2])))
+except OSError as exc:
+    print(type(exc).__name__)
+else:
+    print("sent")
+"""
+
+# TEST-NET-1: never routed, and named by neither accept line, so a packet
+# to it falls to the egress chain's drop.
+FILTERED_UDP = ("192.0.2.1", 53)
+
+
+def dropped_counter(pid):
+    """The egress chain's drop counter, in packets, or -1 if the chain is
+    absent (as under --without-rules)."""
+    out = in_netns(pid, ["nft", "list", "chain", "netdev", "customs",
+                         "egress"], check=False).stdout
+    for line in out.splitlines():
+        if "packets" in line and "dropped" in line:
+            fields = line.split()
+            return int(fields[fields.index("packets") + 1])
+    return -1
+
+
 def probe(pid, secret, over_tcp):
     say("premise")
     caps = int(next(ln.split()[1] for ln in
@@ -309,6 +358,14 @@ def probe(pid, secret, over_tcp):
     row("premise: the rules are in the container's netns",
         "table inet customs" in listed,
         listed.strip() or "no tables")
+
+    say("silent drop")
+    sent = in_netns(pid, ["python3", "-c", UDP_SEND, FILTERED_UDP[0],
+                          str(FILTERED_UDP[1])], check=False).stdout.strip()
+    moved = dropped_counter(pid)
+    row("silent drop: a filtered UDP send returns rc=0, not EPERM",
+        sent == "sent" and moved >= 1,
+        f"send={sent!r}, dropped counter={moved}")
 
     say("request")
     before = journal("broker").count(" ok ")

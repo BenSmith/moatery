@@ -22,6 +22,10 @@ THE ROWS
             exempt from its own redirect; the rules are in the pod's
             netns; the sidecar's two processes run as the two image uids,
             and its pid 1, which supervises them, holds no capability.
+  silent    a filtered UDP send returns rc=0 while the egress chain's drop
+            counter moves. The drop is a netdev egress hook, not an output
+            filter: an output `policy drop` fails the send with EPERM, a
+            tell no real network gives.
   request   from the workload, with the placeholder, the provider answers
             200 and reports that the REAL key arrived; the workload's
             environment holds the placeholder only; the broker logged one
@@ -47,10 +51,10 @@ THE ROWS
             container exits 0.
 
 `--without-rules` loads no rules into the pod's netns. `premise`,
-`request`, `unlisted` and the lifecycle's request must go red: the
-workload's dial reaches the stub directly and refuses its certificate,
-which no bundle of the workload's carries, and the unlisted name times
-out on TEST-NET.
+`silent`, `request`, `unlisted` and the lifecycle's request must go red:
+the workload's dial reaches the stub directly and refuses its certificate,
+which no bundle of the workload's carries, the unlisted name times out on
+TEST-NET, and with no egress chain the drop counter is absent.
 """
 
 import argparse
@@ -82,6 +86,9 @@ HOSTS_MARK = "customs-shape1b-rig"
 # workload's: any uid that is neither, chosen here.
 INSPECT_UID, BROKER_UID, GROUP_GID = 200, 201, 200
 WORKLOAD_UID = 1000
+# The mark the output hook puts on the programs' packets for the egress
+# hook to exempt. One bit in an otherwise unused netns; no other consumer.
+OURS_MARK = "0x1"
 # Inside the sidecar (container/customs-sidecar).
 SOCKET_PATH = "/run/customs/broker.sock"
 STATE_IN_SIDECAR = "/var/lib/customs"
@@ -186,16 +193,37 @@ def in_netns(pid, argv, **kw):
                 *argv], **kw)
 
 
+def default_route_device(pid):
+    """The pod's default-route interface, whose name pasta takes from the
+    host's and which egress leaves by."""
+    return in_netns(pid, ["ip", "route", "show", "default"]).stdout.split()[4]
+
+
 def load_rules(pid):
     """The discriminator is the uid: the two image uids are exempt from
     the redirect and the drop, since their dials are the upstream legs
     and leave through this same netns. The resolver is pasta's forwarder,
-    read from the pod's resolv.conf."""
+    read from the pod's resolv.conf.
+
+    The drop is a netdev egress hook, not an output filter. An output
+    `policy drop` fails a UDP send with EPERM, which no real network does;
+    the egress hook drops the packet after send() has returned and counts
+    it. It hangs on the pod's egress device, so loopback -- the redirected
+    plane's dial to 127.0.0.1 among it -- never crosses the hook.
+
+    The programs are exempted by a mark, not by uid, because the egress
+    hook cannot read the uid reliably: `meta skuid` needs a socket on the
+    packet, and by the device a locally-generated packet has often been
+    orphaned (retransmits, timer ACKs and TIME_WAIT segments carry no
+    socket), so the programs' own upstream legs would fall to the drop.
+    The uid is read where it is reliable -- the output hook, before the
+    packet leaves the socket -- and a mark set there rides the packet to
+    the device, which the egress hook matches instead."""
     resolv = exec_in(SIDECAR, ["cat", "/etc/resolv.conf"]).stdout
     dns = next((ln.split()[1] for ln in resolv.splitlines()
                 if ln.startswith("nameserver")), "169.254.1.1")
+    dev = default_route_device(pid)
     ours = f"{{ {INSPECT_UID}, {BROKER_UID} }}"
-    planes = f"{{ {INSPECT_TLS}, {INSPECT_CLEARTEXT} }}"
     rules = f"""
 table inet customs {{
   chain out {{
@@ -204,18 +232,24 @@ table inet customs {{
     tcp dport 443 dnat ip to 127.0.0.1:{INSPECT_TLS}
     tcp dport 80  dnat ip to 127.0.0.1:{INSPECT_CLEARTEXT}
   }}
-  chain filter {{
-    type filter hook output priority 0; policy drop
-    meta skuid {ours} accept
-    oif lo accept
-    ip daddr 127.0.0.1 tcp dport {planes} accept
+  chain tag {{
+    type filter hook output priority mangle
+    meta skuid {ours} meta mark set {OURS_MARK}
+  }}
+}}
+table netdev customs {{
+  chain egress {{
+    type filter hook egress device "{dev}" priority 0; policy drop
+    meta mark {OURS_MARK} accept
     ip daddr {dns} udp dport 53 accept
     ip daddr {dns} tcp dport 53 accept
+    counter comment "dropped"
   }}
 }}
 """
     in_netns(pid, ["nft", "-f", "-"], input=rules)
-    say(f"  rules loaded into the pod's netns (resolver {dns})")
+    say(f"  rules loaded into the pod's netns (resolver {dns}, "
+        f"egress on {dev})")
 
 
 def start_workload():
@@ -268,6 +302,36 @@ def caps_of(pid):
                     if ln.startswith("CapBnd:")), 16)
 
 
+# One UDP datagram, reporting send() outcome only: "sent" or the OSError
+# class. A netdev egress drop returns "sent"; an output-hook drop, EPERM.
+UDP_SEND = """
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    s.sendto(b"x", (sys.argv[1], int(sys.argv[2])))
+except OSError as exc:
+    print(type(exc).__name__)
+else:
+    print("sent")
+"""
+
+# TEST-NET-1: never routed, and named by neither accept line, so a packet
+# to it falls to the egress chain's drop.
+FILTERED_UDP = ("192.0.2.1", 53)
+
+
+def dropped_counter(pid):
+    """The egress chain's drop counter, in packets, or -1 if the chain is
+    absent (as under --without-rules)."""
+    out = in_netns(pid, ["nft", "list", "chain", "netdev", "customs",
+                         "egress"], check=False).stdout
+    for line in out.splitlines():
+        if "packets" in line and "dropped" in line:
+            fields = line.split()
+            return int(fields[fields.index("packets") + 1])
+    return -1
+
+
 def probe(sidecar_pid, workload_pid, secret):
     say("premise")
     caps = caps_of(workload_pid)
@@ -295,6 +359,15 @@ def probe(sidecar_pid, workload_pid, secret):
                          .splitlines() if ln.startswith("CapEff:")), 16)
     row("premise: the supervisor holds no capability",
         effective == 0, f"CapEff={effective:016x}")
+
+    say("silent drop")
+    sent = in_netns(sidecar_pid, ["python3", "-c", UDP_SEND,
+                                  FILTERED_UDP[0], str(FILTERED_UDP[1])],
+                    check=False).stdout.strip()
+    moved = dropped_counter(sidecar_pid)
+    row("silent drop: a filtered UDP send returns rc=0, not EPERM",
+        sent == "sent" and moved >= 1,
+        f"send={sent!r}, dropped counter={moved}")
 
     say("request")
     before = logs().count(" ok ")
