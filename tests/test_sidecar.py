@@ -99,6 +99,26 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
         self.assertEqual(args.state_dir, mod.STATE)
         self.assertEqual(args.policy, mod.POLICY)
 
+    def test_the_responder_argv_parses_and_answers_with_the_loopback(self):
+        """Every name answered with the address the redirect lands 443 and
+        80 from, counted against the policy the inspector reads."""
+        mod = _mod()
+        resolver = load_script("libexec/customs-resolve")
+        args = resolver.parse_args(mod.resolver_argv("wl")[1:])
+        self.assertEqual(args.address, mod.LOOPBACK)
+        self.assertIsNone(args.address6)
+        self.assertEqual(args.policy, mod.POLICY)
+        self.assertTrue(args.status.startswith(mod.STATE + "/"))
+        self.assertNotEqual(args.status, mod.STATUS)
+
+    def test_the_responders_sockets_are_its_port_over_both_transports(self):
+        import socket as socket_mod
+        mod = _mod()
+        from egress_plane import RESOLVE_PORT
+        self.assertEqual(sorted(mod.RESOLVER_SOCKETS), sorted([
+            (socket_mod.SOCK_DGRAM, RESOLVE_PORT),
+            (socket_mod.SOCK_STREAM, RESOLVE_PORT)]))
+
     def test_the_planes_are_the_inspectors(self):
         """The bind is here and the recognition is the inspector's: a port
         bound that plane_for_port does not know is a listener that rejects

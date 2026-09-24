@@ -2,7 +2,7 @@
 """shape1b_rig.py — does the pair work as a sidecar, with no host install?
 
 Shape 1b of docs/DESIGN.md: a podman pod under pasta, the sidecar image
-(both programs, one container, two uids) beside a workload container, the
+(the programs, one container, two uids) beside a workload container, the
 nft rules loaded into the pod's netns keyed on `meta skuid`, the broker on
 a socket path the workload has no mount for, the key mounted as a podman
 secret, and one real request that reaches the provider carrying it. Run
@@ -10,6 +10,7 @@ on the proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/shape1b_rig.py [--keep] [--without-rules]
                                         [--without-neighbour-discovery]
+                                        [--without-dns-redirect]
                                         [--without-private-drop]
                                         [--no-build]
 
@@ -22,8 +23,16 @@ THE ROWS
             CAP_SETUID -- the second because the uid is the selector, and
             a workload that could become the sidecar's uid would be
             exempt from its own redirect; the rules are in the pod's
-            netns; the sidecar's two processes run as the two image uids,
-            and its pid 1, which supervises them, holds no capability.
+            netns; the sidecar's programs run as the two image uids, the
+            responder as the inspector's, and its pid 1, which supervises
+            them, holds no capability.
+  dns       the workload's queries, to its resolver over UDP and TCP and to
+            any other nameserver, are answered by the sidecar's
+            customs-resolve with the pod's loopback, for names nothing
+            resolves; an AAAA gets no records; the responder's status names
+            the unlisted names and not the provider's. The unlisted row
+            below also resolved its name here; the provider's name is in
+            the pod's hosts file, which the sidecar's dials need.
   silent    a filtered UDP send returns rc=0 while the egress chain's drop
             counter moves. The drop is a netdev egress hook, not an output
             filter: an output `policy drop` fails the send with EPERM, a
@@ -40,8 +49,8 @@ THE ROWS
   broker    from the workload, connect() to the broker's socket path is
             ENOENT -- not ECONNREFUSED, which would mean the path exists
             and the mount is shared. Nothing but the inspector's two
-            planes listens on TCP in the pod, so there is no address to
-            spell. The broker's log did not grow.
+            planes and the responder's port listens on TCP in the pod, so
+            there is no address to spell. The broker's log did not grow.
   unlisted  from the workload, a host the policy does not name gets the
             inspector's 403 and the record says why, with no upstream.
   private   the programs' dials into private space are dropped unless an
@@ -61,14 +70,18 @@ THE ROWS
             non-zero, and the restart policy brings it back on the same
             volume: the restart count rose and the workload's request is
             served again under the CA its bundle holds. Then a stop
-            reaches both programs well inside podman's timeout, and the
+            reaches every program well inside podman's timeout, and the
             container exits 0.
 
-`--without-rules` loads no rules into the pod's netns. `premise`,
-`silent`, `request`, `unlisted` and the lifecycle's request must go red:
-the workload's dial reaches the stub directly and refuses its certificate,
-which no bundle of the workload's carries, the unlisted name times out on
-TEST-NET, and with no egress chain the drop counter is absent.
+`--without-rules` loads no rules into the pod's netns. `premise`, `dns`,
+`silent`, `request`, `neighbour`, `unlisted`, `private` and the
+lifecycle's request must go red: the workload's dial reaches the stub
+directly and refuses its certificate, which no bundle of the workload's
+carries, pasta's forwarder answers the names and does not know the
+unlisted one, and with no egress chain the drop counter is absent.
+`--without-dns-redirect` leaves the port-53 lines out of the redirect;
+the workload's queries go to pasta's forwarder, whose accept lines are
+the programs' alone, and `dns` and `unlisted` must go red.
 `--without-neighbour-discovery` loads the egress chain without its ARP
 and neighbour-discovery lines; `neighbour` and the lifecycle's request
 must go red. `--without-private-drop` leaves out the private-space drop
@@ -89,8 +102,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import riglib  # noqa
 from riglib import (  # noqa
     CA_BUNDLE_IN_CONTAINER, CHECKOUT, CREDENTIAL, IMAGE, INSPECT_CLEARTEXT,
-    INSPECT_TLS, LOOPBACK_MAP, NAME, PLACEHOLDER, PROVIDER, RIG, STUB_CERT,
-    UNLISTED, UNLISTED_ADDR, row, run, say,
+    INSPECT_TLS, LOOPBACK_MAP, NAME, PLACEHOLDER, PROVIDER, RESOLVE_PORT,
+    RIG, STUB_CERT, UNLISTED, row, run, say,
 )
 from egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
 
@@ -156,13 +169,13 @@ def remove_pod():
 
 def create_pod():
     """The provider's name resolves to the loopback-mapped address so the
-    SIDECAR's dials reach the stub on the host; the workload's dial to the
-    same address is what the redirect catches, and it is not the pod's
-    own loopback, so `oif lo` does not admit it first."""
+    sidecar's dials reach the stub on the host. The hosts file is the
+    pod's, so the workload reads it too, and its dial to that address is
+    what the redirect catches."""
     run(["podman", "pod", "create", "--name", POD,
          "--network", f"pasta:--map-host-loopback={LOOPBACK_MAP}",
-         "--add-host", f"{PROVIDER}:{LOOPBACK_MAP}",
-         "--add-host", f"{UNLISTED}:{UNLISTED_ADDR}"])
+         "--hosts-file", "image",
+         "--add-host", f"{PROVIDER}:{LOOPBACK_MAP}"])
 
 
 def start_sidecar():
@@ -227,11 +240,12 @@ def default_route_device(pid):
     return in_netns(pid, ["ip", "route", "show", "default"]).stdout.split()[4]
 
 
-def load_rules(pid, neighbour, private):
+def load_rules(pid, neighbour, redirect_dns, private):
     """The discriminator is the uid: the two image uids are exempt from
     the redirect and the drop, since their dials are the upstream legs
     and leave through this same netns. The resolver is pasta's forwarder,
-    read from the pod's resolv.conf.
+    read from the pod's resolv.conf; its accept lines are the programs',
+    since everyone else's port 53 is redirected to the responder.
 
     The drop is a netdev egress hook, not an output filter. An output
     `policy drop` fails a UDP send with EPERM, which no real network does;
@@ -251,14 +265,18 @@ def load_rules(pid, neighbour, private):
     resolver is link-local, and the programs resolve through it too.
 
     `neighbour` false leaves out the ARP and neighbour-discovery lines,
-    for the `neighbour` row to go red; `private` false, the private-space
-    drop, for the `private` row."""
+    for the `neighbour` row to go red; `redirect_dns` false the port-53
+    lines, for the `dns` rows; `private` false, the private-space drop,
+    for the `private` row."""
     resolv = exec_in(SIDECAR, ["cat", "/etc/resolv.conf"]).stdout
     dns = next((ln.split()[1] for ln in resolv.splitlines()
                 if ln.startswith("nameserver")), "169.254.1.1")
     dev = default_route_device(pid)
     ours = f"{{ {INSPECT_UID}, {BROKER_UID} }}"
     nd = riglib.NEIGHBOUR_DISCOVERY if neighbour else ""
+    redirect = (f"    udp dport 53  dnat ip to 127.0.0.1:{RESOLVE_PORT}\n"
+                f"    tcp dport 53  dnat ip to 127.0.0.1:{RESOLVE_PORT}\n"
+                if redirect_dns else "")
     inward = f"""\
     {INTERNAL_ACCEPT} comment "internal"
     meta mark {OURS_MARK} ip daddr {{ {PRIVATE_V4} }} counter drop \
@@ -273,7 +291,7 @@ table inet customs {{
     meta skuid {ours} accept
     tcp dport 443 dnat ip to 127.0.0.1:{INSPECT_TLS}
     tcp dport 80  dnat ip to 127.0.0.1:{INSPECT_CLEARTEXT}
-  }}
+{redirect}  }}
   chain tag {{
     type filter hook output priority mangle
     meta skuid {ours} ct mark set {OURS_MARK}
@@ -283,8 +301,8 @@ table inet customs {{
 table netdev customs {{
   chain egress {{
     type filter hook egress device "{dev}" priority 0; policy drop
-{nd}    ip daddr {dns} udp dport 53 accept
-    ip daddr {dns} tcp dport 53 accept
+{nd}    meta mark {OURS_MARK} ip daddr {dns} udp dport 53 accept
+    meta mark {OURS_MARK} ip daddr {dns} tcp dport 53 accept
 {inward}    meta mark {OURS_MARK} accept
     counter comment "dropped"
   }}
@@ -359,9 +377,9 @@ else:
     print("sent")
 """
 
-# TEST-NET-1: never routed, and named by neither accept line, so a packet
-# to it falls to the egress chain's drop.
-FILTERED_UDP = ("192.0.2.1", 53)
+# TEST-NET-1: never routed, and named by no accept line, so a packet to it
+# falls to the egress chain's drop. Not port 53, which the redirect takes.
+FILTERED_UDP = ("192.0.2.1", 9)
 
 
 def dropped_counter(pid):
@@ -468,18 +486,27 @@ def probe(sidecar_pid, workload_pid, secret, dns):
     who = {}
     for ln in top.splitlines()[1:]:
         user, _, argv = ln.partition(" ")
-        for prog in ("customs-broker", "customs-inspect"):
+        for prog in ("customs-broker", "customs-inspect", "customs-resolve"):
             if prog in argv:
                 who[prog] = user.strip()
+    inspect = ("inspect", str(INSPECT_UID))
     row("premise: the sidecar's programs run as the two image uids",
         who.get("customs-broker") in ("broker", str(BROKER_UID))
-        and who.get("customs-inspect") in ("inspect", str(INSPECT_UID)),
+        and who.get("customs-inspect") in inspect
+        and who.get("customs-resolve") in inspect,
         f"{who}")
     effective = int(next(ln.split()[1] for ln in
                          Path(f"/proc/{sidecar_pid}/status").read_text()
                          .splitlines() if ln.startswith("CapEff:")), 16)
     row("premise: the supervisor holds no capability",
         effective == 0, f"CapEff={effective:016x}")
+
+    riglib.dns_rows(
+        lambda argv: in_netns(sidecar_pid, ["python3", "-c",
+                                            riglib.DNS_LOOKUP, *argv],
+                              check=False).stdout.strip(),
+        dns, "127.0.0.1",
+        lambda: sidecar_file(f"{STATE_IN_SIDECAR}/resolve-status.json"))
 
     say("silent drop")
     sent = in_netns(sidecar_pid, ["python3", "-c", UDP_SEND,
@@ -556,8 +583,9 @@ def probe(sidecar_pid, workload_pid, secret, dns):
     held = in_netns(sidecar_pid, ["ss", "-lntH"], check=False).stdout
     ports = sorted({ln.split()[3].rsplit(":", 1)[1]
                     for ln in held.splitlines() if ln.strip()})
-    row("broker: nothing but the two planes listens on TCP in the pod",
-        ports == sorted({str(INSPECT_TLS), str(INSPECT_CLEARTEXT)}),
+    row("broker: nothing but the planes and the responder listen on TCP",
+        ports == sorted({str(INSPECT_TLS), str(INSPECT_CLEARTEXT),
+                         str(RESOLVE_PORT)}),
         f"listening: {ports}")
     after = logs().count(" ok ")
     row("broker: its log saw nothing", after == before,
@@ -620,7 +648,8 @@ def lifecycle(secret):
     log = logs()
     row("lifecycle: the broker's death ends the container, non-zero",
         now == restarts + 1 and "the broker exited (-15)" in log
-        and "the inspector exited (0)" in log,
+        and "the inspector exited (0)" in log
+        and "the responder exited (0)" in log,
         f"restarts {restarts} -> {now}; "
         + "; ".join(ln for ln in log.splitlines() if " exited (" in ln))
 
@@ -643,11 +672,12 @@ def lifecycle(secret):
     took = time.monotonic() - started
     status = sidecar_state(".State.ExitCode")
     log = logs()
-    tail = [ln for ln in log.splitlines() if " exited (" in ln][-2:]
-    row("lifecycle: a stop reaches both programs and exits 0",
+    tail = [ln for ln in log.splitlines() if " exited (" in ln][-3:]
+    row("lifecycle: a stop reaches every program and exits 0",
         took < 5 and status == "0"
         and sorted(tail) == ["the broker exited (-15)",
-                             "the inspector exited (0)"],
+                             "the inspector exited (0)",
+                             "the responder exited (0)"],
         f"{took:.1f}s, exit {status}; {tail}")
 
 
@@ -675,11 +705,15 @@ def main():
                     help="leave the pod, its volume and the secret")
     ap.add_argument("--without-rules", action="store_true",
                     help="load no rules into the pod's netns; premise, "
-                         "request and unlisted must go red")
+                         "dns, silent, request, neighbour, unlisted and "
+                         "private must go red")
     ap.add_argument("--without-neighbour-discovery", action="store_true",
                     help="leave ARP and neighbour discovery out of the "
                          "egress chain; neighbour and the lifecycle's "
                          "request must go red")
+    ap.add_argument("--without-dns-redirect", action="store_true",
+                    help="leave port 53 out of the redirect; dns and "
+                         "unlisted must go red")
     ap.add_argument("--without-private-drop", action="store_true",
                     help="leave out the private-space drop and its accept "
                          "line; private must go red")
@@ -717,6 +751,7 @@ def main():
         else:
             dns = load_rules(sidecar_pid,
                              not args.without_neighbour_discovery,
+                             not args.without_dns_redirect,
                              not args.without_private_drop)
         workload_pid = start_workload()
         probe_started = time.time()
@@ -726,9 +761,11 @@ def main():
         teardown(args.keep)
 
     expected = [note for flag, note in (
-        (args.without_rules, "--without-rules: premise, request, unlisted "
-                             "and the lifecycle's request are expected "
-                             "red"),
+        (args.without_rules, "--without-rules: premise, dns, silent, "
+                             "request, neighbour, unlisted, private and the "
+                             "lifecycle's request are expected red"),
+        (args.without_dns_redirect,
+         "--without-dns-redirect: dns and unlisted are expected red"),
         (args.without_neighbour_discovery,
          "--without-neighbour-discovery: neighbour and the lifecycle's "
          "request are expected red"),

@@ -77,3 +77,9 @@ repo:
 - Its two closure tests retired in favour of `test_closure.py` here.
 
 Nothing changes in customs.
+
+workloadctl's own responder, `workload-vm-resolve`, is not part of the
+switch. `customs-resolve` was taken from it without the static map
+workloadctl's VMs use to name non-HTTP destinations, and takes its
+answers as flags rather than from a document workloadctl writes; the two
+share the wire parser's shape and the no-upstream test, not a module.

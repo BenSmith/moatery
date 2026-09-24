@@ -1,21 +1,24 @@
 #!/usr/bin/python3
 """
 customs-sidecar: the entrypoint of the sidecar image, doing as the
-container's root what the two units and the socket unit do on a host:
+container's root what the units and the socket units do on a host:
 
-  - binds the inspector's two planes on the pod's loopback and hands them
-    down as fds 3 and 4, LISTEN_PID/LISTEN_FDS style, so the inspector
-    never binds;
+  - binds the inspector's two planes and the responder's port on the
+    pod's loopback and hands each program its own as fds 3 and 4,
+    LISTEN_PID/LISTEN_FDS style, so neither program binds;
   - starts the broker as its own uid, on a socket under /run/customs that
     the workload container has no mount for;
   - hands the state volume to the inspector's uid and mints the egress CA
     into it on the first start, as that uid;
   - starts the inspector as its own uid, told the workload's uid;
-  - stays as pid 1 to supervise both.
+  - starts the responder as the inspector's uid;
+  - stays as pid 1 to supervise all three.
 
 The two uids are the privilege boundary: the inspector parses what the
 workload sends and holds no key; the broker holds the key and parses only
-what the inspector forwards. Dropping to a uid clears every capability.
+what the inspector forwards. The responder parses what the workload sends
+too, and holds nothing, so it shares the inspector's uid. Dropping to a
+uid clears every capability.
 
 The two flags are the facts the image cannot know, the workload's label and
 uid; every flag after them is the broker's, passed through. The credential
@@ -32,20 +35,20 @@ Usage:
       IMAGE --name NAME --caller-uid UID --host HOST=CRED ...
 
 The four capabilities are for chowning the two directories, connecting to
-the broker's 0660 socket, and dropping uids; neither program holds one, and
-nor does this process once both have started.
+the broker's 0660 socket, and dropping uids; no program holds one, and
+nor does this process once all have started.
 
 SUPERVISION
 
-The pair serves together or not at all. A stop is forwarded to both and the
-container exits 0 once both have; if one exits unasked the other is stopped
-(SIGKILL after STOP_GRACE) and the container exits 1, for the restart
-policy.
+The three serve together or not at all. A stop is forwarded to each and
+the container exits 0 once all have; if one exits unasked the others are
+stopped (SIGKILL after STOP_GRACE) and the container exits 1, for the
+restart policy.
 
-To signal both without CAP_KILL, this process ends with the inspector's uid
+To signal each without CAP_KILL, this process ends with the inspector's uid
 as its real uid and the broker's as its effective and saved uid: kill() is
 allowed where the sender's real or effective uid is the target's real uid.
-Either program can signal this process, which only ends the container.
+Any program can signal this process, which only ends the container.
 
 It must be pid 1: an --init runs as root without CAP_KILL and cannot signal
 a process with no uid 0, so a stop never arrives. As pid 1 it also reaps
@@ -53,6 +56,7 @@ orphans.
 """
 
 import argparse
+import fcntl
 import grp
 import os
 import pwd
@@ -65,11 +69,12 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 import egress_mint
-from egress_plane import CLEARTEXT, TLS
+from egress_plane import CLEARTEXT, RESOLVE_PORT, TLS
 
 HERE = Path(__file__).resolve().parent
 BROKER = HERE / "customs-broker"
 INSPECTOR = HERE / "customs-inspect"
+RESOLVER = HERE / "customs-resolve"
 
 INSPECT_USER = "inspect"
 BROKER_USER = "broker"
@@ -79,6 +84,7 @@ POLICY = "/etc/customs/policy.json"
 STATE = "/var/lib/customs"
 STATUS = f"{STATE}/status.json"
 RECORD = f"{STATE}/egress.jsonl"
+RESOLVE_STATUS = f"{STATE}/resolve-status.json"
 RUN_DIR = "/run/customs"
 SOCKET = f"{RUN_DIR}/broker.sock"
 SECRETS = "/run/secrets"
@@ -110,9 +116,9 @@ def parse_args(argv):
     """
     p = argparse.ArgumentParser(
         prog="customs-sidecar",
-        description="the pair, as a pod sidecar")
+        description="the programs, as a pod sidecar")
     p.add_argument("--name", required=True,
-                   help="the workload's label, for both programs")
+                   help="the workload's label, for every program")
     p.add_argument("--caller-uid", required=True, type=int, metavar="UID",
                    help="the workload's uid in the pod: the one caller the "
                         "inspector serves")
@@ -140,18 +146,32 @@ def inspector_argv(name, caller_uid):
             "--caller-uid", str(caller_uid)]
 
 
-def bind_planes():
-    """The two listeners, bound here as root. Left blocking: the inspector
-    selects on them.
+def resolver_argv(name):
+    """Every name answered with the pod's loopback, where the redirect
+    lands 443 and 80 on the planes."""
+    return [sys.executable, str(RESOLVER), "--name", name,
+            "--address", LOOPBACK, "--policy", POLICY,
+            "--status", RESOLVE_STATUS]
+
+
+def bind(specs):
+    """One socket per (type, port), bound here as root. Left blocking: the
+    programs select on them.
     """
     sockets = []
-    for port in PLANES:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    for kind, port in specs:
+        s = socket.socket(socket.AF_INET, kind)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((LOOPBACK, port))
-        s.listen(128)
+        if kind == socket.SOCK_STREAM:
+            s.listen(128)
         sockets.append(s)
     return sockets
+
+
+PLANE_SOCKETS = tuple((socket.SOCK_STREAM, port) for port in PLANES)
+RESOLVER_SOCKETS = ((socket.SOCK_DGRAM, RESOLVE_PORT),
+                    (socket.SOCK_STREAM, RESOLVE_PORT))
 
 
 def prepare_dirs(inspect, broker, group):
@@ -220,8 +240,8 @@ def become(user, group):
 
 
 def start_broker(name, flags, broker, group, sockets):
-    """Fork the broker as its uid, having closed the planes, which are the
-    inspector's.
+    """Fork the broker as its uid, having closed the listeners, which are
+    the other programs'.
     """
     pid = os.fork()
     if pid == 0:
@@ -264,24 +284,32 @@ def _accepts(path):
     return True
 
 
-def start_inspector(name, caller_uid, inspect, group, sockets):
-    """Fork the inspector as its uid: fds moved to 3.., made inheritable,
-    LISTEN_PID naming the child, which exec keeps."""
+def start_activated(argv, user, group, sockets):
+    """Fork `argv` as `user` with `sockets` as fds 3 onward, inheritable,
+    and LISTEN_PID naming the child, which exec keeps."""
     pid = os.fork()
     if pid == 0:
         try:
-            for i, s in enumerate(sockets):
-                fd = LISTEN_FDS_START + i
-                if s.fileno() != fd:
-                    os.dup2(s.fileno(), fd)
-                os.set_inheritable(fd, True)
-            become(inspect, group)
+            place(sockets)
+            become(user, group)
             env = program_env(LISTEN_PID=str(os.getpid()),
                               LISTEN_FDS=str(len(sockets)))
-            os.execve(sys.executable, inspector_argv(name, caller_uid), env)
+            os.execve(sys.executable, argv, env)
         finally:
             os._exit(127)
     return pid
+
+
+def place(sockets):
+    """`sockets` onto fds 3 onward. Moved clear of that range first, so
+    placing one never overwrites another still to be placed; whatever else
+    held those fds is this child's copy and closes at exec anyway."""
+    top = LISTEN_FDS_START + len(sockets)
+    high = [fcntl.fcntl(s.fileno(), fcntl.F_DUPFD_CLOEXEC, top)
+            for s in sockets]
+    for i, fd in enumerate(high):
+        os.dup2(fd, LISTEN_FDS_START + i, inheritable=True)
+        os.close(fd)
 
 
 def become_supervisor(inspect, broker, group):
@@ -354,7 +382,7 @@ def main(argv=None):
                  "whose traffic the pod's rules exempt; run the workload "
                  "as another uid")
     if os.getpid() != 1:
-        sys.exit("customs-sidecar supervises both programs as the "
+        sys.exit("customs-sidecar supervises the programs as the "
                  "container's pid 1; run the container without --init")
     if not Path(POLICY).exists():
         sys.exit(f"no policy at {POLICY}; mount one (ro)")
@@ -366,7 +394,9 @@ def main(argv=None):
                   flush=True)
     except egress_mint.MintFailed as exc:
         sys.exit(f"could not mint the egress CA: {exc}")
-    sockets = bind_planes()
+    planes = bind(PLANE_SOCKETS)
+    resolver = bind(RESOLVER_SOCKETS)
+    sockets = planes + resolver
     # /run survives a restart, and a stale socket would read as listening.
     Path(SOCKET).unlink(missing_ok=True)
     stopping = []
@@ -381,8 +411,10 @@ def main(argv=None):
         sys.exit(f"the broker exited with status {status} before "
                  "listening; its reason is above")
     children = {pid: "broker"}
-    children[start_inspector(args.name, args.caller_uid, inspect, group,
-                             sockets)] = "inspector"
+    children[start_activated(inspector_argv(args.name, args.caller_uid),
+                             inspect, group, planes)] = "inspector"
+    children[start_activated(resolver_argv(args.name), inspect, group,
+                             resolver)] = "responder"
     for s in sockets:
         s.close()
     become_supervisor(inspect, broker, group)

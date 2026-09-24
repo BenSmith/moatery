@@ -23,6 +23,10 @@ TLS = Plane("tls", 443, 8443)
 
 PLANES = (CLEARTEXT, TLS)
 
+# Where the redirect lands the workload's port 53: customs-resolve's port,
+# UDP and TCP, which its socket unit binds.
+RESOLVE_PORT = 8053
+
 
 def plane_for_port(port: int) -> Plane | None:
     """The plane a listener accepting on `port` carries, or None for a port

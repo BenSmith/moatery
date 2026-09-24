@@ -9,6 +9,7 @@ sealed key. Run on the proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/shape1_rig.py [--keep] [--without-rules]
                                        [--without-neighbour-discovery]
+                                       [--without-dns-redirect]
                                        [--broker-over-tcp]
 
 Nothing here needs root except two host facts the rig cannot fake and
@@ -22,6 +23,12 @@ THE ROWS
 
   premise   the container's bounding set holds no CAP_NET_ADMIN; the rules
             are in its netns. Without the first, the second is a suggestion.
+  dns       the workload's queries, to its resolver over UDP and TCP and to
+            any other nameserver, are answered by customs-resolve with the
+            loopback map, for names nothing resolves; an AAAA gets no
+            records; the responder's status names the unlisted names and
+            not the provider's. The container has no --add-host, so every
+            request row below also resolved its name here.
   silent    a filtered UDP send returns rc=0 while the egress chain's drop
             counter moves. The drop is a netdev egress hook, not an output
             filter: an output `policy drop` fails the send with EPERM, a
@@ -50,9 +57,13 @@ THE ROWS
             stub distinguishes at all.
 
 `--without-rules` skips loading the netns rules and changes nothing else.
-The `premise`, `silent`, `request` and `unlisted` rows must go red -- the
-inspector is never even activated, and with no egress chain the drop
-counter is absent -- and a run where they stay green is measuring nothing.
+The `premise`, `dns`, `silent`, `request`, `neighbour`, `unlisted` and
+`counters` rows must go red -- the inspector is never even activated, and
+with no egress chain the drop counter is absent -- and a run where they
+stay green is measuring nothing. `--without-dns-redirect` leaves the
+port-53 lines out of the redirect: the queries go to pasta's forwarder,
+which the egress chain drops, and `dns`, `request`, `neighbour`,
+`unlisted` and `counters` must go red.
 `--broker-over-tcp` puts the broker on 127.129.0.1:8081 instead of the
 socket path, and the broker's no-TCP and other-uid rows must go red.
 `--without-neighbour-discovery` loads the egress chain without its ARP
@@ -68,7 +79,8 @@ recipe here is what worked:
     dedicated address (`--network pasta:--map-host-loopback=169.254.1.3`)
     reads better than borrowing the gateway.
   - the container's resolver is pasta's forwarder at 169.254.1.1 (its
-    `--dns-forward`), not the gateway. The 53 rule names that.
+    `--dns-forward`), not the gateway, followed by the host's own
+    nameservers. The redirect catches port 53 whatever the address.
   - the inspector recognises exactly the ports 8080 and 8443 as its planes
     (lib/egress_plane.py). "Each container gets its own inspector port" is
     not something the program supports; one container per host loopback.
@@ -87,8 +99,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import riglib  # noqa
 from riglib import (  # noqa
     CA_BUNDLE_IN_CONTAINER, CHECKOUT, CREDENTIAL, IMAGE, INSPECT_CLEARTEXT,
-    INSPECT_TLS, LOOPBACK_MAP, NAME, PLACEHOLDER, PROVIDER, PROVIDER_ADDR,
-    RIG, STUB_CERT, UNLISTED, UNLISTED_ADDR, row, run, say,
+    INSPECT_TLS, LOOPBACK_MAP, NAME, PLACEHOLDER, PROVIDER, RESOLVE_PORT,
+    RIG, STUB_CERT, UNLISTED, row, run, say,
 )
 from egress_ca import ca_cert_path  # noqa
 from egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
@@ -106,6 +118,7 @@ UNITS = riglib.HOME / ".config" / "systemd" / "user"
 STATE = RIG / "state"
 POLICY = RIG / "inspect.json"
 STATUS = RIG / "inspect-status.json"
+RESOLVE_STATUS = RIG / "resolve-status.json"
 RECORD = RIG / "egress.jsonl"
 BUNDLE = RIG / "bundle.pem"
 CRED = RIG / f"{CREDENTIAL}.cred"
@@ -161,6 +174,18 @@ def write_units(over_tcp):
         f" --status {STATUS} --record {RECORD}"
         f" --broker {endpoint}\n"
         + env)
+    (UNITS / f"{UNIT}-resolve.socket").write_text(
+        "# written by tests/manual/shape1_rig.py — removed at teardown\n"
+        "[Socket]\n"
+        f"ListenDatagram=127.0.0.1:{RESOLVE_PORT}\n"
+        f"ListenStream=127.0.0.1:{RESOLVE_PORT}\n")
+    (UNITS / f"{UNIT}-resolve.service").write_text(
+        "# written by tests/manual/shape1_rig.py — removed at teardown\n"
+        "[Service]\n"
+        f"ExecStart={py} {CHECKOUT / 'libexec' / 'customs-resolve'}"
+        f" --name {NAME} --address {LOOPBACK_MAP} --policy {POLICY}"
+        f" --status {RESOLVE_STATUS}\n"
+        f"Environment=PYTHONPATH={CHECKOUT / 'lib'}\n")
     run(["systemctl", "--user", "daemon-reload"])
 
 
@@ -192,6 +217,12 @@ def start_units(over_tcp):
         sys.exit(f"the socket unit is up but nothing holds :{INSPECT_TLS}")
     say(f"  inspector socket bound on 127.0.0.1:{INSPECT_TLS},"
         f" :{INSPECT_CLEARTEXT}")
+    run(["systemctl", "--user", "start", f"{UNIT}-resolve.socket"])
+    held = run(["ss", "-lnuH", f"sport = :{RESOLVE_PORT}"]).stdout
+    if not held.strip():
+        sys.exit(f"the responder's socket unit is up but nothing holds "
+                 f"udp :{RESOLVE_PORT}")
+    say(f"  responder socket bound on 127.0.0.1:{RESOLVE_PORT}, UDP and TCP")
 
 
 def journal(kind):
@@ -199,13 +230,15 @@ def journal(kind):
                 "-o", "cat", "--no-pager", "-b"], check=False).stdout
 
 
+UNIT_FILES = ("inspect.socket", "inspect.service", "resolve.socket",
+              "resolve.service", "broker.service")
+
+
 def stop_units():
-    for unit in (f"{UNIT}-inspect.socket", f"{UNIT}-inspect.service",
-                 f"{UNIT}-broker.service"):
-        run(["systemctl", "--user", "stop", unit], check=False)
-    for unit in (f"{UNIT}-broker.service", f"{UNIT}-inspect.socket",
-                 f"{UNIT}-inspect.service"):
-        (UNITS / unit).unlink(missing_ok=True)
+    for unit in UNIT_FILES:
+        run(["systemctl", "--user", "stop", f"{UNIT}-{unit}"], check=False)
+    for unit in UNIT_FILES:
+        (UNITS / f"{UNIT}-{unit}").unlink(missing_ok=True)
     run(["systemctl", "--user", "daemon-reload"], check=False)
     run(["systemctl", "--user", "reset-failed"], check=False)
 
@@ -216,8 +249,7 @@ def create_container():
     run(["podman", "rm", "-f", CONTAINER], check=False)
     run(["podman", "create", "--name", CONTAINER,
          "--network", f"pasta:--map-host-loopback={LOOPBACK_MAP}",
-         "--add-host", f"{PROVIDER}:{PROVIDER_ADDR}",
-         "--add-host", f"{UNLISTED}:{UNLISTED_ADDR}",
+         "--hosts-file", "image",
          "-v", f"{BUNDLE}:{CA_BUNDLE_IN_CONTAINER}:ro,Z",
          "-e", f"SSL_CERT_FILE={CA_BUNDLE_IN_CONTAINER}",
          "-e", f"NODE_EXTRA_CA_CERTS={CA_BUNDLE_IN_CONTAINER}",
@@ -248,10 +280,10 @@ def default_route_device():
     return run(["ip", "route", "show", "default"]).stdout.split()[4]
 
 
-def load_rules(pid, dns, neighbour):
+def load_rules(pid, neighbour, redirect_dns):
     """What replaces `meta skuid`: the rules see only this netns's traffic.
     nat output runs before the egress hook, so the accept lines name the
-    inspector's translated ports, not 80 and 443.
+    translated ports, not 80, 443 and 53.
 
     The drop is a netdev egress hook, not an output filter. An output
     `policy drop` fails a UDP send with EPERM, which no real network does;
@@ -260,24 +292,27 @@ def load_rules(pid, dns, neighbour):
     `oif lo accept` is needed.
 
     `neighbour` false leaves out the ARP and neighbour-discovery lines,
-    for the `neighbour` row to go red."""
+    for the `neighbour` row to go red; `redirect_dns` false the port-53
+    lines, for the `dns` rows to."""
     dev = default_route_device()
-    planes = f"{{ {INSPECT_TLS}, {INSPECT_CLEARTEXT} }}"
+    ports = f"{{ {INSPECT_TLS}, {INSPECT_CLEARTEXT}, {RESOLVE_PORT} }}"
     nd = riglib.NEIGHBOUR_DISCOVERY if neighbour else ""
+    dns = (f"    udp dport 53  dnat ip to {LOOPBACK_MAP}:{RESOLVE_PORT}\n"
+           f"    tcp dport 53  dnat ip to {LOOPBACK_MAP}:{RESOLVE_PORT}\n"
+           if redirect_dns else "")
     rules = f"""
 table inet customs {{
   chain out {{
     type nat hook output priority -100
     tcp dport 443 dnat ip to {LOOPBACK_MAP}:{INSPECT_TLS}
     tcp dport 80  dnat ip to {LOOPBACK_MAP}:{INSPECT_CLEARTEXT}
-  }}
+{dns}  }}
 }}
 table netdev customs {{
   chain egress {{
     type filter hook egress device "{dev}" priority 0; policy drop
-{nd}    ip daddr {LOOPBACK_MAP} tcp dport {planes} accept
-    ip daddr {dns} udp dport 53 accept
-    ip daddr {dns} tcp dport 53 accept
+{nd}    ip daddr {LOOPBACK_MAP} tcp dport {ports} accept
+    ip daddr {LOOPBACK_MAP} udp dport {RESOLVE_PORT} accept
     counter comment "dropped"
   }}
 }}
@@ -341,9 +376,9 @@ else:
     print("sent")
 """
 
-# TEST-NET-1: never routed, and named by neither accept line, so a packet
-# to it falls to the egress chain's drop.
-FILTERED_UDP = ("192.0.2.1", 53)
+# TEST-NET-1: never routed, and named by no accept line, so a packet to it
+# falls to the egress chain's drop. Not port 53, which the redirect takes.
+FILTERED_UDP = ("192.0.2.1", 9)
 
 
 def dropped_counter(pid):
@@ -358,7 +393,7 @@ def dropped_counter(pid):
     return -1
 
 
-def probe(pid, secret, over_tcp):
+def probe(pid, dns, secret, over_tcp):
     say("premise")
     caps = int(next(ln.split()[1] for ln in
                     Path(f"/proc/{pid}/status").read_text().splitlines()
@@ -370,6 +405,11 @@ def probe(pid, secret, over_tcp):
     row("premise: the rules are in the container's netns",
         "table inet customs" in listed,
         listed.strip() or "no tables")
+
+    riglib.dns_rows(
+        lambda argv: in_netns(pid, ["python3", "-c", riglib.DNS_LOOKUP,
+                                    *argv], check=False).stdout.strip(),
+        dns, LOOPBACK_MAP, RESOLVE_STATUS.read_text)
 
     say("silent drop")
     sent = in_netns(pid, ["python3", "-c", UDP_SEND, FILTERED_UDP[0],
@@ -509,11 +549,15 @@ def main():
     ap.add_argument("--keep", action="store_true",
                     help="leave the container for inspection")
     ap.add_argument("--without-rules", action="store_true",
-                    help="skip the netns rules; premise and request must "
-                         "go red")
+                    help="skip the netns rules; premise, dns, silent, "
+                         "request, neighbour, unlisted and counters must go "
+                         "red")
     ap.add_argument("--without-neighbour-discovery", action="store_true",
                     help="leave ARP and neighbour discovery out of the "
                          "egress chain; neighbour and unlisted must go red")
+    ap.add_argument("--without-dns-redirect", action="store_true",
+                    help="leave port 53 out of the redirect; dns, request, "
+                         "neighbour, unlisted and counters must go red")
     ap.add_argument("--broker-over-tcp", action="store_true",
                     help="the broker on 127.129.0.1:8081; its no-TCP and "
                          "other-uid rows must go red")
@@ -522,14 +566,15 @@ def main():
     riglib.preflight(
         ("podman", "pasta", "nft", "openssl", "curl", "ss", "systemctl",
          "systemd-creds", "nsenter", "setpriv"),
-        (INSPECT_TLS, INSPECT_CLEARTEXT, BROKER_PORT, riglib.PROVIDER_PORT))
+        (INSPECT_TLS, INSPECT_CLEARTEXT, RESOLVE_PORT, BROKER_PORT,
+         riglib.PROVIDER_PORT))
     state = run(["systemctl", "--user", "is-system-running"],
                 check=False).stdout.strip()
     if state not in ("running", "degraded"):
         sys.exit(f"user manager is {state or 'absent'}; log in with a "
                  "session (ssh is one)")
     RIG.mkdir(parents=True, exist_ok=True)
-    for stale in (STATUS, RECORD, Path(f"{STATUS}.tmp")):
+    for stale in (STATUS, RECORD, Path(f"{STATUS}.tmp"), RESOLVE_STATUS):
         stale.unlink(missing_ok=True)
     secret = "sk-real-" + os.urandom(12).hex()
 
@@ -551,16 +596,21 @@ def main():
         if args.without_rules:
             say("  rules NOT loaded, as asked")
         else:
-            load_rules(pid, dns, not args.without_neighbour_discovery)
+            load_rules(pid, not args.without_neighbour_discovery,
+                       not args.without_dns_redirect)
         run(["podman", "start", CONTAINER])
         probe_started = time.time()
-        probe(pid, secret, args.broker_over_tcp)
+        probe(pid, dns, secret, args.broker_over_tcp)
     finally:
         teardown(args.keep)
 
     expected = [note for flag, note in (
-        (args.without_rules, "--without-rules: premise and request are "
+        (args.without_rules, "--without-rules: premise, dns, silent, "
+                             "request, neighbour, unlisted and counters are "
                              "expected red"),
+        (args.without_dns_redirect,
+         "--without-dns-redirect: dns, request, neighbour, unlisted and "
+         "counters are expected red"),
         (args.without_neighbour_discovery,
          "--without-neighbour-discovery: neighbour and unlisted are "
          "expected red"),
@@ -570,7 +620,7 @@ def main():
     rc = riglib.report("; ".join(expected) or None)
     if rc:
         say(f"journal: journalctl --user -u {UNIT}-inspect.service"
-            f" -u {UNIT}-broker.service -b")
+            f" -u {UNIT}-broker.service -u {UNIT}-resolve.service -b")
     return rc
 
 

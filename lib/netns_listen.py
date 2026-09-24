@@ -1,12 +1,12 @@
 """
-netns_listen: the inspector's listeners, bound in another process's
-network namespace and handed to a program in this one.
+netns_listen: the inspector's listeners, or the responder's, bound in
+another process's network namespace and handed to a program in this one.
 
 A rootless container's network namespace belongs to a user namespace the
 user owns. Joining the netns needs CAP_SYS_ADMIN over it and in the
 joiner's own user namespace, which the user holds only inside the one it
-owns, so a child joins both by the target's pidfd, binds the planes, sends
-the listeners back and exits. The parent never joins: it stays in the
+owns, so a child joins both by the target's pidfd, binds, sends the
+listeners back and exits. The parent never joins: it stays in the
 host's namespaces, where the program it becomes dials its upstreams, and
 hands the listeners down as a socket unit would.
 """
@@ -16,11 +16,17 @@ import os
 import signal
 import socket
 
-from egress_plane import PLANES
+from egress_plane import PLANES, RESOLVE_PORT
 
-# Where the planes listen in the target namespace. The redirect there
-# lands 443 and 80 on it.
+# Where the listeners are bound in the target namespace. The redirect
+# there lands 443, 80 and 53 on it.
 LISTEN_ADDRESS = "127.0.0.1"
+
+# (type, port) per listener, in the order they are handed over.
+PLANE_LISTENERS = tuple((socket.SOCK_STREAM, plane.inspect_port)
+                        for plane in PLANES)
+RESOLVER_LISTENERS = ((socket.SOCK_DGRAM, RESOLVE_PORT),
+                      (socket.SOCK_STREAM, RESOLVE_PORT))
 
 # The first descriptor of the socket-activation protocol.
 LISTEN_FDS_START = 3
@@ -33,16 +39,17 @@ class BindFailed(Exception):
     """The listeners could not be bound in the target's namespace."""
 
 
-def bind_planes():
-    """Both planes' listeners on this namespace's loopback."""
+def bind(specs):
+    """One listener per (type, port) on this namespace's loopback."""
     socks = []
     try:
-        for plane in PLANES:
-            sock = socket.socket()
+        for kind, port in specs:
+            sock = socket.socket(socket.AF_INET, kind)
             socks.append(sock)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind((LISTEN_ADDRESS, plane.inspect_port))
-            sock.listen(socket.SOMAXCONN)
+            sock.bind((LISTEN_ADDRESS, port))
+            if kind == socket.SOCK_STREAM:
+                sock.listen(socket.SOMAXCONN)
     except BaseException:
         for sock in socks:
             sock.close()
@@ -50,9 +57,10 @@ def bind_planes():
     return socks
 
 
-def listeners_in(pid):
-    """The planes' listeners, bound in `pid`'s user and network namespace.
-    Raises BindFailed, or OSError for a pid that cannot be opened.
+def listeners_in(pid, specs=PLANE_LISTENERS):
+    """The listeners `specs` names, bound in `pid`'s user and network
+    namespace. Raises BindFailed, or OSError for a pid that cannot be
+    opened.
 
     By pidfd, not /proc/PID/ns: a pid that exits and is reused between
     lookup and join is then an error, not another process's namespace.
@@ -63,21 +71,21 @@ def listeners_in(pid):
         with ours, theirs:
             child = os.fork()
             if child == 0:
-                _join_and_bind(pidfd, ours, theirs)
+                _join_and_bind(pidfd, ours, theirs, specs)
             theirs.close()
-            return _received(ours, child)
+            return _received(ours, child, len(specs))
     finally:
         os.close(pidfd)
 
 
-def _join_and_bind(pidfd, ours, theirs):
+def _join_and_bind(pidfd, ours, theirs, specs):
     """The child: join, bind, send the listeners or the reason. Never
     returns."""
     status = 1
     try:
         ours.close()
         os.setns(pidfd, os.CLONE_NEWUSER | os.CLONE_NEWNET)
-        socks = bind_planes()
+        socks = bind(specs)
         socket.send_fds(theirs, [b"ok"], [s.fileno() for s in socks])
         status = 0
     except BaseException as exc:
@@ -89,18 +97,18 @@ def _join_and_bind(pidfd, ours, theirs):
         os._exit(status)
 
 
-def _received(ours, child):
-    """The listeners the child sent, once it has exited."""
+def _received(ours, child, count):
+    """The `count` listeners the child sent, once it has exited."""
     ours.settimeout(BIND_TIMEOUT)
     fds = []
     try:
-        msg, fds, _flags, _addr = socket.recv_fds(ours, 1024, len(PLANES))
+        msg, fds, _flags, _addr = socket.recv_fds(ours, 1024, count)
     except TimeoutError:
         os.kill(child, signal.SIGKILL)
         msg = f"nothing within {BIND_TIMEOUT}s".encode()
     _pid, status = os.waitpid(child, 0)
     socks = [socket.socket(fileno=fd) for fd in fds]
-    if os.waitstatus_to_exitcode(status) == 0 and len(socks) == len(PLANES):
+    if os.waitstatus_to_exitcode(status) == 0 and len(socks) == count:
         return socks
     for sock in socks:
         sock.close()

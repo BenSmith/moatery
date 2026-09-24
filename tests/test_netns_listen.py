@@ -1,5 +1,5 @@
-"""customs-netns-listen: the planes bound in another process's network
-namespace and handed to a program in this one.
+"""customs-netns-listen: the planes, or the responder's port, bound in
+another process's network namespace and handed to a program in this one.
 
 The cases that join a namespace need unprivileged user namespaces and a
 `setns` the sandbox allows; where either is missing they skip, and the
@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -23,10 +24,11 @@ import unittest.mock
 from tests import REPO_ROOT
 
 import netns_listen
-from egress_plane import CLEARTEXT, TLS
+from egress_plane import CLEARTEXT, RESOLVE_PORT, TLS
 
 LAUNCHER = REPO_ROOT / "libexec" / "customs-netns-listen"
 INSPECTOR = REPO_ROOT / "libexec" / "customs-inspect"
+RESOLVER = REPO_ROOT / "libexec" / "customs-resolve"
 ENV = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "lib")}
 
 # What the handed-over program sees: the activation variables and, for
@@ -75,10 +77,22 @@ def _target(test):
     return proc.pid
 
 
-def _launch(pid, command, **kw):
+def _launch(pid, command, *flags, **kw):
     return subprocess.run(
-        [sys.executable, str(LAUNCHER), "--pid", str(pid), "--", *command],
+        [sys.executable, str(LAUNCHER), "--pid", str(pid), *flags, "--",
+         *command],
         capture_output=True, text=True, env=ENV, timeout=30, **kw)
+
+
+# A child that joins the target's namespaces and runs `body` there. A
+# fresh namespace's loopback is down, where a container runtime brings it
+# up; SIOCSIFFLAGS with IFF_UP does that here.
+def _inside(pid, body):
+    return subprocess.run([sys.executable, "-c", f"""
+import fcntl, os, socket, struct
+os.setns(os.pidfd_open({pid}), os.CLONE_NEWUSER | os.CLONE_NEWNET)
+fcntl.ioctl(socket.socket(), 0x8914, struct.pack("16sh22x", b"lo", 1))
+""" + body], capture_output=True, text=True, timeout=30)
 
 
 def _joined(test, pid):
@@ -173,6 +187,20 @@ class TestTheListenersAreInTheTarget(unittest.TestCase):
         self.assertEqual(got["netns"], os.readlink("/proc/self/ns/net"),
                          "the program ran in the target's namespace")
 
+    def test_with_resolver_the_responders_port_over_udp_and_tcp(self):
+        pid = _target(self)
+        _joined(self, pid)
+        done = _launch(pid, [sys.executable, "-c", """
+import json, os, socket
+socks = [socket.socket(fileno=fd)
+         for fd in range(3, 3 + int(os.environ["LISTEN_FDS"]))]
+print(json.dumps([[s.type, *s.getsockname()] for s in socks]))
+"""], "--resolver")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), [
+            [int(socket.SOCK_DGRAM), "127.0.0.1", RESOLVE_PORT],
+            [int(socket.SOCK_STREAM), "127.0.0.1", RESOLVE_PORT]])
+
 
 class TestTheInspectorBehindTheLauncher(unittest.TestCase):
     """The seam: the launcher's listeners, the real inspector, and a caller
@@ -218,16 +246,11 @@ class TestTheInspectorBehindTheLauncher(unittest.TestCase):
         if inspector.poll() is not None:
             self.fail(f"the inspector exited: {inspector.stderr.read()}")
         # The caller: a child that joins the namespace and dials the plane.
-        # A fresh namespace's loopback is down, where a container runtime
-        # brings it up; SIOCSIFFLAGS with IFF_UP does that here.
-        answer = subprocess.run([sys.executable, "-c", f"""
-import fcntl, os, socket, struct
-os.setns(os.pidfd_open({pid}), os.CLONE_NEWUSER | os.CLONE_NEWNET)
-fcntl.ioctl(socket.socket(), 0x8914, struct.pack("16sh22x", b"lo", 1))
+        answer = _inside(pid, f"""
 s = socket.create_connection(("127.0.0.1", {CLEARTEXT.inspect_port}), 5)
 s.sendall(b"GET / HTTP/1.1\\r\\nHost: unlisted.example\\r\\n\\r\\n")
 print(s.recv(4096).split(b"\\r\\n")[0].decode())
-"""], capture_output=True, text=True, timeout=30)
+""")
         inspector.send_signal(signal.SIGTERM)
         inspector.communicate(timeout=10)
         self.assertEqual(answer.stdout.strip(), "HTTP/1.1 403 Forbidden",
@@ -239,6 +262,55 @@ print(s.recv(4096).split(b"\\r\\n")[0].decode())
         with open(self.record) as fh:
             lines = [json.loads(ln) for ln in fh]
         self.assertEqual([r["decision"] for r in lines], ["drop"])
+
+
+
+class TestTheResponderBehindTheLauncher(unittest.TestCase):
+    """The same seam for customs-resolve: its sockets bound in the target,
+    and a query from inside answered over both transports."""
+
+    def test_a_query_in_the_namespace_is_answered(self):
+        pid = _target(self)
+        _joined(self, pid)
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        policy = os.path.join(d, "policy.json")
+        status = os.path.join(d, "status.json")
+        with open(policy, "w") as fh:
+            json.dump({"hosts": ["listed.example"]}, fh)
+        responder = subprocess.Popen(
+            [sys.executable, str(LAUNCHER), "--pid", str(pid), "--resolver",
+             "--", sys.executable, str(RESOLVER), "--name", "t",
+             "--address", "169.254.1.3", "--policy", policy,
+             "--status", status],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=ENV)
+        self.addCleanup(responder.kill)
+        for _ in range(200):
+            if os.path.exists(status) or responder.poll() is not None:
+                break
+            time.sleep(0.05)
+        if responder.poll() is not None:
+            self.fail(f"the responder exited: {responder.stderr.read()}")
+        answer = _inside(pid, f"""
+q = (struct.pack("!6H", 7, 0x0100, 1, 0, 0, 0)
+     + b"\\x05exfil\\x07example\\x00" + struct.pack("!2H", 1, 1))
+u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+u.settimeout(5)
+u.sendto(q, ("127.0.0.1", {RESOLVE_PORT}))
+print(socket.inet_ntoa(u.recv(512)[-4:]))
+t = socket.create_connection(("127.0.0.1", {RESOLVE_PORT}), 5)
+t.sendall(struct.pack("!H", len(q)) + q)
+n = struct.unpack("!H", t.recv(2))[0]
+print(socket.inet_ntoa(t.recv(n)[-4:]))
+""")
+        responder.send_signal(signal.SIGTERM)
+        responder.communicate(timeout=10)
+        self.assertEqual(answer.stdout.split(), ["169.254.1.3"] * 2,
+                         answer.stderr)
+        with open(status) as fh:
+            self.assertEqual(json.load(fh)["unlisted_names"],
+                             {"exfil.example": 2})
 
 
 if __name__ == "__main__":

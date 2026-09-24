@@ -1,13 +1,14 @@
-# The sidecar image: both programs, lib/ beside them, and customs-sidecar
+# The sidecar image: the programs, lib/ beside them, and customs-sidecar
 # as the entrypoint. Build from the checkout root:
 #
 #   podman build -t customs-sidecar -f container/Containerfile .
 #
 # Two users, one group. The inspector (uid 200) parses what the workload
-# sends and owns the state volume; the broker (uid 201) holds the key and
-# owns the socket directory; the group is how the inspector reaches the
-# socket and nothing else of the broker's. The numbers are fixed so that
-# `--secret ...,uid=201` and the pod's `meta skuid` rules can name them.
+# sends and owns the state volume, and the responder runs as it too; the
+# broker (uid 201) holds the key and owns the socket directory; the group
+# is how the inspector reaches the socket and nothing else of the
+# broker's. The numbers are fixed so that `--secret ...,uid=201` and the
+# pod's `meta skuid` rules can name them.
 
 FROM registry.fedoraproject.org/fedora-minimal:44
 

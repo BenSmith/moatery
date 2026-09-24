@@ -9,7 +9,7 @@ modules under `lib/` in the same directory:
 sudo install -d /usr/libexec/customs
 sudo install -m 0644 lib/*.py /usr/libexec/customs/
 sudo install -m 0755 libexec/customs-broker libexec/customs-inspect \
-    libexec/customs-mint-ca /usr/libexec/customs/
+    libexec/customs-mint-ca libexec/customs-resolve /usr/libexec/customs/
 ```
 
 The workload's name in these files is `example`, and the brokered
@@ -21,6 +21,8 @@ Everything else follows from those three.
 | `systemd/customs-broker.service` | `~/.config/systemd/user/` | the broker, holding the credential |
 | `systemd/customs-inspect.socket` | `~/.config/systemd/user/` | the inspector's listeners, 127.0.0.1:8443 and :8080 |
 | `systemd/customs-inspect.service` | `~/.config/systemd/user/` | the inspector, started by the socket |
+| `systemd/customs-resolve.socket` | `~/.config/systemd/user/` | the responder's port, 127.0.0.1:8053, UDP and TCP |
+| `systemd/customs-resolve.service` | `~/.config/systemd/user/` | the workload's nameserver, started by the socket |
 | `systemd/customs-logrotate.{service,timer}` | `~/.config/systemd/user/` | rotation of the record: daily, or hourly once past 100M |
 | `logrotate/customs.conf` | `~/.config/customs/logrotate.conf` | with `USER` replaced |
 
@@ -71,7 +73,8 @@ Then:
 
 ```
 systemctl --user daemon-reload
-systemctl --user enable --now customs-broker.service customs-inspect.socket
+systemctl --user enable --now customs-broker.service customs-inspect.socket \
+    customs-resolve.socket
 ```
 
 The container, and the rules that send its traffic to the inspector,
@@ -85,9 +88,12 @@ are steps 4 and 5 of shape 1 in [DESIGN.md](../docs/DESIGN.md).
 - `~/.local/state/customs/status.json`: counters, rewritten every 30
   seconds and at stop, with the digest of the policy the running
   inspector loaded.
-- The journal (`journalctl --user -u customs-inspect -u customs-broker`):
-  a line per connection and per decision, with the reason for every
-  refusal and every 502.
+- `~/.local/state/customs/resolve-status.json`: the responder's counters,
+  among them `unlisted`, the queries for names no list admits, and the
+  first twenty such names.
+- The journal (`journalctl --user -u customs-inspect -u customs-broker
+  -u customs-resolve`): a line per connection and per decision, with the
+  reason for every refusal and every 502, and a line per query.
 
 ## Rotation
 

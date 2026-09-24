@@ -1,0 +1,129 @@
+#!/usr/bin/python3
+"""
+customs-resolve: the workload's nameserver, which never asks another.
+
+Every A query, for any name, is answered with --address, and every AAAA
+with --address6, or with no records when there is none. Every other type
+gets NOERROR and no records. The workload's port 53 is redirected here,
+and --address is one its 443 and 80 are redirected from, so the
+connection that follows a lookup reaches the inspector, which dials the
+name it authorised and never the address the workload was given.
+
+Nothing is forwarded. There is no upstream socket in this program, and
+tests/test_resolve.py parses every file it is made of to keep it so: a
+query has nowhere to go, which closes DNS as a channel rather than
+filtering it. A general-purpose resolver would do the same with the right
+configuration, but its default is to forward, so the property would rest
+on configuration staying absent; here it rests on the source.
+
+Never REFUSED: the workload has no other nameserver to try, and REFUSED
+sends a stub through its whole retry schedule. No OPT record is sent; a
+stub reads its absence as no EDNS0 and downgrades once. No SOA either, so
+a stub cannot cache an empty answer, and a repeated one is asked again.
+
+The policy is the inspector's, read to count and never to answer: a query
+for a name no list admits is counted as `unlisted`, the signature of
+something encoding data into names.
+
+It never binds. The socket unit binds and hands the sockets in, UDP and
+TCP; a missing activation environment is a failure, never a fallback
+bind.
+"""
+
+import argparse
+import ipaddress
+import os
+import signal
+import sys
+
+# Before the lib imports: the install directory is not this process's to
+# write.
+sys.dont_write_bytecode = True
+
+from dns_wire import log
+from inspect_policy import load_policy
+from resolve_policy import Policy
+from resolve_server import Counters, serve
+from sd_listen import NotSocketActivated
+from sd_listen import (
+    inherited_listening_sockets as sd_inherited_listening_sockets)
+
+
+def inherited_listening_sockets():
+    """Recover the sockets the unit passed in, or fail loudly."""
+    return sd_inherited_listening_sockets(
+        refusal=(", because where it listens is the unit's to say, and a "
+                 "port of its own is one nothing redirects to"))
+
+
+def address(version):
+    def parse(value):
+        try:
+            parsed = ipaddress.ip_address(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"{value!r} is not an address") from None
+        if parsed.version != version:
+            raise argparse.ArgumentTypeError(
+                f"{value!r} is not an IPv{version} address")
+        return str(parsed)
+    return parse
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog=os.path.basename(argv[0]),
+        description="socket-activated DNS responder that answers every "
+                    "name itself and forwards nothing")
+    parser.add_argument("--name", required=True,
+                        help="the workload this responder serves; a label, "
+                             "carried on the log lines")
+    parser.add_argument("--address", required=True, type=address(4),
+                        help="the IPv4 address every A query is answered "
+                             "with")
+    parser.add_argument("--address6", type=address(6), default=None,
+                        help="the IPv6 address every AAAA query is "
+                             "answered with; absent means no records")
+    parser.add_argument("--policy", required=True,
+                        help="the inspector's policy document, read once at "
+                             "start to count unlisted names")
+    parser.add_argument("--status", required=True,
+                        help="where the counters are written")
+    return parser.parse_args(argv[1:])
+
+
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
+    try:
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code or 0)
+    try:
+        lists = load_policy(args.policy)
+    except (OSError, ValueError) as exc:
+        print(f"error: could not read {args.policy}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        sockets = inherited_listening_sockets()
+    except NotSocketActivated as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not sockets:
+        print("error: LISTEN_FDS=0: no sockets were passed", file=sys.stderr)
+        return 1
+    policy = Policy(args.address, args.address6, admits=lists.admits)
+    log(f"  responder for {args.name}: {len(sockets)} socket(s), "
+        f"A {args.address}, AAAA {args.address6 or 'none'}, "
+        f"ttl {policy.ttl}s")
+    stopping = []
+    signal.signal(signal.SIGTERM, lambda *_args: stopping.append(True))
+    serve(sockets, policy, Counters(), args.status,
+          stop=lambda: bool(stopping))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(0)

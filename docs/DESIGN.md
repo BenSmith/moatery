@@ -9,10 +9,11 @@ are in [examples/](../examples/).
 
 ## The same in every shape
 
-- Both programs. Flags only, stdlib. The inspector is
-  socket-activated (`LISTEN_FDS`), so where it listens is the `.socket`
-  unit's business, not the program's (in shape 1n, `customs-netns-listen`
-  takes the unit's place).
+- The programs. Flags only, stdlib. The inspector and the responder
+  (`customs-resolve`, the workload's nameserver) are socket-activated
+  (`LISTEN_FDS`), so where they listen is the `.socket` unit's business,
+  not the program's (in shape 1n, `customs-netns-listen` takes the unit's
+  place).
 - The policy document the inspector reads (`--policy`):
 
   ```json
@@ -77,14 +78,21 @@ off (`--no-map-gw`) and so has to be asked for:
   holds one of a few slots; past them it stops accepting rather than
   refusing, so another uid can delay the workload's connections but not
   get them refused. Without root nothing keeps other uids off that port.
+  The responder's port is there too, unchecked: another uid can ask it
+  names, and learns the one address it gives everyone, and its questions
+  are counted with the workload's.
 - The inspector recognises exactly 8080 and 8443 as its planes
   (`lib/egress_plane.py`), so this is one inspected container per host
   loopback. A second needs the planes to become a flag, or a second
   loopback address the socket unit binds and pasta maps.
-- DNS goes to pasta's forwarder (`169.254.1.1`, its `--dns-forward`),
-  which asks the host's resolver. Routing needs nothing more: the
-  redirect keys on the port and the match is on SNI. What that leaves
-  open is under "DNS" below.
+- The workload's port 53, UDP and TCP, whatever the address, is DNATed
+  to the responder on the host's `127.0.0.1:8053`, through the same map.
+  It answers every name with `169.254.1.3`, so the connection that
+  follows is one the 443 and 80 redirect catches; "DNS" below has why
+  that is enough. The container is created with `--hosts-file image`:
+  podman otherwise seeds its hosts file from the host's, and a name there
+  is answered by the file, with the host's address for it, and never
+  asked.
 
 `--network host` and `--network none` are out of scope: the first
 leaves no namespace to hold the rules, the second no egress to inspect.
@@ -150,29 +158,47 @@ inspector can report `internal destination` -- a name with no accept
 line, one edit from working -- rather than `upstream unreachable`. With no
 rule loaded that dial succeeds, and the list only changes the report.
 
-## DNS: an open channel, not yet closed
+## DNS: answered, never forwarded
 
-The allowlist governs HTTP and HTTPS destinations. It does not govern
-DNS. Every recipe below accepts port 53 to pasta's forwarder, and the
-forwarder asks the host's resolver on the workload's behalf, so the
-workload can put arbitrary data in query names and read arbitrary data
-back in answers. That is an exfiltration channel in every shape, and
-nothing in customs inspects a query or records one.
+A resolver that asks another on the workload's behalf is a channel: the
+workload puts data in query names and reads data back in answers.
+Dropping port 53 does not close it without breaking the workload, whose
+clients need a name to resolve before they dial it at all.
 
-Dropping port 53 does not close it without breaking the workload: the
-workload needs names to resolve for its clients to dial them at all.
-What closes it is a resolver that never forwards. It answers every A
-and AAAA query, for any name, with the inspector's address, and every
-other type with an empty answer. That is enough for the redirect, and
-it is correct, because the inspector dials the name it authorised and
-never the address the workload was given. With no upstream socket in the
-responder, a query has nowhere to go. Its empty answer to HTTPS/SVCB
-queries also withholds the ECH configurations that would hide a name
-from the inspector.
+So the workload's nameserver is `customs-resolve`, which asks no one. It
+answers every A query, for any name, with one address, and every AAAA
+with a v6 address if it is given one (`--address6`) and no records if
+not; every other type gets NOERROR and no records. The address is one
+the workload's 443 and 80 are redirected from, and every recipe below
+redirects port 53, UDP and TCP, whatever the address, to the responder,
+so a workload that names its own nameserver reaches it too. That is
+enough for the redirect, and it is correct, because the inspector dials
+the name it authorised and never the address the workload was given.
+The responder has no upstream socket: no connect, no resolver call,
+which `tests/test_resolve.py` checks by parsing every file it is made
+of. A query has nowhere to go. The empty answer to HTTPS/SVCB queries
+also withholds the ECH configurations that would hide a name from the
+inspector.
 
-customs does not have that responder yet. Until it does, treat DNS as
-outside the control: log it at the host resolver if it matters, and do
-not describe a customs-inspected workload as unable to exfiltrate.
+A general-purpose resolver configured to do the same would work, but its
+default is to forward, and the property would rest on configuration
+staying absent. Here it rests on the source.
+
+What remains:
+
+- Everything the workload dials resolves to the inspector's address, so
+  a port other than 443 and 80 meets the egress drop, by name as by
+  address. Nothing but those two ports leaves in any shape here.
+- The programs' own lookups are not the responder's. In shapes 1 and 1n
+  they are the host's; in 1b they go to pasta's forwarder, and the
+  egress chain accepts port 53 for the programs' mark alone.
+- The responder counts, in its status file, the queries for names no
+  list in the inspector's policy admits (`unlisted`, and the first
+  twenty such names). Every one is answered like any other, so the
+  count is evidence that something is encoding data into names, never
+  that anything left.
+- A name in the workload's hosts file is never asked: hence
+  `--hosts-file image`, which keeps the host's entries out.
 
 ## Shape 1: a rootless podman container
 
@@ -192,25 +218,31 @@ ListenStream=127.0.0.1:8443
 ListenStream=127.0.0.1:8080
 ExecStart=customs-inspect --name x --policy … --state-dir … --status … \
     --record … --broker unix:%t/customs/broker.sock
+#    and the responder, user .socket + .service
+ListenDatagram=127.0.0.1:8053
+ListenStream=127.0.0.1:8053
+ExecStart=customs-resolve --name x --address 169.254.1.3 --policy … \
+    --status …
 # 4. the container, created but not started
 podman create --network pasta:--map-host-loopback=169.254.1.3 \
+  --hosts-file image \
   -v bundle.pem:/usr/local/share/ca-certificates/egress-ca.crt:ro,Z \
   -e SSL_CERT_FILE=/usr/local/share/ca-certificates/egress-ca.crt \
   -e NODE_EXTRA_CA_CERTS=… -e REQUESTS_CA_BUNDLE=… \
   -e EXAMPLE_API_KEY=sk-placeholder  IMAGE
 podman init NAME          # netns exists, entrypoint not yet running
-# 5. rules into the netns — this replaces meta skuid. The DNS address is
-#    the first nameserver in the container's resolv.conf (podman inspect
-#    -f '{{.ResolvConfPath}}'), which is pasta's forwarder. The drop is a
-#    netdev egress hook, not an output filter: an output `policy drop`
-#    fails a UDP send with EPERM, a tell no real network gives, where the
-#    egress hook drops the packet after send() returns. It hangs on the
-#    egress device — pasta names it after the host's default route, so it
-#    is derived, not fixed — and loopback never crosses it. The hook sees
-#    the link layer as well as IP, so ARP and neighbour discovery are let
-#    through: dropped, the netns loses its gateway's address once the
-#    neighbour entry ages out, and every dial fails until it is
-#    re-learned. They reach only pasta.
+# 5. rules into the netns — this replaces meta skuid. Port 53 is
+#    redirected whatever the address: pasta's forwarder is the first
+#    nameserver in the container's resolv.conf, and the host's own follow
+#    it. The drop is a netdev egress hook, not an output filter: an
+#    output `policy drop` fails a UDP send with EPERM, a tell no real
+#    network gives, where the egress hook drops the packet after send()
+#    returns. It hangs on the egress device — pasta names it after the
+#    host's default route, so it is derived, not fixed — and loopback
+#    never crosses it. The hook sees the link layer as well as IP, so ARP
+#    and neighbour discovery are let through: dropped, the netns loses its
+#    gateway's address once the neighbour entry ages out, and every dial
+#    to the map fails until it is re-learned. They reach only pasta.
 DEV=$(ip route show default | awk '{print $5}')
 podman unshare nsenter -t "$(podman inspect -f '{{.State.Pid}}' NAME)" -n nft -f - <<NFT
 table inet customs {
@@ -218,6 +250,8 @@ table inet customs {
     type nat hook output priority -100
     tcp dport 443 dnat ip to 169.254.1.3:8443
     tcp dport 80  dnat ip to 169.254.1.3:8080
+    udp dport 53  dnat ip to 169.254.1.3:8053
+    tcp dport 53  dnat ip to 169.254.1.3:8053
   }
 }
 table netdev customs {
@@ -226,9 +260,8 @@ table netdev customs {
     meta protocol arp accept
     icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert,
                   nd-router-solicit } accept
-    ip daddr 169.254.1.3 tcp dport { 8443, 8080 } accept
-    ip daddr 169.254.1.1 udp dport 53 accept
-    ip daddr 169.254.1.1 tcp dport 53 accept
+    ip daddr 169.254.1.3 tcp dport { 8443, 8080, 8053 } accept
+    ip daddr 169.254.1.3 udp dport 8053 accept
     counter comment "dropped"
   }
 }
@@ -259,10 +292,11 @@ than leaked. Either rule both families or run pasta `-4`.
 
 ## Shape 1n: shape 1 with the listeners in the container's netns
 
-Shape 1, with the inspector's two listeners bound inside the container's
-network namespace instead of on the host's loopback. The inspector
-process still runs on the host as the user and dials its upstreams from
-the host's namespace. The broker is shape 1's, unchanged.
+Shape 1, with the inspector's two listeners and the responder's port
+bound inside the container's network namespace instead of on the host's
+loopback. The inspector process still runs on the host as the user and
+dials its upstreams from the host's namespace. The broker is shape 1's,
+unchanged.
 
 Against shape 1 this buys:
 
@@ -274,8 +308,8 @@ Against shape 1 this buys:
   address in it reaches the host's `127.0.0.1`.
 - One inspector per container rather than per host loopback: each
   container's `127.0.0.1:8443` is in its own namespace.
-- An egress chain that names only the resolver. The redirect lands on
-  the namespace's loopback, which never crosses the egress device.
+- An egress chain that accepts nothing. The redirect lands 443, 80 and
+  53 on the namespace's loopback, which never crosses the egress device.
 
 And costs:
 
@@ -283,9 +317,9 @@ And costs:
   container has a new namespace, and the inspector has to be restarted
   with it; one left running holds listeners nothing can reach.
 - They are visible from inside. The container's `/proc/net/tcp` (and so
-  `ss -ltn`) lists `127.0.0.1:8443` and `:8080` as listening, with no
-  process in the container owning them. Shape 1b's listeners show the
-  same way; shape 1's are not in the container's table.
+  `ss -ltn`) lists `127.0.0.1:8443`, `:8080` and `:8053` as listening,
+  with no process in the container owning them. Shape 1b's listeners
+  show the same way; shape 1's are not in the container's table.
 
 **The bind.** A rootless container's network namespace belongs to a user
 namespace the user owns. Joining a netns needs `CAP_SYS_ADMIN` over it
@@ -296,7 +330,9 @@ child that joins both, by a pidfd of the container's process, binds
 socket pair and exits. The launcher itself never joins: it puts the
 listeners on fds 3 and 4, sets `LISTEN_PID` and `LISTEN_FDS`, and execs
 the command. The inspector still never binds; the bind is a short-lived
-process's, as it is the socket unit's in shape 1. No podman is involved
+process's, as it is the socket unit's in shape 1. With `--resolver` it
+binds the responder's `127.0.0.1:8053`, UDP and TCP, instead. No podman
+is involved
 past `podman inspect` for the pid, and the pidfd makes a pid that exits
 and is reused before the join an error rather than another process's
 namespace.
@@ -315,7 +351,7 @@ host's table, find none, and admit them all unnamed.
 ```
 # 1–2. as shape 1: CA + bundle + policy.json; the broker's user unit
 # 3. the container, created but not started; plain pasta, no map
-podman create --network pasta \
+podman create --network pasta --hosts-file image \
   -v bundle.pem:/usr/local/share/ca-certificates/egress-ca.crt:ro,Z \
   -e SSL_CERT_FILE=/usr/local/share/ca-certificates/egress-ca.crt \
   -e NODE_EXTRA_CA_CERTS=… -e REQUESTS_CA_BUNDLE=… \
@@ -330,36 +366,37 @@ table inet customs {
     type nat hook output priority -100
     tcp dport 443 dnat ip to 127.0.0.1:8443
     tcp dport 80  dnat ip to 127.0.0.1:8080
+    udp dport 53  dnat ip to 127.0.0.1:8053
+    tcp dport 53  dnat ip to 127.0.0.1:8053
   }
 }
 table netdev customs {
   chain egress {
     type filter hook egress device "$DEV" priority 0; policy drop
-    meta protocol arp accept
-    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert,
-                  nd-router-solicit } accept
-    ip daddr 169.254.1.1 udp dport 53 accept
-    ip daddr 169.254.1.1 tcp dport 53 accept
     counter comment "dropped"
   }
 }
 NFT
-# 5. the inspector, a transient user unit for this start
+# 5. the inspector and the responder, transient user units for this start
 systemd-run --user --unit customs-inspect-NAME \
   customs-netns-listen --pid "$PID" -- \
   customs-inspect --name x --policy … --state-dir … --status … \
     --record … --broker "unix:$XDG_RUNTIME_DIR/customs/broker.sock" \
     --netns-pid "$PID"
+systemd-run --user --unit customs-resolve-NAME \
+  customs-netns-listen --pid "$PID" --resolver -- \
+  customs-resolve --name x --address 127.0.0.1 --policy … --status …
 podman start NAME
 # and at the container's stop
-systemctl --user stop customs-inspect-NAME
+systemctl --user stop customs-inspect-NAME customs-resolve-NAME
 ```
 
-`create → init → rules → inspector → start`: the workload's first packet
-meets both the redirect and a listener. The ARP and neighbour-discovery
-lines are there for the resolver, the one destination that crosses the
-device. IPv6 is as in shape 1: the listeners and the redirect are v4, and
-a v6 dial falls to the egress drop.
+`create → init → rules → listeners → start`: the workload's first packet
+meets both the redirect and a listener. Nothing the workload may send
+crosses the egress device, so the chain accepts nothing, not even the
+neighbour discovery shape 1 needs for the map. IPv6 is as in shape 1:
+the listeners and the redirect are v4, and a v6 dial falls to the
+egress drop.
 
 `tests/manual/shape1n_rig.py` is this recipe as a rig.
 
@@ -398,7 +435,7 @@ another uid *by design*. The inspector's `--caller-uid`, mirroring the
 broker's, names it; without the flag every connection is dropped as
 foreign.
 
-**Both programs in one sidecar container.** The pod shares the network
+**The programs in one sidecar container.** The pod shares the network
 namespace, not the mount namespace, so the broker can listen on a
 filesystem AF_UNIX socket in the sidecar's own tmpfs
 (`/run/customs/broker.sock`); the inspector beside it dials that, and the
@@ -413,16 +450,19 @@ container as two uids: the broker as uid 201 owning the key file `0400`
 and the socket `0660` under the shared group 200, the inspector as uid
 200. The inspector is the exposed surface (it parses workload-controlled
 ClientHellos and HTTP/1 and /2 framing); the broker holds the key; the
-socket hop is the line. `setuid()` clears every capability, so no
+socket hop is the line. The responder parses workload-controlled queries
+too and holds nothing, so it runs as the inspector's uid. `setuid()` clears every capability, so no
 `DAC_OVERRIDE` bridges them whatever the container was started with.
 
 The image is `container/Containerfile`, built from the checkout root, and
 its entrypoint `container/customs-sidecar` is the unit file as a process.
-As the container's root it binds the two planes on the pod's loopback,
-starts the broker as 201 on `unix:/run/customs/broker.sock` with
-`CREDENTIALS_DIRECTORY=/run/secrets`, mints the egress CA into the state
-volume on the first start, then starts the inspector as 200 with the
-listeners as fds 3 and 4 and `LISTEN_PID`/`LISTEN_FDS` set. No
+As the container's root it binds the two planes and the responder's
+port on the pod's loopback, starts the broker as 201 on
+`unix:/run/customs/broker.sock` with `CREDENTIALS_DIRECTORY=/run/secrets`,
+mints the egress CA into the state volume on the first start, then
+starts the inspector as 200 with the planes as fds 3 and 4 and
+`LISTEN_PID`/`LISTEN_FDS` set, and the responder as 200 with its own,
+answering every name with `127.0.0.1`. No
 `systemd-socket-activate`, no systemd in the image: the bind is still not
 the inspector's, and it is root's before any privilege is dropped, which
 is the socket unit's property by a different route. The entrypoint takes
@@ -430,7 +470,7 @@ the two facts the image cannot know -- the workload's label and its uid
 -- and passes every other flag to the broker untouched:
 
 ```
-podman pod create --name POD
+podman pod create --name POD --hosts-file image
 podman run -d --pod POD --name sidecar --restart on-failure \
     --cap-drop all --cap-add chown,dac_override,setgid,setuid \
     -v policy.json:/etc/customs/policy.json:ro,Z \
@@ -447,6 +487,8 @@ table inet customs {
     meta skuid { 200, 201 } accept
     tcp dport 443 dnat ip to 127.0.0.1:8443
     tcp dport 80  dnat ip to 127.0.0.1:8080
+    udp dport 53  dnat ip to 127.0.0.1:8053
+    tcp dport 53  dnat ip to 127.0.0.1:8053
   }
   chain tag {
     type filter hook output priority mangle
@@ -460,8 +502,8 @@ table netdev customs {
     meta protocol arp accept
     icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert,
                   nd-router-solicit } accept
-    ip daddr 169.254.1.1 udp dport 53 accept
-    ip daddr 169.254.1.1 tcp dport 53 accept
+    meta mark 0x1 ip daddr 169.254.1.1 udp dport 53 accept
+    meta mark 0x1 ip daddr 169.254.1.1 tcp dport 53 accept
     meta mark 0x1 accept
     counter comment "dropped"
   }
@@ -491,19 +533,22 @@ the drops. The first-start mint runs as the inspector's uid, not as root:
 the volume is the inspector's and outlives restarts, so root writing into
 it would follow whatever the inspector left there. The entrypoint refuses
 a `--caller-uid` of 0, 200 or 201, the uids the rules exempt, and starts
-both programs with a minimal environment rather than the container's.
+every program with a minimal environment rather than the container's.
+Pasta's forwarder is the programs' resolver, not the workload's:
+everyone else's port 53 is redirected to the responder, so its accept
+lines carry the programs' mark.
 
-The entrypoint stays as the container's pid 1 and supervises the pair,
-which serves together or not at all. A stop is forwarded to both
-programs and the container exits 0. If either program exits unasked,
-the other is stopped and the container exits 1, so a broker that dies
-takes the container with it and the restart policy (or the quadlet's
-`Restart=`) brings the pair back. A restart reuses the volume's CA, so
-the workload's bundle still holds. Until the pair is back, the
-workload's redirected connections are refused: nothing listens on the
-planes and the rules stay in the pod's netns. The supervisor holds no
-capability once both have started: its real uid is 200 and its
-effective and saved uid 201, which lets it signal both and is not root.
+The entrypoint stays as the container's pid 1 and supervises the three,
+which serve together or not at all. A stop is forwarded to each program
+and the container exits 0. If any exits unasked, the others are stopped
+and the container exits 1, so a broker that dies takes the container
+with it and the restart policy (or the quadlet's `Restart=`) brings them
+back. A restart reuses the volume's CA, so the workload's bundle still
+holds. Until they are back, the workload's redirected connections are
+refused: nothing listens on the planes and the rules stay in the pod's
+netns. The supervisor holds no capability once all have started: its
+real uid is 200 and its effective and saved uid 201, which lets it
+signal each and is not root.
 That is also why it must be pid 1 and refuses `--init`. An init runs as
 root without `CAP_KILL`, so it cannot signal a process with no uid 0, and
 a stop would reach nobody.
@@ -522,7 +567,7 @@ The pod's `/proc/self/uid_map` is a rootless one, with the inside and
 outside columns different. Both programs' start-up checks read the
 inside column, which is the uid the told `--caller-uid` is in.
 
-What the sidecar buys is distribution: the pair becomes an image, not a
+What the sidecar buys is distribution: the programs become an image, not a
 host install. That is the cosy-shaped requirement — cosy is one script
 that installs nothing. On a host that already carries the RPM, shape 1
 is strictly simpler. In either sidecar variant the CA private key lives
@@ -532,8 +577,8 @@ a new exposure, but it is worth saying.
 Proved by `tests/manual/shape1b_rig.py`, red without the rules. The
 probe that is new here: from the workload, the broker's socket path is
 ENOENT -- not ECONNREFUSED, which would mean the path exists and the
-mount is shared -- and nothing but the two planes listens on TCP in the
-pod.
+mount is shared -- and nothing but the two planes and the responder's
+port listens on TCP in the pod.
 
 ## Shape 2: a VM
 

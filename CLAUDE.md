@@ -15,13 +15,18 @@ host.
 ## Where the code came from
 
 `lib/`, `libexec/` and the tests are a copy (2026-09-22) of these, in
-the hypervisor repo checked out beside this one:
+the hypervisor repo checked out beside this one, and the responder a
+copy (2026-09-24) of workloadctl's:
 
 ```
 ../hypervisor/workloadctl/
   libexec/agent-broker                # → customs-broker
   libexec/workload-inspect-listener   # → customs-inspect
+  libexec/workload-vm-resolve         # → customs-resolve
   lib/                                # the 24-module closure
+  lib/dns_wire.py lib/resolve_server.py  # the responder, less its
+                                         # static map
+  tests/test_vm_resolve.py            # → tests/test_resolve.py
   tests/test_broker_closure.py        # holds the broker closure
   tests/test_inspector_closure.py     # holds the inspector closure
 ```
@@ -67,6 +72,13 @@ other half and reaches workloadctl with the dependency.
 `customs-sidecar`, the entrypoint that is the unit file as a process.
 It is customs-only and has no workloadctl counterpart.
 
+`libexec/customs-resolve` is workloadctl's VM responder made a program
+of its own: every name answered with `--address`, counted against the
+inspector's policy, never forwarded. `lib/resolve_policy.py` is
+customs'; `dns_wire` and `resolve_server` are workloadctl's less the
+static map. A fix to the wire parser or the serve loop that applies to
+workloadctl's is mirrored.
+
 ## Conventions carried over from workloadctl
 
 - **Stdlib only.** No third-party imports in anything that ships. System
@@ -97,7 +109,7 @@ It is customs-only and has no workloadctl counterpart.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 695)
+just test     # all unit tests (unittest discover; 766)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user
@@ -107,7 +119,7 @@ python3 tests/manual/shape1b_rig.py         # same; builds container/ first
 
 `tests/__init__.py` puts `lib/` on `sys.path`; test modules import as
 `tests.<name>`, and `load_script()` imports the extension-less
-entrypoints. `tests/test_closure.py` holds lib/ to be exactly the two
-closures, with no TOML, no passwd lookup and no derived value — it
+entrypoints. `tests/test_closure.py` holds lib/ to be exactly the
+programs' closures, with no TOML, no passwd lookup and no derived value — it
 replaces workloadctl's two closure tests, whose other half (the generator
 handing every value across) has no counterpart here.

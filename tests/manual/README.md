@@ -33,12 +33,15 @@ is green over a bug once the message becomes the wrong one. When the
 product changes what it says, the row is re-derived from what it should
 now say, never edited until it passes again.
 
-**Check the fixture cannot satisfy the property by accident.** A name
-that resolves to the container's own loopback is admitted by `oif lo` and
-never meets the redirect; the rig gives every name it dials a TEST-NET
-address for exactly that reason. Where a row asserts something is
-blocked, a control row proves an unblocked caller reaches the same
-fixture, or a responder that never started satisfies every assertion.
+**Check the fixture cannot satisfy the property by accident.** The rig's
+own `/etc/hosts` line for the provider reached the containers, since
+podman seeds a container's hosts file from the host's, and sent the
+workload to its own loopback; and pasta's forwarder answered the same
+name from the same line, with the address the responder gives in two
+shapes, so a DNS row passed with no responder at all. Where a row asserts
+something is blocked, a control row proves an unblocked caller reaches
+the same fixture, or a responder that never started satisfies every
+assertion.
 
 **Refused is not blocked.** Connection refused means the packet arrived
 and nothing was listening, which is a broken fixture reporting itself as
@@ -48,15 +51,16 @@ a working filter. A drop presents as `EPERM` or a timeout.
 the control it is about, and the rows that depend on it must fail under
 that flag. A rig that has only ever passed has not been shown to measure.
 
-`riglib.py` is the fixture both rigs share: the provider and unlisted
-names on TEST-NET, the stub, the CA and bundle, the policy, the two sudo
-facts and their teardown, and the rows every shape has (the origin's 401
-and 200). A rig owns its shape and its rows.
+`riglib.py` is the fixture the rigs share: the provider and unlisted
+names, which nothing on the internet resolves, the stub, the CA and
+bundle, the policy, the two sudo facts and their teardown, and the rows
+every shape has (the workload's DNS, the origin's 401 and 200). A rig
+owns its shape and its rows.
 
 ## shape1_rig.py — the pair with nothing but a normal user
 
 `docs/DESIGN.md` shape 1: one rootless podman container under pasta,
-both programs as hand-written user units, the nft rules loaded into the
+the programs as hand-written user units, the nft rules loaded into the
 container's netns through `podman unshare nsenter`, a placeholder in the
 container's environment, and one real request that reaches the provider
 carrying the sealed key.
@@ -64,6 +68,7 @@ carrying the sealed key.
 ```bash
 python3 tests/manual/shape1_rig.py                  # every row green
 python3 tests/manual/shape1_rig.py --without-rules  # must go red
+python3 tests/manual/shape1_rig.py --without-dns-redirect  # dns red
 python3 tests/manual/shape1_rig.py --broker-over-tcp  # the broker rows red
 ```
 
@@ -80,8 +85,14 @@ The per-workload CA is minted once into `~/.local/state/customs-rig/` and
 kept, like an SSH host key; everything else is rebuilt per run. `--keep`
 leaves the container for inspection.
 
-**Rows.** Premise (no `CAP_NET_ADMIN`; the table is in the netns). The
-request (200; the real key arrived; the container's environment holds
+**Rows.** Premise (no `CAP_NET_ADMIN`; the table is in the netns). DNS:
+the workload's queries for names nothing resolves, to its resolver over
+UDP and TCP and to a nameserver that does not exist, are answered with
+the loopback map; an AAAA gets no records; the provider's name is
+answered the same; the responder's status names the unlisted names and
+not the provider's. The container has no `--add-host`, so the request
+and unlisted rows resolve through the responder too. The request (200;
+the real key arrived; the container's environment holds
 the placeholder only; the broker's journal grew by one; the record says
 `forward` under the credential). The broker's address is unreachable
 from inside both ways it can be spelled, and its journal did not grow.
@@ -116,32 +127,46 @@ step now.
 falls back to `getsockname()` cleanly: `caller_unresolved` is 0 and the
 caller check admitted every connection as the user's.
 
+**What it found, the responder, 2026-09-24.** 26/26;
+`--without-dns-redirect` 10/25, with dns, request, neighbour, unlisted
+and the inspector's counters red (the queries time out at the egress
+drop, and nothing ever activates the inspector); `--without-rules` 8/25.
+No defect in the responder. Three facts, two of them the rig's:
+
+- podman seeds a container's `/etc/hosts` from the host's, and a name in
+  it is never asked. The rig's own line for the provider sent curl to
+  the container's loopback, where the DNAT to the map cannot route. The
+  containers here and in the recipes are created with
+  `--hosts-file image`.
+- a socket-activated responder writes its first status when the first
+  query starts it, after that query arrived and before it was counted.
+  The DNS rows await a write from after their queries.
+- pasta carries UDP over the loopback map in both directions, so the
+  responder can sit on the host's `127.0.0.1` beside the inspector.
+
 ## shape1n_rig.py — shape 1 with the listeners in the container
 
 `docs/DESIGN.md` shape 1n: shape 1's container under plain pasta, with no
-loopback map, and shape 1's broker unit. The inspector is a transient
-user unit started between `podman init` and `podman start`, through
-`customs-netns-listen`, which binds the two planes in the container's
-network namespace and execs the inspector with them.
+loopback map, and shape 1's broker unit. The inspector and the responder
+are transient user units started between `podman init` and `podman
+start`, through `customs-netns-listen`, which binds their sockets in the
+container's network namespace and execs each program with its own.
 
 ```bash
 python3 tests/manual/shape1n_rig.py                        # every row green
 python3 tests/manual/shape1n_rig.py --without-rules        # must go red
 python3 tests/manual/shape1n_rig.py --without-netns-pid    # inspector red
-python3 tests/manual/shape1n_rig.py --without-neighbour-discovery
+python3 tests/manual/shape1n_rig.py --without-dns-redirect # dns red
 ```
 
-**Rows.** Shape 1's premise, silent-drop, request, broker, unlisted,
-origin and counter rows, and three of its own. The inspector is up on
-the listeners it was handed, and their inodes are rows in the
+**Rows.** Shape 1's premise, DNS, silent-drop, request, broker,
+unlisted, origin and counter rows, and two of its own. The inspector is
+up on the listeners it was handed, and their inodes are rows in the
 container's socket table and in none of the host's. Nothing listens on
 the host's `127.0.0.1` at either plane, for the user or another uid;
 the request row, which reaches the same planes from inside, is the
-control. With the neighbour table flushed, a DNS query to pasta's
-forwarder is answered: the planes are on loopback and never cross the
-egress device, so the resolver is the dial the neighbour lines are for.
-The request's 200 is also the observation that the inspector's upstream
-dial left from the host's namespace: the stub is on the host's
+control. The request's 200 is also the observation that the inspector's
+upstream dial left from the host's namespace: the stub is on the host's
 `127.0.0.1`, which the container cannot reach.
 
 `--without-netns-pid` starts the inspector without the flag. It must
@@ -165,10 +190,17 @@ No defect in the pair. Two facts for the design:
   the uid the host sees: the user for container root, a subuid for
   anything else.
 
+**What it found, the responder, 2026-09-24.** 26/26;
+`--without-dns-redirect` 14/26 (dns, request, unlisted); `--without-rules`
+12/26. With the responder in the namespace nothing the workload may send
+crosses the egress device, so the chain accepts nothing: the neighbour
+row, which queried pasta's forwarder, went with the resolver's lines,
+and `--without-neighbour-discovery` with it.
+
 ## shape1b_rig.py — the pair as a sidecar, with no host install
 
 `docs/DESIGN.md` shape 1b: a podman pod under pasta, the sidecar image
-(`container/`: both programs, one container, two uids) beside a workload
+(`container/`: the programs, one container, two uids) beside a workload
 container running as a third uid with no capabilities, the nft rules in
 the pod's netns keyed on `meta skuid`, the broker on a socket path under
 the sidecar's own `/run`, the key as a podman secret, and one real request
@@ -178,6 +210,7 @@ that reaches the provider carrying it.
 python3 tests/manual/shape1b_rig.py                  # builds the image first
 python3 tests/manual/shape1b_rig.py --without-rules  # must go red
 python3 tests/manual/shape1b_rig.py --without-private-drop  # private red
+python3 tests/manual/shape1b_rig.py --without-dns-redirect  # dns red
 python3 tests/manual/shape1b_rig.py --no-build       # reuse the last image
 ```
 
@@ -187,28 +220,32 @@ minted afresh each run. `--keep` leaves the pod, the volume and the
 secret.
 
 **Rows.** Premise (the workload holds neither `CAP_NET_ADMIN` nor
-`CAP_SETUID`; the table is in the pod's netns; `podman top` shows the two
-programs as the two image users, and the supervising pid 1 holds no
-capability). The request (200; the real key arrived;
+`CAP_SETUID`; the table is in the pod's netns; `podman top` shows the
+broker and the inspector as the two image users and the responder as
+the inspector's, and the supervising pid 1 holds no capability). Shape
+1's DNS rows, answered by the sidecar's responder with the pod's
+loopback; the unlisted row resolves through it too, while the provider's
+name is in the pod's hosts file, which the sidecar's dials need. The
+request (200; the real key arrived;
 the workload's environment holds the placeholder only; the broker's log
 grew by one; the record says `forward` under the credential with
 `upstream` naming the socket path). The broker's path is ENOENT from the
 workload -- `stat` says "No such file or directory", which curl alone
-cannot distinguish from a refusal -- and nothing but the two planes
-listens on TCP in the pod, so there is no address to spell; its log did
-not grow. An unlisted host gets the 403 and the record. The private
+cannot distinguish from a refusal -- and nothing but the two planes and
+the responder's port listens on TCP in the pod, so there is no address
+to spell; its log did not grow. An unlisted host gets the 403 and the record. The private
 rows: the egress chain carries `DESIGN.md`'s private-space drop and an
 accept line for the provider, which is on the host's mapped loopback and
 so link-local; with that line deleted the workload's request gets no 200,
 the stub's log does not grow and the drop's counter moves, and with it
 put back the same request arrives. The programs' own DNS query to the
-resolver is answered. The origin's two rows. The counters name every caller and dropped none as foreign, with
-the workload being another uid. Last, the lifecycle: the broker killed
-from outside ends the container non-zero and the restart policy brings
-it back (the restart count rose; both exits are in the log), the
-restarted pair serves the workload's request under the CA its bundle
-already holds, and a stop reaches both programs well inside podman's
-timeout and exits 0.
+resolver is answered. The origin's two rows. The counters name every
+caller and dropped none as foreign, with the workload being another
+uid. Last, the lifecycle: the broker killed from outside ends the
+container non-zero and the restart policy brings it back (the restart
+count rose; every exit is in the log), the restarted programs serve the
+workload's request under the CA its bundle already holds, and a stop
+reaches every program well inside podman's timeout and exits 0.
 
 **What it found, first run, 2026-09-22.** One defect in the pair, the
 seam kind: `peer_identity.userns_ranges` read the *outside* column of
@@ -259,3 +296,13 @@ now come first, in the recipe and here. 29/29; `--without-private-drop`
 27/29, the two drop rows red. The request the drop refuses is brokered,
 so its record is the inspector's `forward` with the broker's 502, not
 `internal destination`: that report is for the inspector's own dial.
+
+**What it found, the responder, 2026-09-24.** 35/35;
+`--without-dns-redirect` 27/35 (dns and unlisted; the resolver's accept
+lines are the programs' now); `--without-rules` 15/35. In the first
+version the provider's DNS row stayed green under `--without-rules`:
+pasta's forwarder answered the name from the host's hosts file, with
+the rig's own `127.0.0.1`, the address the responder gives in the pod.
+The name is asked of a nameserver that does not exist now, which only
+the redirect answers. `--without-rules` also turns neighbour and
+private red, which its note had left out.
