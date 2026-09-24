@@ -8,6 +8,7 @@ environment, and one real request that reaches the provider carrying the
 sealed key. Run on the proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/shape1_rig.py [--keep] [--without-rules]
+                                       [--without-neighbour-discovery]
                                        [--broker-over-tcp]
 
 Nothing here needs root except two host facts the rig cannot fake and
@@ -32,6 +33,11 @@ THE ROWS
             request as forwarded under the credential, and its counters
             show it named the caller (SO_ORIGINAL_DST on a host socket whose
             DNAT happened a namespace away must fall back cleanly).
+  neighbour with the container's neighbour table flushed, the request is
+            served again: its dial to the loopback map has to resolve the
+            gateway afresh, and the egress chain sees that ARP. The flush
+            stands in for the entry ageing out, which otherwise fails a
+            dial only when an idle gap happens to outlast it.
   broker    the broker holds no TCP socket, only a path under the user's
             runtime directory, which the container has no path to. From
             the host, another uid's connect to it is refused by the kernel
@@ -49,6 +55,8 @@ inspector is never even activated, and with no egress chain the drop
 counter is absent -- and a run where they stay green is measuring nothing.
 `--broker-over-tcp` puts the broker on 127.129.0.1:8081 instead of the
 socket path, and the broker's no-TCP and other-uid rows must go red.
+`--without-neighbour-discovery` loads the egress chain without its ARP
+and neighbour-discovery lines; `neighbour` and `unlisted` must go red.
 
 WHAT THIS RIG TELLS THE DESIGN
 
@@ -240,7 +248,7 @@ def default_route_device():
     return run(["ip", "route", "show", "default"]).stdout.split()[4]
 
 
-def load_rules(pid, dns):
+def load_rules(pid, dns, neighbour):
     """What replaces `meta skuid`: the rules see only this netns's traffic.
     nat output runs before the egress hook, so the accept lines name the
     inspector's translated ports, not 80 and 443.
@@ -249,9 +257,13 @@ def load_rules(pid, dns):
     `policy drop` fails a UDP send with EPERM, which no real network does;
     the egress hook drops the packet after send() has returned and counts
     it. It hangs on the pasta device, so loopback never crosses it and no
-    `oif lo accept` is needed."""
+    `oif lo accept` is needed.
+
+    `neighbour` false leaves out the ARP and neighbour-discovery lines,
+    for the `neighbour` row to go red."""
     dev = default_route_device()
     planes = f"{{ {INSPECT_TLS}, {INSPECT_CLEARTEXT} }}"
+    nd = riglib.NEIGHBOUR_DISCOVERY if neighbour else ""
     rules = f"""
 table inet customs {{
   chain out {{
@@ -263,7 +275,7 @@ table inet customs {{
 table netdev customs {{
   chain egress {{
     type filter hook egress device "{dev}" priority 0; policy drop
-    ip daddr {LOOPBACK_MAP} tcp dport {planes} accept
+{nd}    ip daddr {LOOPBACK_MAP} tcp dport {planes} accept
     ip daddr {dns} udp dport 53 accept
     ip daddr {dns} tcp dport 53 accept
     counter comment "dropped"
@@ -405,6 +417,19 @@ def probe(pid, secret, over_tcp):
         hit is not None,
         f"{hit}" if hit else f"records for {PROVIDER}: {forwarded}")
 
+    say("neighbour")
+    dev = default_route_device()
+    in_netns(pid, ["ip", "neigh", "flush", "dev", dev])
+    rc, code, _, err = curl_in(
+        f"https://{PROVIDER}/v1/probe", "-H",
+        f"Authorization: Bearer {PLACEHOLDER}")
+    learned = in_netns(pid, ["ip", "neigh", "show", "dev", dev],
+                       check=False).stdout.strip()
+    row("neighbour: with the neighbour table flushed, the provider answers",
+        rc == 0 and code == "200",
+        f"curl rc={rc} http={code} {err}; neighbours: "
+        f"{learned or 'none'}")
+
     say("broker")
     pid = broker_pid()
     tcp = [ln for ln in run(["ss", "-lntpH"]).stdout.splitlines()
@@ -486,6 +511,9 @@ def main():
     ap.add_argument("--without-rules", action="store_true",
                     help="skip the netns rules; premise and request must "
                          "go red")
+    ap.add_argument("--without-neighbour-discovery", action="store_true",
+                    help="leave ARP and neighbour discovery out of the "
+                         "egress chain; neighbour and unlisted must go red")
     ap.add_argument("--broker-over-tcp", action="store_true",
                     help="the broker on 127.129.0.1:8081; its no-TCP and "
                          "other-uid rows must go red")
@@ -523,7 +551,7 @@ def main():
         if args.without_rules:
             say("  rules NOT loaded, as asked")
         else:
-            load_rules(pid, dns)
+            load_rules(pid, dns, not args.without_neighbour_discovery)
         run(["podman", "start", CONTAINER])
         probe_started = time.time()
         probe(pid, secret, args.broker_over_tcp)
@@ -533,6 +561,9 @@ def main():
     expected = [note for flag, note in (
         (args.without_rules, "--without-rules: premise and request are "
                              "expected red"),
+        (args.without_neighbour_discovery,
+         "--without-neighbour-discovery: neighbour and unlisted are "
+         "expected red"),
         (args.broker_over_tcp, "--broker-over-tcp: the broker's no-TCP and "
                                "other-uid rows are expected red"),
     ) if flag]

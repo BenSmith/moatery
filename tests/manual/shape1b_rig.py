@@ -9,6 +9,7 @@ secret, and one real request that reaches the provider carrying it. Run
 on the proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/shape1b_rig.py [--keep] [--without-rules]
+                                        [--without-neighbour-discovery]
                                         [--no-build]
 
 The same two host facts as shape 1 need sudo and are undone at teardown.
@@ -30,6 +31,11 @@ THE ROWS
             200 and reports that the REAL key arrived; the workload's
             environment holds the placeholder only; the broker logged one
             request; the record says forwarded under the credential.
+  neighbour with the pod's neighbour table flushed, the request is served
+            again: the programs' dial has to resolve the gateway afresh,
+            and the egress chain sees that ARP. The flush stands in for
+            the entry ageing out, which otherwise fails a dial only when
+            an idle gap happens to outlast it.
   broker    from the workload, connect() to the broker's socket path is
             ENOENT -- not ECONNREFUSED, which would mean the path exists
             and the mount is shared. Nothing but the inspector's two
@@ -55,6 +61,9 @@ THE ROWS
 the workload's dial reaches the stub directly and refuses its certificate,
 which no bundle of the workload's carries, the unlisted name times out on
 TEST-NET, and with no egress chain the drop counter is absent.
+`--without-neighbour-discovery` loads the egress chain without its ARP
+and neighbour-discovery lines; `neighbour` and the lifecycle's request
+must go red.
 """
 
 import argparse
@@ -86,8 +95,9 @@ HOSTS_MARK = "customs-shape1b-rig"
 # workload's: any uid that is neither, chosen here.
 INSPECT_UID, BROKER_UID, GROUP_GID = 200, 201, 200
 WORKLOAD_UID = 1000
-# The mark the output hook puts on the programs' packets for the egress
-# hook to exempt. One bit in an otherwise unused netns; no other consumer.
+# The mark the output hook puts on the programs' connections, and so on
+# their packets, for the egress hook to exempt. One bit in an otherwise
+# unused netns; no other consumer.
 OURS_MARK = "0x1"
 # Inside the sidecar (container/customs-sidecar).
 SOCKET_PATH = "/run/customs/broker.sock"
@@ -199,7 +209,7 @@ def default_route_device(pid):
     return in_netns(pid, ["ip", "route", "show", "default"]).stdout.split()[4]
 
 
-def load_rules(pid):
+def load_rules(pid, neighbour):
     """The discriminator is the uid: the two image uids are exempt from
     the redirect and the drop, since their dials are the upstream legs
     and leave through this same netns. The resolver is pasta's forwarder,
@@ -211,19 +221,21 @@ def load_rules(pid):
     it. It hangs on the pod's egress device, so loopback -- the redirected
     plane's dial to 127.0.0.1 among it -- never crosses the hook.
 
-    The programs are exempted by a mark, not by uid, because the egress
-    hook cannot read the uid reliably: `meta skuid` needs a socket on the
-    packet, and by the device a locally-generated packet has often been
-    orphaned (retransmits, timer ACKs and TIME_WAIT segments carry no
-    socket), so the programs' own upstream legs would fall to the drop.
-    The uid is read where it is reliable -- the output hook, before the
-    packet leaves the socket -- and a mark set there rides the packet to
-    the device, which the egress hook matches instead."""
+    The egress chain exempts the programs by a connection mark, not by
+    uid: `meta skuid` needs the packet to carry the program's socket, and
+    the segments a connection sends after that socket is gone -- the FIN
+    and RST of a program that exited, TIME_WAIT's ACKs -- carry none. The
+    `tag` chain reads the uid at the output hook, stores it on the
+    connection, and copies it onto every packet for the egress hook.
+
+    `neighbour` false leaves out the ARP and neighbour-discovery lines,
+    for the `neighbour` row to go red."""
     resolv = exec_in(SIDECAR, ["cat", "/etc/resolv.conf"]).stdout
     dns = next((ln.split()[1] for ln in resolv.splitlines()
                 if ln.startswith("nameserver")), "169.254.1.1")
     dev = default_route_device(pid)
     ours = f"{{ {INSPECT_UID}, {BROKER_UID} }}"
+    nd = riglib.NEIGHBOUR_DISCOVERY if neighbour else ""
     rules = f"""
 table inet customs {{
   chain out {{
@@ -234,13 +246,14 @@ table inet customs {{
   }}
   chain tag {{
     type filter hook output priority mangle
-    meta skuid {ours} meta mark set {OURS_MARK}
+    meta skuid {ours} ct mark set {OURS_MARK}
+    meta mark set ct mark
   }}
 }}
 table netdev customs {{
   chain egress {{
     type filter hook egress device "{dev}" priority 0; policy drop
-    meta mark {OURS_MARK} accept
+{nd}    meta mark {OURS_MARK} accept
     ip daddr {dns} udp dport 53 accept
     ip daddr {dns} tcp dport 53 accept
     counter comment "dropped"
@@ -407,6 +420,19 @@ def probe(sidecar_pid, workload_pid, secret):
         hit is not None,
         f"{hit}" if hit else f"records for {PROVIDER}: {forwarded}")
 
+    say("neighbour")
+    dev = default_route_device(sidecar_pid)
+    in_netns(sidecar_pid, ["ip", "neigh", "flush", "dev", dev])
+    rc, code, _, err = curl_in(
+        f"https://{PROVIDER}/v1/probe", "-H",
+        f"Authorization: Bearer {PLACEHOLDER}")
+    learned = in_netns(sidecar_pid, ["ip", "neigh", "show", "dev", dev],
+                       check=False).stdout.strip()
+    row("neighbour: with the neighbour table flushed, it serves the workload",
+        rc == 0 and code == "200",
+        f"curl rc={rc} http={code} {err}; neighbours: "
+        f"{learned or 'none'}")
+
     say("broker")
     before = logs().count(" ok ")
     # curl reports a missing path and a path nobody listens on with the
@@ -540,6 +566,10 @@ def main():
     ap.add_argument("--without-rules", action="store_true",
                     help="load no rules into the pod's netns; premise, "
                          "request and unlisted must go red")
+    ap.add_argument("--without-neighbour-discovery", action="store_true",
+                    help="leave ARP and neighbour discovery out of the "
+                         "egress chain; neighbour and the lifecycle's "
+                         "request must go red")
     ap.add_argument("--no-build", action="store_true",
                     help=f"use the {SIDECAR_IMAGE} already built")
     args = ap.parse_args()
@@ -571,7 +601,8 @@ def main():
         if args.without_rules:
             say("  rules NOT loaded, as asked")
         else:
-            load_rules(sidecar_pid)
+            load_rules(sidecar_pid,
+                       not args.without_neighbour_discovery)
         workload_pid = start_workload()
         probe_started = time.time()
         probe(sidecar_pid, workload_pid, secret)
@@ -579,10 +610,15 @@ def main():
     finally:
         teardown(args.keep)
 
-    rc = riglib.report(
-        "--without-rules: premise, request, unlisted and the lifecycle's "
-        "request are expected red"
-        if args.without_rules else None)
+    expected = [note for flag, note in (
+        (args.without_rules, "--without-rules: premise, request, unlisted "
+                             "and the lifecycle's request are expected "
+                             "red"),
+        (args.without_neighbour_discovery,
+         "--without-neighbour-discovery: neighbour and the lifecycle's "
+         "request are expected red"),
+    ) if flag]
+    rc = riglib.report("; ".join(expected) or None)
     if rc:
         say(f"logs: podman logs {SIDECAR}  (with --keep)")
     return rc

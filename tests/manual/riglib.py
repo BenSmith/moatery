@@ -46,6 +46,16 @@ SYSTEM_BUNDLES = ("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
                   "/etc/pki/tls/certs/ca-bundle.crt",
                   "/etc/ssl/certs/ca-certificates.crt")
 
+# The egress chain's first lines. A netdev egress hook sees the link layer
+# as well as IP: without these the netns loses its gateway's address once
+# the neighbour entry ages out, and every dial through the device fails.
+# The frames reach only pasta.
+NEIGHBOUR_DISCOVERY = """\
+    meta protocol arp accept
+    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert,
+                  nd-router-solicit } accept
+"""
+
 HOME = Path.home()
 RIG = HOME / ".local" / "state" / "customs-rig"
 STUB_CERT, STUB_KEY = RIG / "stub-cert.pem", RIG / "stub-key.pem"
