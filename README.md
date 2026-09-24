@@ -29,7 +29,9 @@ the inspector's policy, one JSON document:
   never leaves loopback; the key never enters the workload.
 
 A third, **customs-mint-ca**, makes the per-workload CA once, before the
-inspector first starts.
+inspector first starts. A fourth, **customs-netns-listen**, binds the
+inspector's listeners inside a rootless container's network namespace and
+hands them to it (shape 1n).
 
 The workload cannot name the broker, cannot choose to use it, and cannot
 be pointed at another workload's. The only thing that dials the broker is
@@ -59,7 +61,8 @@ point at it, the socket-activated inspector, the broker's flags and
 - [docs/POLICY.md](docs/POLICY.md): the policy document the inspector
   reads.
 - [docs/DESIGN.md](docs/DESIGN.md): placing the pair: a rootless
-  container, a sidecar in a pod, a VM, a cosy container; and what the
+  container, with the inspector's listeners on the host or in the
+  container; a sidecar in a pod; a VM; a cosy container; and what the
   host has to do that customs does not (private addresses among it).
 - [examples/](examples/): user units, a logrotate configuration, and the
   one-time setup for a rootless container.
@@ -77,8 +80,9 @@ container shapes.
 ## Status
 
 Version 0.1.0, not yet released. Both programs have run end to end on a
-real host in two shapes: a rootless container
-(`tests/manual/shape1_rig.py`) and a sidecar in a pod
+real host in three shapes: a rootless container
+(`tests/manual/shape1_rig.py`), the same with the listeners in the
+container (`tests/manual/shape1n_rig.py`), and a sidecar in a pod
 (`tests/manual/shape1b_rig.py`). The VM and cosy shapes
 are designed, not proved. DNS is not yet controlled: a workload can
 still exfiltrate through its resolver ([DESIGN.md](docs/DESIGN.md), "DNS").

@@ -17,7 +17,11 @@ The policy is read once, here; one that cannot be read fails the start.
 
 It never binds. The socket unit binds and hands the listeners in, which
 keeps the bind out of the workload's security domain, so a missing
-activation environment is a failure, never a fallback bind.
+activation environment is a failure, never a fallback bind. With
+--netns-pid the listeners were bound in that process's network namespace
+(customs-netns-listen), and callers are looked up in its socket table.
+Either way a listener must be in the table the lookups read, or none of
+its callers could be named, and the start is refused.
 """
 
 import argparse
@@ -32,7 +36,8 @@ sys.dont_write_bytecode = True
 
 from inspect_policy import load_policy
 from inspect_listener import Listener, build_minter
-from peer_identity import unmappable_uids
+from peer_identity import (
+    PROC_NET_TCP, listed_in, netns_tables, unmappable_uids)
 from sd_listen import NotSocketActivated
 from sd_listen import (
     inherited_listening_sockets as sd_inherited_listening_sockets)
@@ -116,6 +121,11 @@ def parse_args(argv):
                         metavar="UID",
                         help="the one uid whose connections are served; "
                              "absent means this process's own")
+    parser.add_argument("--netns-pid", type=int, default=None,
+                        metavar="PID",
+                        help="the process whose network namespace the "
+                             "listeners were bound in; callers are looked "
+                             "up in its socket table")
     return parser.parse_args(argv[1:])
 
 
@@ -162,11 +172,29 @@ def main(argv=None):
     except NotSocketActivated as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    tables = (PROC_NET_TCP if args.netns_pid is None
+              else netns_tables(args.netns_pid))
+    for sock in sockets:
+        listed = listed_in(sock, tables)
+        if listed:
+            continue
+        where = (f"the socket table of pid {args.netns_pid}'s network "
+                 "namespace" if args.netns_pid is not None
+                 else "this process's socket table")
+        why = ("cannot be read" if listed is None
+               else f"has no row for the listener on "
+                    f"{sock.getsockname()}")
+        hint = ("; was it bound in another network namespace, and "
+                "--netns-pid left out?" if args.netns_pid is None else "")
+        print(f"error: {where} {why}, so no caller could be named{hint}",
+              file=sys.stderr)
+        return 1
     listener = Listener(sockets, policy=policy, minter=minter,
                         status_path=args.status,
                         record_path=args.record,
                         broker_endpoint=args.broker,
-                        caller_uid=args.caller_uid)
+                        caller_uid=args.caller_uid,
+                        peer_tables=tables)
     print(f"policy loaded from {policy_path}: {policy.summary}", flush=True)
     signal.signal(signal.SIGTERM, lambda *_args: listener.stop())
     # logrotate renames the file and HUPs; the handler only sets a flag (see

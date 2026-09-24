@@ -34,7 +34,7 @@ from egress_status import write_status
 import inspect_http
 import inspect_tls
 from inspect_scope import Inspection
-from peer_identity import local_endpoints, peer_caller
+from peer_identity import PROC_NET_TCP, local_endpoints, peer_caller
 
 
 # The ceiling on connections being served, well above a guest's honest
@@ -105,7 +105,8 @@ class Listener:
 
     def __init__(self, sockets, out=None, limit=MAX_CONNECTIONS, policy=None,
                  status_path=None, minter=None, record_path=None,
-                 broker_endpoint=None, caller_uid=None):
+                 broker_endpoint=None, caller_uid=None,
+                 peer_tables=PROC_NET_TCP):
         self._sockets = list(sockets)
         self._ceiling = Ceiling(limit)
         self._identifying = Ceiling(MAX_IDENTIFYING)
@@ -113,6 +114,9 @@ class Listener:
         # The one uid served, or None for this process's own. A sidecar's
         # workload is another uid by design.
         self._caller_uid = caller_uid
+        # The socket tables callers are looked up in: this process's own
+        # namespace's, or the one the listeners were bound in.
+        self._peer_tables = tuple(peer_tables)
         # None: count, never write.
         self._status_path = status_path
         self.inspection = Inspection(
@@ -247,7 +251,8 @@ class Listener:
         rules exempt.
         """
         try:
-            caller, orphaned = peer_caller(local_endpoints(conn), peer[:2])
+            caller, orphaned = peer_caller(local_endpoints(conn), peer[:2],
+                                           self._peer_tables)
         except Exception:
             # A second layer that throws must not take the connection path
             # down with it.

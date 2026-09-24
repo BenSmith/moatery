@@ -11,7 +11,8 @@ are in [examples/](../examples/).
 
 - Both programs. Flags only, stdlib. The inspector is
   socket-activated (`LISTEN_FDS`), so where it listens is the `.socket`
-  unit's business, not the program's.
+  unit's business, not the program's (in shape 1n, `customs-netns-listen`
+  takes the unit's place).
 - The policy document the inspector reads (`--policy`):
 
   ```json
@@ -133,7 +134,7 @@ them somewhere to put it:
   private space (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
   `100.64.0.0/10`), the addresses a public name resolving inward would
   send the programs to.
-- **Shapes 1, 2 and 3 with the programs on the host:** there is no rule
+- **Shapes 1, 1n, 2 and 3 with the programs on the host:** there is no rule
   to write without root. The programs' sockets are the user's, like
   everything else the user runs, and the host has no namespace of theirs
   to hold a rule. Here the allowlist is the whole control: keep wildcards
@@ -149,7 +150,7 @@ rule loaded that dial succeeds, and the list only changes the report.
 ## DNS: an open channel, not yet closed
 
 The allowlist governs HTTP and HTTPS destinations. It does not govern
-DNS. Both recipes below accept port 53 to pasta's forwarder, and the
+DNS. Every recipe below accepts port 53 to pasta's forwarder, and the
 forwarder asks the host's resolver on the workload's behalf, so the
 workload can put arbitrary data in query names and read arbitrary data
 back in answers. That is an exfiltration channel in every shape, and
@@ -252,6 +253,112 @@ where each line above was checked.
 IPv6: `--map-host-loopback` takes a v6 address as well, and the filter
 chain above is `inet`, so a v6 dial with no rule for it is dropped rather
 than leaked. Either rule both families or run pasta `-4`.
+
+## Shape 1n: shape 1 with the listeners in the container's netns
+
+Shape 1, with the inspector's two listeners bound inside the container's
+network namespace instead of on the host's loopback. The inspector
+process still runs on the host as the user and dials its upstreams from
+the host's namespace. The broker is shape 1's, unchanged.
+
+Against shape 1 this buys:
+
+- No other uid on the host can reach the planes. Nothing listens on the
+  host at all; the only processes that can dial the listeners are the
+  container's own. In shape 1 every uid can connect, and the caller
+  check is what refuses them.
+- No loopback map. The container gets plain `--network pasta`, so no
+  address in it reaches the host's `127.0.0.1`.
+- One inspector per container rather than per host loopback: each
+  container's `127.0.0.1:8443` is in its own namespace.
+- An egress chain that names only the resolver. The redirect lands on
+  the namespace's loopback, which never crosses the egress device.
+
+And costs:
+
+- The listeners belong to one start of the container. A restarted
+  container has a new namespace, and the inspector has to be restarted
+  with it; one left running holds listeners nothing can reach.
+- They are visible from inside. The container's `/proc/net/tcp` (and so
+  `ss -ltn`) lists `127.0.0.1:8443` and `:8080` as listening, with no
+  process in the container owning them. Shape 1b's listeners show the
+  same way; shape 1's are not in the container's table.
+
+**The bind.** A rootless container's network namespace belongs to a user
+namespace the user owns. Joining a netns needs `CAP_SYS_ADMIN` over it
+and in the joiner's own user namespace, which the user holds only inside
+the one it owns. `customs-netns-listen --pid PID -- COMMAND` forks a
+child that joins both, by a pidfd of the container's process, binds
+`127.0.0.1:8443` and `:8080` there, sends the two listeners back over a
+socket pair and exits. The launcher itself never joins: it puts the
+listeners on fds 3 and 4, sets `LISTEN_PID` and `LISTEN_FDS`, and execs
+the command. The inspector still never binds; the bind is a short-lived
+process's, as it is the socket unit's in shape 1. No podman is involved
+past `podman inspect` for the pid, and the pidfd makes a pid that exits
+and is reused before the join an error rather than another process's
+namespace.
+
+**The caller check.** The caller's socket is in the container's table,
+not the host's. `--netns-pid PID` points the inspector's lookups at
+`/proc/PID/net/tcp` and `tcp6`. The uid there is the host's view of it:
+container root is the user, so the default (the inspector's own uid)
+serves a workload running as root, and a workload running as another
+uid inside is one of the user's subuids outside, which `--caller-uid`
+names. At start the inspector checks that every listener it was handed
+has a row in the table its lookups read, and refuses to start otherwise.
+Started without `--netns-pid`, it would look every caller up in the
+host's table, find none, and admit them all unnamed.
+
+```
+# 1–2. as shape 1: CA + bundle + policy.json; the broker's user unit
+# 3. the container, created but not started; plain pasta, no map
+podman create --network pasta \
+  -v bundle.pem:/usr/local/share/ca-certificates/egress-ca.crt:ro,Z \
+  -e SSL_CERT_FILE=/usr/local/share/ca-certificates/egress-ca.crt \
+  -e NODE_EXTRA_CA_CERTS=… -e REQUESTS_CA_BUNDLE=… \
+  -e EXAMPLE_API_KEY=sk-placeholder  IMAGE
+podman init NAME
+PID=$(podman inspect -f '{{.State.Pid}}' NAME)
+# 4. rules into the netns: shape 1's, landing on the netns's loopback
+DEV=$(ip route show default | awk '{print $5}')
+podman unshare nsenter -t "$PID" -n nft -f - <<NFT
+table inet customs {
+  chain out {
+    type nat hook output priority -100
+    tcp dport 443 dnat ip to 127.0.0.1:8443
+    tcp dport 80  dnat ip to 127.0.0.1:8080
+  }
+}
+table netdev customs {
+  chain egress {
+    type filter hook egress device "$DEV" priority 0; policy drop
+    meta protocol arp accept
+    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert,
+                  nd-router-solicit } accept
+    ip daddr 169.254.1.1 udp dport 53 accept
+    ip daddr 169.254.1.1 tcp dport 53 accept
+    counter comment "dropped"
+  }
+}
+NFT
+# 5. the inspector, a transient user unit for this start
+systemd-run --user --unit customs-inspect-NAME \
+  customs-netns-listen --pid "$PID" -- \
+  customs-inspect --name x --policy … --state-dir … --status … \
+    --record … --broker "unix:$XDG_RUNTIME_DIR/customs/broker.sock" \
+    --netns-pid "$PID"
+podman start NAME
+# and at the container's stop
+systemctl --user stop customs-inspect-NAME
+```
+
+`create → init → rules → inspector → start`: the workload's first packet
+meets both the redirect and a listener. The ARP and neighbour-discovery
+lines are there for the resolver, the one destination that crosses the
+device. IPv6 is as in shape 1: the listeners and the redirect are v4, and
+a v6 dial falls to the egress drop.
+
+`tests/manual/shape1n_rig.py` is this recipe as a rig.
 
 ## Shape 1b: a sidecar in a pod
 

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""lib/ is exactly the two programs' import closures, and nothing in it
-knows what a workload is.
+"""lib/ is exactly the programs' import closures, and nothing in it knows
+what a workload is.
 
 There is no other side here to hold a line against: every module in lib/
-must be reachable from customs-broker or customs-inspect, and neither
-closure may reach anything but lib/ and the standard library. The
+must be reachable from customs-broker, customs-inspect or
+customs-netns-listen, and no closure may reach anything but lib/ and the
+standard library. The
 workload-side property survives as absences -- no TOML reader, no passwd
 lookup, no address or path derivation -- because a copy of one of those
 functions would not show up as an import.
@@ -14,7 +15,9 @@ unit file or a container entrypoint writes against; a flag appearing or
 disappearing here is a change to that contract. The one change so far is
 the inspector's `--caller-uid`, mirroring the broker's: a sidecar's
 workload is another uid by design, and an inspector that served only its
-own uid refused every connection there as foreign.
+own uid refused every connection there as foreign. The second is its
+`--netns-pid`: listeners bound in a container's namespace have their
+callers in that namespace's socket table.
 """
 
 import ast
@@ -28,6 +31,7 @@ LIB = Path(REPO_ROOT) / "lib"
 BROKER = Path(REPO_ROOT) / "libexec" / "customs-broker"
 INSPECTOR = Path(REPO_ROOT) / "libexec" / "customs-inspect"
 MINT_CA = Path(REPO_ROOT) / "libexec" / "customs-mint-ca"
+NETNS_LISTEN = Path(REPO_ROOT) / "libexec" / "customs-netns-listen"
 SIDECAR = Path(REPO_ROOT) / "container" / "customs-sidecar"
 
 BROKER_FLAGS = frozenset({
@@ -36,7 +40,7 @@ BROKER_FLAGS = frozenset({
 })
 INSPECTOR_FLAGS = frozenset({
     "--name", "--policy", "--state-dir", "--status", "--record", "--broker",
-    "--caller-uid",
+    "--caller-uid", "--netns-pid",
 })
 
 # Functions whose presence would mean a program derives a value it is meant
@@ -98,6 +102,7 @@ class TestTheScannerSeesTheTree(unittest.TestCase):
         self.assertTrue(BROKER.exists())
         self.assertTrue(INSPECTOR.exists())
         self.assertTrue(MINT_CA.exists())
+        self.assertTrue(NETNS_LISTEN.exists())
 
     def test_the_closures_are_not_trivial(self):
         mods = _lib_modules()
@@ -118,12 +123,14 @@ class TestLibIsTheClosure(unittest.TestCase):
         """A module nothing imports is either dead or a program with no
         entrypoint; both are wrong here."""
         mods = _lib_modules()
-        reachable = _closure(BROKER, mods) | _closure(INSPECTOR, mods)
+        reachable = (_closure(BROKER, mods) | _closure(INSPECTOR, mods)
+                     | _closure(NETNS_LISTEN, mods))
         self.assertEqual(sorted(set(mods) - reachable), [])
 
     def test_the_closures_reach_only_lib_and_the_stdlib(self):
         mods = _lib_modules()
-        files = [BROKER, INSPECTOR, MINT_CA] + [mods[m] for m in mods]
+        files = ([BROKER, INSPECTOR, MINT_CA, NETNS_LISTEN]
+                 + [mods[m] for m in mods])
         self.assertEqual(sorted(_foreign(files, mods)), [])
 
     def test_the_ca_minter_is_inside_the_inspector_closure(self):
@@ -133,6 +140,14 @@ class TestLibIsTheClosure(unittest.TestCase):
         minter = _closure(MINT_CA, mods)
         self.assertIn("egress_mint", minter)
         self.assertEqual(sorted(minter - _closure(INSPECTOR, mods)), [])
+
+    def test_the_launcher_reaches_only_the_planes(self):
+        """customs-netns-listen binds and execs. The port numbers are the
+        one thing it shares with the inspector, and nothing that parses a
+        byte a workload sent is in it."""
+        mods = _lib_modules()
+        self.assertEqual(sorted(_closure(NETNS_LISTEN, mods)),
+                         ["egress_plane", "netns_listen"])
 
     def test_the_broker_closure_is_the_four_broker_modules(self):
         mods = _lib_modules()
@@ -156,11 +171,13 @@ class TestNothingKnowsWhatAWorkloadIs(unittest.TestCase):
         return {**{m: mods[m].read_text() for m in mods},
                 BROKER.name: BROKER.read_text(),
                 INSPECTOR.name: INSPECTOR.read_text(),
-                MINT_CA.name: MINT_CA.read_text()}
+                MINT_CA.name: MINT_CA.read_text(),
+                NETNS_LISTEN.name: NETNS_LISTEN.read_text()}
 
     def test_nothing_reads_toml(self):
         mods = _lib_modules()
-        files = [BROKER, INSPECTOR, MINT_CA] + list(mods.values())
+        files = ([BROKER, INSPECTOR, MINT_CA, NETNS_LISTEN]
+                 + list(mods.values()))
         readers = sorted(f.name for f in files if "tomllib" in _imports(f))
         self.assertEqual(readers, [])
 
@@ -170,7 +187,8 @@ class TestNothingKnowsWhatAWorkloadIs(unittest.TestCase):
         closure is its twin (the inspector's closure mentions the prefix
         in prose about the host it came from)."""
         mods = _lib_modules()
-        files = [BROKER, INSPECTOR, MINT_CA] + list(mods.values())
+        files = ([BROKER, INSPECTOR, MINT_CA, NETNS_LISTEN]
+                 + list(mods.values()))
         lookups = sorted(f.name for f in files if "pwd" in _imports(f))
         self.assertEqual(lookups, [])
         broker = _closure(BROKER, mods)
@@ -213,6 +231,11 @@ class TestTheFlagsAreTheContract(unittest.TestCase):
         self.assertEqual(self._flags(MINT_CA), {"--name", "--state-dir"})
         self.assertTrue(self._flags(MINT_CA) <= INSPECTOR_FLAGS)
 
+    def test_the_launcher_takes_one_flag(self):
+        """The pid is the one fact it needs; the ports are the planes', and
+        everything after `--` is the program's."""
+        self.assertEqual(self._flags(NETNS_LISTEN), {"--pid"})
+
 
 class TestNoProgramWritesBytecode(unittest.TestCase):
     """Every program turns bytecode off before its first lib import. The
@@ -240,7 +263,7 @@ class TestNoProgramWritesBytecode(unittest.TestCase):
         return None
 
     def test_every_program_turns_bytecode_off_first(self):
-        for path in (BROKER, INSPECTOR, MINT_CA, SIDECAR):
+        for path in (BROKER, INSPECTOR, MINT_CA, NETNS_LISTEN, SIDECAR):
             with self.subTest(program=path.name):
                 tree = ast.parse(path.read_text())
                 first = self._first_lib_import(tree)

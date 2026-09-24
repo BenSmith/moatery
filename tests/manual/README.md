@@ -116,6 +116,55 @@ step now.
 falls back to `getsockname()` cleanly: `caller_unresolved` is 0 and the
 caller check admitted every connection as the user's.
 
+## shape1n_rig.py — shape 1 with the listeners in the container
+
+`docs/DESIGN.md` shape 1n: shape 1's container under plain pasta, with no
+loopback map, and shape 1's broker unit. The inspector is a transient
+user unit started between `podman init` and `podman start`, through
+`customs-netns-listen`, which binds the two planes in the container's
+network namespace and execs the inspector with them.
+
+```bash
+python3 tests/manual/shape1n_rig.py                        # every row green
+python3 tests/manual/shape1n_rig.py --without-rules        # must go red
+python3 tests/manual/shape1n_rig.py --without-netns-pid    # inspector red
+python3 tests/manual/shape1n_rig.py --without-neighbour-discovery
+```
+
+**Rows.** Shape 1's premise, silent-drop, request, broker, unlisted,
+origin and counter rows, and three of its own. The inspector is up on
+the listeners it was handed, and their inodes are rows in the
+container's socket table and in none of the host's. Nothing listens on
+the host's `127.0.0.1` at either plane, for the user or another uid;
+the request row, which reaches the same planes from inside, is the
+control. With the neighbour table flushed, a DNS query to pasta's
+forwarder is answered: the planes are on loopback and never cross the
+egress device, so the resolver is the dial the neighbour lines are for.
+The request's 200 is also the observation that the inspector's upstream
+dial left from the host's namespace: the stub is on the host's
+`127.0.0.1`, which the container cannot reach.
+
+`--without-netns-pid` starts the inspector without the flag. It must
+refuse to start, since its lookups would read the host's table, which
+the listeners are not in, so inspector, request, unlisted and counters
+go red.
+
+**What it found, first run, 2026-09-24.** 21/21, and each flag red where
+it should be: `--without-rules` 13/21, `--without-neighbour-discovery`
+20/21 (the gateway `FAILED`, the query timed out),
+`--without-netns-pid` 11/20 with the inspector's refusal in the journal.
+No defect in the pair. Two facts for the design:
+
+- joining the container's namespaces needs no podman. The user owns the
+  container's user namespace, so a child holding a pidfd of the
+  container's process can `setns` into its user and network namespaces
+  together, and bind there.
+- the caller check reads a different socket in this shape. In shape 1
+  the inspector's peer is pasta's host socket, which is always the
+  user's; here it is the workload's own, in the container's table, with
+  the uid the host sees: the user for container root, a subuid for
+  anything else.
+
 ## shape1b_rig.py — the pair as a sidecar, with no host install
 
 `docs/DESIGN.md` shape 1b: a podman pod under pasta, the sidecar image

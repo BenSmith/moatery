@@ -10,11 +10,18 @@ that matter can be represented at all.
 """
 
 import ipaddress
+import os
 import socket
 import struct
 from pathlib import Path
 
 PROC_NET_TCP = ("/proc/net/tcp", "/proc/net/tcp6")
+
+
+def netns_tables(pid):
+    """The socket tables of `pid`'s network namespace, for listeners bound
+    there by another process."""
+    return (f"/proc/{pid}/net/tcp", f"/proc/{pid}/net/tcp6")
 
 # What a connection was aimed at before the host translated it: one option
 # per family, not interchangeable.
@@ -115,9 +122,9 @@ def peer_orphaned_from(rows, locals_, peer):
     return bool(found) and all(inode == 0 for _uid, inode in found)
 
 
-def _proc_tables():
+def _proc_tables(paths=PROC_NET_TCP):
     """The data lines of each /proc/net table that can be read."""
-    for path in PROC_NET_TCP:
+    for path in paths:
         try:
             with open(path) as fh:
                 yield fh.readlines()[1:]
@@ -134,17 +141,36 @@ def peer_uid(locals_, peer):
     return None
 
 
-def peer_caller(locals_, peer):
+def peer_caller(locals_, peer, tables=PROC_NET_TCP):
     """(uid or None, orphaned) for the far end of an accepted connection,
-    from one read of each table.
+    from one read of each of `tables`.
     """
     orphaned = False
-    for rows in _proc_tables():
+    for rows in _proc_tables(tables):
         uid = peer_uid_from(rows, locals_, peer)
         if uid is not None:
             return uid, False
         orphaned = orphaned or peer_orphaned_from(rows, locals_, peer)
     return None, orphaned
+
+
+def listed_in(sock, tables=PROC_NET_TCP):
+    """Whether `sock` has a row in one of `tables`, by inode; None if none
+    of them can be read.
+
+    A listener is in the table of the namespace it was bound in, and its
+    callers are in the same one. A lookup that reads another namespace's
+    table finds no caller at all.
+    """
+    inode = str(os.fstat(sock.fileno()).st_ino)
+    read = False
+    for rows in _proc_tables(tables):
+        read = True
+        for line in rows:
+            f = line.split()
+            if len(f) >= 10 and f[9] == inode:
+                return True
+    return False if read else None
 
 
 # The credentials of an AF_UNIX peer as the kernel hands them over: pid,

@@ -7,8 +7,10 @@ on a refusal.
 """
 
 import ipaddress
+import os
 import socket
 import struct
+import tempfile
 import threading
 import unittest
 from unittest import mock
@@ -283,6 +285,48 @@ INITIAL_NS = "         0          0 4294967295\n"
 # What `unshare -Ur` produces: one uid mapped, everything else invisible.
 SINGLE_UID_NS = "         0       1000          1\n"
 # A container: restricted, but it still maps the whole workload uid range.
+class TestTheTablesAreAParameter(unittest.TestCase):
+    """A listener bound in another namespace has its callers in that
+    namespace's table; the lookup reads the tables it is given."""
+
+    def _listener(self):
+        srv = socket.socket()
+        self.addCleanup(srv.close)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        return srv
+
+    def test_a_listener_is_listed_in_its_own_namespaces_table(self):
+        srv = self._listener()
+        self.assertIs(peer_identity.listed_in(srv), True)
+        self.assertIs(peer_identity.listed_in(
+            srv, peer_identity.netns_tables(os.getpid())), True)
+
+    def test_a_table_without_its_row_does_not_list_it(self):
+        srv = self._listener()
+        empty = self.enterContext(tempfile.NamedTemporaryFile("w"))
+        empty.write("  sl  local_address rem_address ...\n")
+        empty.flush()
+        self.assertIs(peer_identity.listed_in(srv, (empty.name,)), False)
+
+    def test_no_readable_table_is_none_not_false(self):
+        srv = self._listener()
+        self.assertIsNone(peer_identity.listed_in(srv, ("/nonexistent",)))
+
+    def test_a_caller_is_looked_up_only_in_the_tables_given(self):
+        srv = self._listener()
+        client = socket.create_connection(srv.getsockname())
+        self.addCleanup(client.close)
+        conn, peer = srv.accept()
+        self.addCleanup(conn.close)
+        endpoints = peer_identity.local_endpoints(conn)
+        self.assertEqual(peer_identity.peer_caller(endpoints, peer[:2]),
+                         (os.getuid(), False))
+        self.assertEqual(
+            peer_identity.peer_caller(endpoints, peer[:2], ("/nonexistent",)),
+            (None, False))
+
+
 CONTAINER_NS = "         0          0          1\n         1          1      65536\n"
 # A rootless container: the same shape, with the two columns different. The
 # user is root inside and the subuid range is 1..65536 inside; outside they

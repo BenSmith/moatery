@@ -1,0 +1,64 @@
+#!/usr/bin/python3
+"""
+customs-netns-listen: bind the inspector's two planes in another process's
+network namespace, then become the inspector with them.
+
+    customs-netns-listen --pid PID -- customs-inspect ... --netns-pid PID
+
+PID is a process in the namespace, a rootless container's, whose user
+namespace the user owns. A child joins it, binds 127.0.0.1:8443 and :8080
+there and exits; this process stays in the host's namespaces and execs the
+command with the listeners as fds 3 and 4, LISTEN_PID and LISTEN_FDS set.
+The lib module is netns_listen.
+"""
+
+import argparse
+import os
+import sys
+
+# Before the lib imports: the install directory is not this process's to
+# write.
+sys.dont_write_bytecode = True
+
+from netns_listen import BindFailed, hand_over, listeners_in
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog=os.path.basename(argv[0]),
+        description="bind the inspector's listeners in another process's "
+                    "network namespace, then run a command with them")
+    parser.add_argument("--pid", type=int, required=True,
+                        help="a process in the network namespace to bind in")
+    parser.add_argument("command", nargs=argparse.REMAINDER,
+                        help="the program to run with the listeners, "
+                             "after --")
+    args = parser.parse_args(argv[1:])
+    if args.command[:1] == ["--"]:
+        args.command = args.command[1:]
+    if not args.command:
+        parser.error("no command to run with the listeners")
+    return args
+
+
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
+    try:
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code or 0)
+    try:
+        socks = listeners_in(args.pid)
+    except (OSError, BindFailed) as exc:
+        print(f"error: cannot bind in pid {args.pid}'s network namespace: "
+              f"{exc}", file=sys.stderr)
+        return 1
+    try:
+        hand_over(socks, args.command)
+    except OSError as exc:
+        print(f"error: cannot run {args.command[0]}: {exc}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -49,6 +49,7 @@ import egress_upstream
 import inspect_http
 import inspect_listener
 import inspect_tls
+import peer_identity
 from inspect_tls import serve_tls, serve_terminated
 from inspect_http import INTERIM_MAX, serve_cleartext
 from inspect_listener import Ceiling, Listener, build_minter
@@ -1545,6 +1546,52 @@ class TestEntrypointWiring(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(listener.inspection.upstream._broker_endpoint,
                          "/run/customs/broker.sock")
+
+    def _bound(self):
+        sock = socket.socket()
+        self.addCleanup(sock.close)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
+        return sock
+
+    def test_a_listener_in_this_namespace_starts_on_its_own_table(self):
+        sock = self._bound()
+        rc, listener, err = self._started(
+            [], inherited_listening_sockets=lambda: [sock])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(listener._peer_tables, peer_identity.PROC_NET_TCP)
+
+    def test_the_netns_pid_reaches_the_lookup(self):
+        """This process's own pid names this namespace, whose table holds
+        the listener; the lookups must be handed that table, not the
+        default."""
+        sock = self._bound()
+        pid = os.getpid()
+        rc, listener, err = self._started(
+            ["--netns-pid", str(pid)],
+            inherited_listening_sockets=lambda: [sock])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(listener._peer_tables,
+                         peer_identity.netns_tables(pid))
+
+    def test_a_listener_the_lookups_cannot_see_refuses_to_start(self):
+        """Bound in a container's namespace and started without
+        --netns-pid, every caller would be looked up in the wrong table
+        and admitted unnamed, by a listener that looks healthy."""
+        sock = self._bound()
+        rc, listener, err = self._started(
+            [], inherited_listening_sockets=lambda: [sock],
+            listed_in=lambda s, tables: False)
+        self.assertEqual(rc, 1)
+        self.assertIsNone(listener)
+        self.assertIn("--netns-pid left out", err)
+        rc, listener, err = self._started(
+            ["--netns-pid", "4242"], inherited_listening_sockets=lambda: [sock],
+            listed_in=lambda s, tables: None)
+        self.assertEqual(rc, 1)
+        self.assertIsNone(listener)
+        self.assertIn("pid 4242", err)
+        self.assertIn("cannot be read", err)
 
     def test_an_unmappable_caller_uid_refuses_to_start(self):
         """The broker's refusal, for the inspector's reason: every
@@ -4421,6 +4468,21 @@ class TestCallerIdentity(unittest.TestCase):
         snap = listener.status()
         self.assertEqual(snap["drop_reasons"][DROP_CALLER_CLOSED], 1)
         self.assertEqual(snap["caller_unresolved"], 0)
+
+    def test_the_lookup_reads_the_tables_the_listener_was_given(self):
+        """Listeners bound in a container's namespace have their callers in
+        its table; a lookup that read this namespace's would name none."""
+        local = ("198.18.0.1", CLEARTEXT.inspect_port)
+        tables = ("/proc/4242/net/tcp", "/proc/4242/net/tcp6")
+        listener = Listener([_listener_with(local)], io.StringIO(),
+                            peer_tables=tables)
+        with unittest.mock.patch.object(
+                inspect_listener, "peer_caller",
+                return_value=(self.OWN_UID, False)) as lookup, \
+                unittest.mock.patch("os.getuid", return_value=self.OWN_UID):
+            listener._handle(_mock_conn(), ("192.0.2.1", 1024),
+                             _listener_with(local))
+        self.assertEqual(lookup.call_args.args[2], tables)
 
     def test_a_raising_lookup_does_not_take_the_connection_path_down(self):
         """A hardening check that can throw is worse than one that fails soft:

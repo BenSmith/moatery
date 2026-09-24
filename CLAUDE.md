@@ -48,11 +48,17 @@ substrate, SELinux labelling) or narrates history. Module names and
 every identifier workloadctl imports are unchanged (`docs/EXTRACTION.md`
 lists them). "Guest" and "workload" remain as the words for the thing
 behind the inspector. Diffing against workloadctl is a diff of prose and
-messages, the two entrypoints' names, and the shape-1b flags: the
-broker's `--listen unix:PATH` (`UnixServer`, `peer_uid_unix`), the
-inspector's `--broker unix:PATH` and `--caller-uid`, and the record
-naming a unix upstream. Fixes are mirrored to workloadctl on a branch;
+messages, the two entrypoints' names, and the shape-1b and 1n flags:
+the broker's `--listen unix:PATH` (`UnixServer`, `peer_uid_unix`), the
+inspector's `--broker unix:PATH`, `--caller-uid` and `--netns-pid`
+(`listed_in`, `netns_tables`, the lookup's tables as a parameter), and
+the record naming a unix upstream. Fixes are mirrored to workloadctl on a branch;
 the flags reach it with the dependency, not by mirror.
+
+`libexec/customs-netns-listen` is customs-only too: it binds the
+inspector's planes in a rootless container's network namespace and execs
+the inspector with them (shape 1n). The inspector's `--netns-pid` is its
+other half and reaches workloadctl with the dependency.
 
 `libexec/customs-mint-ca` is customs-only too: the one CA mint
 (`egress_mint.mint_ca`), which the sidecar's first start also calls.
@@ -91,10 +97,11 @@ It is customs-only and has no workloadctl counterpart.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 672)
+just test     # all unit tests (unittest discover; 695)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user
+python3 tests/manual/shape1n_rig.py         # same; listeners in the netns
 python3 tests/manual/shape1b_rig.py         # same; builds container/ first
 ```
 
