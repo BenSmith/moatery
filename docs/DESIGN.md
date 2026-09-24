@@ -108,13 +108,13 @@ them somewhere to put it:
 - **Shape 1b (sidecar):** the pod's netns holds the programs' sockets, and
   the recipe below already marks their connections (`ct mark 0x1`, copied
   onto every packet as `meta mark 0x1`) so the egress chain can exempt
-  them. The rule goes in that egress chain, before its blanket
-  `meta mark 0x1 accept`, which today lets the programs out to anywhere.
-  It keys on the mark and the destination -- both readable at the egress
-  hook -- not on `meta skuid`, which matches only a packet that still
-  carries the program's socket.
-  These lines load; the shape-1b rig does not yet exercise them (its
-  stand-in provider is on a TEST-NET address, which this rule would drop):
+  them. The rule goes in that egress chain after the resolver's lines and
+  before its blanket `meta mark 0x1 accept`, which otherwise lets the
+  programs out to anywhere. The resolver comes first because it is
+  link-local and the programs resolve through it too. The rule keys on
+  the mark and the destination -- both readable at the egress hook --
+  not on `meta skuid`, which matches only a packet that still carries
+  the program's socket:
 
   ```
   # one line per address an `internal` name resolves to, e.g.
@@ -128,12 +128,15 @@ them somewhere to put it:
   No `ct state established,related` line: it does not load in a netdev
   egress hook, and it is not needed, because this hook is on the pod's
   egress device and the inspector's replies to the workload go out over
-  loopback, which never crosses it. For the same reason the loopback and
-  link-local entries in the drop set never reach this chain; they are
-  belt-and-suspenders, and what it actually enforces is the routable
-  private space (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
-  `100.64.0.0/10`), the addresses a public name resolving inward would
-  send the programs to.
+  loopback, which never crosses it. For the same reason the loopback
+  entries never reach this chain. The link-local ones do: pasta's
+  resolver is there, and so is the host's loopback if the pod maps it
+  (`--map-host-loopback`).
+
+  `tests/manual/shape1b_rig.py` runs these lines, with an accept line
+  for its stand-in provider on the host's mapped loopback: without that
+  line the provider's dial is dropped and never arrives, and the
+  programs' own DNS query is answered.
 - **Shapes 1, 1n, 2 and 3 with the programs on the host:** there is no rule
   to write without root. The programs' sockets are the user's, like
   everything else the user runs, and the host has no namespace of theirs
@@ -457,9 +460,9 @@ table netdev customs {
     meta protocol arp accept
     icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert,
                   nd-router-solicit } accept
-    meta mark 0x1 accept
     ip daddr 169.254.1.1 udp dport 53 accept
     ip daddr 169.254.1.1 tcp dport 53 accept
+    meta mark 0x1 accept
     counter comment "dropped"
   }
 }

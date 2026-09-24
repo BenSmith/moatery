@@ -56,6 +56,22 @@ NEIGHBOUR_DISCOVERY = """\
                   nd-router-solicit } accept
 """
 
+# One A query for example.com: "answered", "timeout", or the error class.
+DNS_QUERY = """
+import socket, struct, sys
+q = (struct.pack("!6H", 0x5a17, 0x0100, 1, 0, 0, 0)
+     + b"\\x07example\\x03com\\x00" + struct.pack("!2H", 1, 1))
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(5)
+try:
+    s.sendto(q, (sys.argv[1], 53))
+    print("answered" if s.recv(512)[:2] == q[:2] else "garbled")
+except TimeoutError:
+    print("timeout")
+except OSError as exc:
+    print(type(exc).__name__)
+"""
+
 HOME = Path.home()
 RIG = HOME / ".local" / "state" / "customs-rig"
 STUB_CERT, STUB_KEY = RIG / "stub-cert.pem", RIG / "stub-key.pem"

@@ -177,6 +177,7 @@ that reaches the provider carrying it.
 ```bash
 python3 tests/manual/shape1b_rig.py                  # builds the image first
 python3 tests/manual/shape1b_rig.py --without-rules  # must go red
+python3 tests/manual/shape1b_rig.py --without-private-drop  # private red
 python3 tests/manual/shape1b_rig.py --no-build       # reuse the last image
 ```
 
@@ -195,8 +196,13 @@ grew by one; the record says `forward` under the credential with
 workload -- `stat` says "No such file or directory", which curl alone
 cannot distinguish from a refusal -- and nothing but the two planes
 listens on TCP in the pod, so there is no address to spell; its log did
-not grow. An unlisted host gets the 403 and the record. The origin's two
-rows. The counters name every caller and dropped none as foreign, with
+not grow. An unlisted host gets the 403 and the record. The private
+rows: the egress chain carries `DESIGN.md`'s private-space drop and an
+accept line for the provider, which is on the host's mapped loopback and
+so link-local; with that line deleted the workload's request gets no 200,
+the stub's log does not grow and the drop's counter moves, and with it
+put back the same request arrives. The programs' own DNS query to the
+resolver is answered. The origin's two rows. The counters name every caller and dropped none as foreign, with
 the workload being another uid. Last, the lifecycle: the broker killed
 from outside ends the container non-zero and the restart policy brings
 it back (the restart count rose; both exits are in the log), the
@@ -242,3 +248,14 @@ failed. The capability row was seen red against an image whose
 supervisor skipped its drop (`CapEff=c3`), which also failed two
 lifecycle rows: a root supervisor without `CAP_KILL` cannot stop the
 inspector, so the uid arrangement is what makes the stop work.
+
+**What it found, the private rows, 2026-09-24.** One defect in the
+recipe as `DESIGN.md` had it: the private-space drop went before the
+blanket accept, which came before the resolver's lines, so it dropped
+the programs' own DNS to pasta's link-local resolver. The rig hid this
+because `--add-host` pins every name the programs dial. Seen red with
+the lines in that order (the DNS row, `timeout`); the resolver's lines
+now come first, in the recipe and here. 29/29; `--without-private-drop`
+27/29, the two drop rows red. The request the drop refuses is brokered,
+so its record is the inspector's `forward` with the broker's 502, not
+`internal destination`: that report is for the inspector's own dial.

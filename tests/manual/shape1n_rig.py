@@ -281,22 +281,6 @@ else:
     print("sent")
 """
 
-# One A query for example.com: "answered", "timeout", or the error class.
-DNS_QUERY = """
-import socket, struct, sys
-q = (struct.pack("!6H", 0x5a17, 0x0100, 1, 0, 0, 0)
-     + b"\\x07example\\x03com\\x00" + struct.pack("!2H", 1, 1))
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.settimeout(5)
-try:
-    s.sendto(q, (sys.argv[1], 53))
-    print("answered" if s.recv(512)[:2] == q[:2] else "garbled")
-except TimeoutError:
-    print("timeout")
-except OSError as exc:
-    print(type(exc).__name__)
-"""
-
 FILTERED_UDP = ("192.0.2.1", 53)
 
 
@@ -420,7 +404,7 @@ def probe(pid, dns, secret):
     say("neighbour")
     dev = default_route_device()
     in_netns(pid, ["ip", "neigh", "flush", "dev", dev])
-    answer = in_netns(pid, ["python3", "-c", DNS_QUERY, dns],
+    answer = in_netns(pid, ["python3", "-c", riglib.DNS_QUERY, dns],
                       check=False).stdout.strip()
     learned = in_netns(pid, ["ip", "neigh", "show", "dev", dev],
                        check=False).stdout.strip()

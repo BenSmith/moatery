@@ -10,6 +10,7 @@ on the proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/shape1b_rig.py [--keep] [--without-rules]
                                         [--without-neighbour-discovery]
+                                        [--without-private-drop]
                                         [--no-build]
 
 The same two host facts as shape 1 need sudo and are undone at teardown.
@@ -43,6 +44,13 @@ THE ROWS
             spell. The broker's log did not grow.
   unlisted  from the workload, a host the policy does not name gets the
             inspector's 403 and the record says why, with no upstream.
+  private   the programs' dials into private space are dropped unless an
+            accept line names the address. The provider is on the
+            loopback map, link-local, so it has one; that line is
+            deleted, the workload's request must not reach the stub (its
+            log does not grow) while the private-drop counter moves, and
+            with the line back the same request arrives. The programs'
+            own DNS query to the resolver, also link-local, is answered.
   no key    from the host, the placeholder alone gets 401 from the origin;
             the real key gets 200.
   counters  every caller was named (the DNAT is in the same netns now, so
@@ -63,7 +71,9 @@ which no bundle of the workload's carries, the unlisted name times out on
 TEST-NET, and with no egress chain the drop counter is absent.
 `--without-neighbour-discovery` loads the egress chain without its ARP
 and neighbour-discovery lines; `neighbour` and the lifecycle's request
-must go red.
+must go red. `--without-private-drop` leaves out the private-space drop
+and its accept line: the request with the line deleted arrives, so
+`private` goes red.
 """
 
 import argparse
@@ -104,6 +114,14 @@ SOCKET_PATH = "/run/customs/broker.sock"
 STATE_IN_SIDECAR = "/var/lib/customs"
 POLICY_IN_SIDECAR = "/etc/customs/policy.json"
 UPSTREAM_CA_IN_SIDECAR = "/etc/customs/upstream-ca.pem"
+
+# The drop set docs/DESIGN.md gives for the programs' dials.
+PRIVATE_V4 = ("0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, "
+              "169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16")
+PRIVATE_V6 = "::1, fc00::/7, fe80::/10"
+# The provider's accept line: the stub is reached at the loopback map.
+INTERNAL_ACCEPT = (f"meta mark {OURS_MARK} ip daddr {LOOPBACK_MAP} "
+                   f"tcp dport {riglib.PROVIDER_PORT} accept")
 
 POLICY = RIG / "sidecar-policy.json"
 BUNDLE = RIG / "sidecar-bundle.pem"
@@ -209,7 +227,7 @@ def default_route_device(pid):
     return in_netns(pid, ["ip", "route", "show", "default"]).stdout.split()[4]
 
 
-def load_rules(pid, neighbour):
+def load_rules(pid, neighbour, private):
     """The discriminator is the uid: the two image uids are exempt from
     the redirect and the drop, since their dials are the upstream legs
     and leave through this same netns. The resolver is pasta's forwarder,
@@ -228,14 +246,26 @@ def load_rules(pid, neighbour):
     `tag` chain reads the uid at the output hook, stores it on the
     connection, and copies it onto every packet for the egress hook.
 
+    The private-space drop is docs/DESIGN.md's, with the one accept line
+    the provider needs. It follows the resolver's lines: pasta's
+    resolver is link-local, and the programs resolve through it too.
+
     `neighbour` false leaves out the ARP and neighbour-discovery lines,
-    for the `neighbour` row to go red."""
+    for the `neighbour` row to go red; `private` false, the private-space
+    drop, for the `private` row."""
     resolv = exec_in(SIDECAR, ["cat", "/etc/resolv.conf"]).stdout
     dns = next((ln.split()[1] for ln in resolv.splitlines()
                 if ln.startswith("nameserver")), "169.254.1.1")
     dev = default_route_device(pid)
     ours = f"{{ {INSPECT_UID}, {BROKER_UID} }}"
     nd = riglib.NEIGHBOUR_DISCOVERY if neighbour else ""
+    inward = f"""\
+    {INTERNAL_ACCEPT} comment "internal"
+    meta mark {OURS_MARK} ip daddr {{ {PRIVATE_V4} }} counter drop \
+comment "private"
+    meta mark {OURS_MARK} ip6 daddr {{ {PRIVATE_V6} }} counter drop \
+comment "private"
+""" if private else ""
     rules = f"""
 table inet customs {{
   chain out {{
@@ -253,9 +283,9 @@ table inet customs {{
 table netdev customs {{
   chain egress {{
     type filter hook egress device "{dev}" priority 0; policy drop
-{nd}    meta mark {OURS_MARK} accept
-    ip daddr {dns} udp dport 53 accept
+{nd}    ip daddr {dns} udp dport 53 accept
     ip daddr {dns} tcp dport 53 accept
+{inward}    meta mark {OURS_MARK} accept
     counter comment "dropped"
   }}
 }}
@@ -263,6 +293,7 @@ table netdev customs {{
     in_netns(pid, ["nft", "-f", "-"], input=rules)
     say(f"  rules loaded into the pod's netns (resolver {dns}, "
         f"egress on {dev})")
+    return dns
 
 
 def start_workload():
@@ -345,7 +376,84 @@ def dropped_counter(pid):
     return -1
 
 
-def probe(sidecar_pid, workload_pid, secret):
+def egress_rules(pid):
+    return in_netns(pid, ["nft", "-a", "list", "chain", "netdev", "customs",
+                          "egress"], check=False).stdout
+
+
+def handle_of(pid, comment):
+    """The handle of the first egress rule with this comment, or None."""
+    for line in egress_rules(pid).splitlines():
+        if f'comment "{comment}"' in line and "# handle " in line:
+            return line.rsplit("# handle ", 1)[1].strip()
+    return None
+
+
+def private_counter(pid):
+    """Packets the private-space drop lines have counted, both families."""
+    total = 0
+    for line in egress_rules(pid).splitlines():
+        if 'comment "private"' in line and "packets" in line:
+            fields = line.split()
+            total += int(fields[fields.index("packets") + 1])
+    return total
+
+
+def stub_arrivals():
+    """Requests the stub has served: a dropped SYN never becomes one."""
+    return sum(ln.startswith("stub: ")
+               for ln in (RIG / "stub.log").read_text().splitlines())
+
+
+def private_rows(sidecar_pid, dns):
+    """The accept line is deleted and put back by handle, around one
+    request each way; the broker dials afresh per request, so the next
+    one meets the chain as it stands."""
+    say("private")
+    answer = run(["podman", "exec", "--user", str(INSPECT_UID), SIDECAR,
+                  "python3", "-c", riglib.DNS_QUERY, dns],
+                 check=False).stdout.strip()
+    row("private: the programs' own DNS query to the resolver is answered",
+        answer == "answered", f"query to {dns} as uid {INSPECT_UID}: "
+        f"{answer!r}")
+
+    handle = handle_of(sidecar_pid, "internal")
+    if handle is not None:
+        in_netns(sidecar_pid, ["nft", "delete", "rule", "netdev", "customs",
+                               "egress", "handle", handle])
+    counted, arrived = private_counter(sidecar_pid), stub_arrivals()
+    rc, code, _, err = curl_in(
+        f"https://{PROVIDER}/v1/probe", "-H",
+        f"Authorization: Bearer {PLACEHOLDER}", timeout=25)
+    counted_after = private_counter(sidecar_pid)
+    arrived_after = stub_arrivals()
+    row("private: with no accept line, the provider's dial is dropped",
+        code != "200" and arrived_after == arrived
+        and counted_after > counted,
+        f"curl rc={rc} http={code!r} {err}; stub requests {arrived} -> "
+        f"{arrived_after}; private drops {counted} -> {counted_after}")
+    last = next((r for r in reversed(records())
+                 if r.get("host") == PROVIDER), None)
+    row("private: the record does not say it was served",
+        last is not None and last.get("status") != 200, f"{last}")
+
+    first_drop = handle_of(sidecar_pid, "private")
+    if first_drop is not None:
+        in_netns(sidecar_pid, ["nft", "insert", "rule", "netdev", "customs",
+                               "egress", "position", first_drop,
+                               *INTERNAL_ACCEPT.split(),
+                               "comment", '"internal"'])
+    arrived = stub_arrivals()
+    rc, code, _, err = curl_in(
+        f"https://{PROVIDER}/v1/probe", "-H",
+        f"Authorization: Bearer {PLACEHOLDER}")
+    row("private (control): with the line back, the same request arrives",
+        rc == 0 and code == "200" and stub_arrivals() == arrived + 1,
+        f"curl rc={rc} http={code} {err}; stub requests {arrived} -> "
+        f"{stub_arrivals()}")
+
+
+def probe(sidecar_pid, workload_pid, secret, dns):
     say("premise")
     caps = caps_of(workload_pid)
     row("premise: no CAP_NET_ADMIN in the workload's bounding set",
@@ -467,6 +575,8 @@ def probe(sidecar_pid, workload_pid, secret):
     row("unlisted: the record says dropped, 'not allowlisted', no upstream",
         hit is not None, f"{hit}" if hit else f"records: {dropped}")
 
+    private_rows(sidecar_pid, dns)
+
     riglib.origin_rows(secret)
 
     say("counters (waiting for the inspector's next status write)")
@@ -570,6 +680,9 @@ def main():
                     help="leave ARP and neighbour discovery out of the "
                          "egress chain; neighbour and the lifecycle's "
                          "request must go red")
+    ap.add_argument("--without-private-drop", action="store_true",
+                    help="leave out the private-space drop and its accept "
+                         "line; private must go red")
     ap.add_argument("--no-build", action="store_true",
                     help=f"use the {SIDECAR_IMAGE} already built")
     args = ap.parse_args()
@@ -598,14 +711,16 @@ def main():
         # start; the workload's bundle is built from it.
         riglib.write_bundle(
             sidecar_file(f"{STATE_IN_SIDECAR}/ca/egress-ca.crt"), BUNDLE)
+        dns = "169.254.1.1"
         if args.without_rules:
             say("  rules NOT loaded, as asked")
         else:
-            load_rules(sidecar_pid,
-                       not args.without_neighbour_discovery)
+            dns = load_rules(sidecar_pid,
+                             not args.without_neighbour_discovery,
+                             not args.without_private_drop)
         workload_pid = start_workload()
         probe_started = time.time()
-        probe(sidecar_pid, workload_pid, secret)
+        probe(sidecar_pid, workload_pid, secret, dns)
         lifecycle(secret)
     finally:
         teardown(args.keep)
@@ -617,6 +732,8 @@ def main():
         (args.without_neighbour_discovery,
          "--without-neighbour-discovery: neighbour and the lifecycle's "
          "request are expected red"),
+        (args.without_private_drop,
+         "--without-private-drop: private is expected red"),
     ) if flag]
     rc = riglib.report("; ".join(expected) or None)
     if rc:
