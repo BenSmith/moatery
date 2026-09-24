@@ -181,8 +181,8 @@ ExecStart=customs-inspect --name x --policy … --state-dir … --status … \
     --record … --broker unix:%t/customs/broker.sock
 # 4. the container, created but not started
 podman create --network pasta:--map-host-loopback=169.254.1.3 \
-  -v bundle.pem:/usr/local/share/ca-certificates/customs.crt:ro,Z \
-  -e SSL_CERT_FILE=/usr/local/share/ca-certificates/customs.crt \
+  -v bundle.pem:/usr/local/share/ca-certificates/egress-ca.crt:ro,Z \
+  -e SSL_CERT_FILE=/usr/local/share/ca-certificates/egress-ca.crt \
   -e NODE_EXTRA_CA_CERTS=… -e REQUESTS_CA_BUNDLE=… \
   -e EXAMPLE_API_KEY=sk-placeholder  IMAGE
 podman init NAME          # netns exists, entrypoint not yet running
@@ -323,8 +323,8 @@ table inet customs {
 }
 RULES
 podman run -d --pod POD --name workload --user 1000:1000 --cap-drop all \
-    -v bundle.pem:/usr/local/share/ca-certificates/customs.crt:ro,Z \
-    -e SSL_CERT_FILE=/usr/local/share/ca-certificates/customs.crt … \
+    -v bundle.pem:/usr/local/share/ca-certificates/egress-ca.crt:ro,Z \
+    -e SSL_CERT_FILE=/usr/local/share/ca-certificates/egress-ca.crt … \
     IMAGE
 ```
 

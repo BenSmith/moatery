@@ -40,7 +40,7 @@ INSPECT_TLS, INSPECT_CLEARTEXT = 8443, 8080
 PROVIDER_PORT = 443
 IMAGE = "registry.fedoraproject.org/fedora:44"
 SYSCTL = "net.ipv4.ip_unprivileged_port_start"
-CA_BUNDLE_IN_CONTAINER = "/usr/local/share/ca-certificates/customs.crt"
+CA_BUNDLE_IN_CONTAINER = "/usr/local/share/ca-certificates/egress-ca.crt"
 # Where the host keeps its own trust store, first one found.
 SYSTEM_BUNDLES = ("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
                   "/etc/pki/tls/certs/ca-bundle.crt",
