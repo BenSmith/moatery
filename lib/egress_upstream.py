@@ -162,7 +162,11 @@ def gone_while_idle(stream):
     An idle connection has nothing to say, so a readable socket means the
     far end closed it or sent bytes nobody asked for. A TLS record with no
     data, a late session ticket, reads as nothing and leaves it usable.
+    Bytes the stream read past the last response spoke unasked too, though
+    the socket no longer shows them.
     """
+    if stream.holds_unread():
+        return True
     sock = stream.sock
     # poll, not select: select refuses a descriptor past FD_SETSIZE, which
     # this process's raised limit reaches.
