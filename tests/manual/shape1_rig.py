@@ -8,6 +8,7 @@ environment, and one real request that reaches the provider carrying the
 sealed key. Run on the proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/shape1_rig.py [--keep] [--without-rules]
+                                       [--broker-over-tcp]
 
 Nothing here needs root except two host facts the rig cannot fake and
 undoes at teardown: a line in /etc/hosts pointing the provider's name at
@@ -26,12 +27,11 @@ THE ROWS
             request as forwarded under the credential, and its counters
             show it named the caller (SO_ORIGINAL_DST on a host socket whose
             DNAT happened a namespace away must fall back cleanly).
-  broker    from inside, the broker's address is unreachable both ways it
-            could be spelled -- as the host's 127.129.0.1, which is the
-            container's own loopback, and via the loopback-mapped address --
-            and the broker's journal saw nothing. The control is `request`:
-            pasta re-originates as the user, so a connection that arrived
-            WOULD be served.
+  broker    the broker holds no TCP socket, only a path under the user's
+            runtime directory, which the container has no path to. From
+            the host, another uid's connect to it is refused by the kernel
+            (EACCES), where the user's own connects. The other uid is one
+            of the user's subuids, through `podman unshare setpriv`.
   unlisted  from inside, a host the policy does not name is refused by the
             inspector and the record says why.
   no key    from the host, the placeholder alone gets 401 from the origin;
@@ -41,7 +41,9 @@ THE ROWS
 `--without-rules` skips loading the netns rules and changes nothing else.
 The `premise`, `request` and `unlisted` rows must go red -- the inspector
 is never even activated -- and a run where they stay green is measuring
-nothing.
+nothing. `--broker-over-tcp` puts the broker on 127.129.0.1:8081 instead
+of the socket path, and the broker's no-TCP and other-uid rows must go
+red.
 
 WHAT THIS RIG TELLS THE DESIGN
 
@@ -82,6 +84,9 @@ BROKER_ADDR = "127.129.0.1"
 BROKER_PORT = 8081
 CONTAINER = "customs-rig"
 UNIT = "customs-rig"
+BROKER_SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR",
+                                    f"/run/user/{os.getuid()}"),
+                     UNIT, "broker.sock")
 HOSTS_MARK = "customs-shape1-rig"
 
 UNITS = riglib.HOME / ".config" / "systemd" / "user"
@@ -103,7 +108,7 @@ def seal_credential(secret):
     CRED.chmod(0o600)
 
 
-def write_units():
+def write_units(over_tcp):
     """Hand-written, which is the point: no generator between the operator
     and the two ExecStart= lines. PYTHONPATH because the checkout is not
     installed; a package would put lib/ beside the entrypoints instead.
@@ -114,17 +119,21 @@ def write_units():
     py = sys.executable
     env = (f"Environment=PYTHONPATH={CHECKOUT / 'lib'}\n"
            f"Environment=SSL_CERT_FILE={STUB_CERT}\n")
+    endpoint = (f"{BROKER_ADDR}:{BROKER_PORT}" if over_tcp
+                else f"unix:%t/{UNIT}/broker.sock")
     (UNITS / f"{UNIT}-broker.service").write_text(
         "# written by tests/manual/shape1_rig.py — removed at teardown\n"
         "[Service]\n"
         f"ExecStart={py} {CHECKOUT / 'libexec' / 'customs-broker'}"
-        f" --name {NAME} --listen {BROKER_ADDR}:{BROKER_PORT}"
+        f" --name {NAME} --listen {endpoint}"
         f" --caller-uid {os.getuid()}"
         f" --host {PROVIDER}={CREDENTIAL}"
         f" --placeholder {CREDENTIAL}={PLACEHOLDER}"
         f" --auth-header {CREDENTIAL}=Authorization"
         f" \"--auth-format={CREDENTIAL}=Bearer {{secret}}\"\n"
         f"LoadCredentialEncrypted={CREDENTIAL}:{CRED}\n"
+        f"RuntimeDirectory={UNIT}\n"
+        "RuntimeDirectoryMode=0700\n"
         + env)
     (UNITS / f"{UNIT}-inspect.socket").write_text(
         "# written by tests/manual/shape1_rig.py — removed at teardown\n"
@@ -137,26 +146,33 @@ def write_units():
         f"ExecStart={py} {CHECKOUT / 'libexec' / 'customs-inspect'}"
         f" --name {NAME} --policy {POLICY} --state-dir {STATE}"
         f" --status {STATUS} --record {RECORD}"
-        f" --broker {BROKER_ADDR}:{BROKER_PORT}\n"
+        f" --broker {endpoint}\n"
         + env)
     run(["systemctl", "--user", "daemon-reload"])
 
 
-def start_units():
+def broker_pid():
+    return run(["systemctl", "--user", "show", "-p", "MainPID", "--value",
+                f"{UNIT}-broker.service"]).stdout.strip()
+
+
+def start_units(over_tcp):
     run(["systemctl", "--user", "start", f"{UNIT}-broker.service"])
-    pid = run(["systemctl", "--user", "show", "-p", "MainPID", "--value",
-               f"{UNIT}-broker.service"]).stdout.strip()
+    pid = broker_pid()
+    where = (f"{BROKER_ADDR}:{BROKER_PORT}" if over_tcp
+             else str(BROKER_SOCKET))
     for _ in range(50):
-        held = run(["ss", "-lntpH", f"sport = :{BROKER_PORT}"]).stdout
-        if f"pid={pid}," in held:
+        held = run(["ss", "-lntpH" if over_tcp else "-lxpH"]).stdout
+        if any(where in ln and f"pid={pid}," in ln
+               for ln in held.splitlines()):
             break
         if run(["systemctl", "--user", "is-active", f"{UNIT}-broker.service"],
                check=False).stdout.strip() != "active":
             sys.exit("broker did not stay up:\n" + journal("broker"))
         time.sleep(0.2)
     else:
-        sys.exit(f"broker (pid {pid}) never listened on :{BROKER_PORT}")
-    say(f"  broker listening on {BROKER_ADDR}:{BROKER_PORT} (pid {pid})")
+        sys.exit(f"broker (pid {pid}) never listened on {where}")
+    say(f"  broker listening on {where} (pid {pid})")
     run(["systemctl", "--user", "start", f"{UNIT}-inspect.socket"])
     held = run(["ss", "-lntH", f"sport = :{INSPECT_TLS}"]).stdout
     if not held.strip():
@@ -262,7 +278,26 @@ def records():
     return riglib.parse_records(RECORD.read_text())
 
 
-def probe(pid, secret):
+# Prints "connected" or the exception's class, so a missing interpreter
+# or a typo is not read as a refusal.
+CONNECT = """
+import socket, sys
+where = sys.argv[1]
+if where.startswith("/"):
+    s = socket.socket(socket.AF_UNIX)
+else:
+    host, port = where.rsplit(":", 1)
+    s, where = socket.socket(), (host, int(port))
+try:
+    s.connect(where)
+except OSError as exc:
+    print(type(exc).__name__)
+else:
+    print("connected")
+"""
+
+
+def probe(pid, secret, over_tcp):
     say("premise")
     caps = int(next(ln.split()[1] for ln in
                     Path(f"/proc/{pid}/status").read_text().splitlines()
@@ -314,18 +349,26 @@ def probe(pid, secret):
         f"{hit}" if hit else f"records for {PROVIDER}: {forwarded}")
 
     say("broker")
-    before = journal("broker").count(" ok ")
-    rc1, _, _, err1 = curl_in(f"http://{BROKER_ADDR}:{BROKER_PORT}/",
-                              timeout=5)
-    rc2, _, _, err2 = curl_in(f"http://{LOOPBACK_MAP}:{BROKER_PORT}/",
-                              timeout=5)
-    after = journal("broker").count(" ok ")
-    row(f"broker: {BROKER_ADDR} from inside is the container's loopback",
-        rc1 == 7, f"curl rc={rc1} {err1}")
-    row(f"broker: {LOOPBACK_MAP}:{BROKER_PORT} from inside is unreachable",
-        rc2 in (7, 28), f"curl rc={rc2} {err2}")
-    row("broker: its journal saw neither dial",
-        after == before, f"ok lines {before} -> {after}")
+    pid = broker_pid()
+    tcp = [ln for ln in run(["ss", "-lntpH"]).stdout.splitlines()
+           if f"pid={pid}," in ln]
+    row("broker: it holds no TCP socket", not tcp,
+        "; ".join(ln.split()[3] for ln in tcp) or "none")
+    where = (f"{BROKER_ADDR}:{BROKER_PORT}" if over_tcp
+             else str(BROKER_SOCKET))
+    own = run(["python3", "-c", CONNECT, where], check=False)
+    row("broker: the user connects to it (the control)",
+        own.stdout.strip() == "connected",
+        own.stdout.strip() or own.stderr.strip())
+    other = run(["podman", "unshare", "setpriv", "--reuid", "1",
+                 "--regid", "1", "--clear-groups",
+                 "python3", "-c", CONNECT, where], check=False)
+    row("broker: another uid on the host is refused by the kernel",
+        other.stdout.strip() == "PermissionError",
+        other.stdout.strip() or other.stderr.strip())
+    seen = exec_in(["test", "-e", str(BROKER_SOCKET)]).returncode
+    row("broker: the container has no path to its socket", seen != 0,
+        f"test -e rc={seen}")
 
     say("unlisted")
     # Under `tls = "inspect"` the refusal is a real 403 from the inspector,
@@ -386,11 +429,14 @@ def main():
     ap.add_argument("--without-rules", action="store_true",
                     help="skip the netns rules; premise and request must "
                          "go red")
+    ap.add_argument("--broker-over-tcp", action="store_true",
+                    help="the broker on 127.129.0.1:8081; its no-TCP and "
+                         "other-uid rows must go red")
     args = ap.parse_args()
 
     riglib.preflight(
         ("podman", "pasta", "nft", "openssl", "curl", "ss", "systemctl",
-         "systemd-creds", "nsenter"),
+         "systemd-creds", "nsenter", "setpriv"),
         (INSPECT_TLS, INSPECT_CLEARTEXT, BROKER_PORT, riglib.PROVIDER_PORT))
     state = run(["systemctl", "--user", "is-system-running"],
                 check=False).stdout.strip()
@@ -413,8 +459,8 @@ def main():
         riglib.lower_privileged_ports()
         riglib.write_hosts_entry(HOSTS_MARK)
         riglib.start_stub(secret)
-        write_units()
-        start_units()
+        write_units(args.broker_over_tcp)
+        start_units(args.broker_over_tcp)
         say("container")
         pid, dns = create_container()
         if args.without_rules:
@@ -423,13 +469,17 @@ def main():
             load_rules(pid, dns)
         run(["podman", "start", CONTAINER])
         probe_started = time.time()
-        probe(pid, secret)
+        probe(pid, secret, args.broker_over_tcp)
     finally:
         teardown(args.keep)
 
-    rc = riglib.report(
-        "--without-rules: premise and request are expected red"
-        if args.without_rules else None)
+    expected = [note for flag, note in (
+        (args.without_rules, "--without-rules: premise and request are "
+                             "expected red"),
+        (args.broker_over_tcp, "--broker-over-tcp: the broker's no-TCP and "
+                               "other-uid rows are expected red"),
+    ) if flag]
+    rc = riglib.report("; ".join(expected) or None)
     if rc:
         say(f"journal: journalctl --user -u {UNIT}-inspect.service"
             f" -u {UNIT}-broker.service -b")

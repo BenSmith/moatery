@@ -63,10 +63,19 @@ off (`--no-map-gw`) and so has to be asked for:
   rather than the gateway, so the gateway stays what it is. The inspector
   binds `127.0.0.1:8443` and `:8080`; the netns rule DNATs 443 and 80 to
   the mapped address.
-- The broker binds any `127.x.y.z ≠ 127.0.0.1`. pasta does not map it,
-  so the container cannot dial it at all. That is the whole
-  "cannot name the broker" property, done by pasta's mapping rather than
-  by a rule.
+- The broker listens on a socket path in the user's runtime directory
+  (`--listen unix:%t/customs/broker.sock`), which is `0700`. The
+  container's mount namespace has no such path, and no other uid on the
+  host can traverse to it, so the only caller that can reach the broker
+  is the user. A loopback address other than `127.0.0.1` would also be
+  out of the container's reach, since pasta maps only the one, but every
+  uid on the host could dial it.
+- The inspector's listeners are on the host's `127.0.0.1`, which every
+  uid on the host can reach. The inspector refuses a caller that is not
+  the user, by the kernel's socket table, and while that lookup runs it
+  holds one of a few slots; past them it stops accepting rather than
+  refusing, so another uid can delay the workload's connections but not
+  get them refused. Without root nothing keeps other uids off that port.
 - The inspector recognises exactly 8080 and 8443 as its planes
   (`lib/egress_plane.py`), so this is one inspected container per host
   loopback. A second needs the planes to become a flag, or a second
@@ -157,16 +166,19 @@ not describe a customs-inspected workload as unable to exfiltrate.
 ```
 # 1. CA + bundle + policy.json (examples/README.md)
 # 2. broker, user unit
-ExecStart=customs-broker --name x --listen 127.129.0.1:8081 --caller-uid %U \
+ExecStart=customs-broker --name x --listen unix:%t/customs/broker.sock \
+    --caller-uid %U \
     --host api.example.com=example --placeholder example=sk-placeholder \
     --auth-header example=Authorization \
     "--auth-format=example=Bearer {secret}"
 LoadCredentialEncrypted=example:%E/customs/example.cred
+RuntimeDirectory=customs
+RuntimeDirectoryMode=0700
 # 3. inspector, user .socket + .service
 ListenStream=127.0.0.1:8443
 ListenStream=127.0.0.1:8080
 ExecStart=customs-inspect --name x --policy … --state-dir … --status … \
-    --record … --broker 127.129.0.1:8081
+    --record … --broker unix:%t/customs/broker.sock
 # 4. the container, created but not started
 podman create --network pasta:--map-host-loopback=169.254.1.3 \
   -v bundle.pem:/usr/local/share/ca-certificates/customs.crt:ro,Z \
@@ -234,17 +246,17 @@ Two things the host-side placement got for free have to be handled again:
    hold no `CAP_SETUID`, or workload root simply becomes that uid. Only
    one uid can be the selector. `socket cgroupv2` also works and cannot
    be forged from inside; it is fiddlier.
-2. **Broker reachability.** The host's `127.129.0.1` is unmapped from the
-   pod, so "the workload cannot name the broker" is no longer something
-   pasta's mapping gives for free. Three placements restore it: the
-   broker as a third container in the pod behind a `skuid`-keyed rule;
-   the broker on the host, listening on an AF_UNIX socket bind-mounted
-   into the sidecar alone; or the broker inside the same sidecar
-   container as the inspector, which is the one taken and is described
-   next. The two AF_UNIX placements share an advantage: `SO_PEERCRED` is
-   a stronger caller check than `/proc/net/tcp`, and the workload has no
-   path to a socket it was never given. Both use the broker's
-   `--listen unix:PATH` and the inspector's matching `--broker unix:PATH`.
+2. **Broker reachability.** On the host the broker's socket is a path
+   the inspector has and the workload's mount namespace does not. In a
+   pod the inspector is a container too, and needs a way to the broker
+   that the workload lacks. Three placements give one: the broker as a
+   third container in the pod behind a `skuid`-keyed rule; the broker on
+   the host, its socket bind-mounted into the sidecar alone; or the
+   broker inside the same sidecar container as the inspector, which is
+   the one taken and is described next. The two AF_UNIX placements keep
+   `SO_PEERCRED` as the caller check, which is stronger than
+   `/proc/net/tcp`, and the workload has no path to a socket it was never
+   given.
 
 There is a third thing, which the host placement also got for free: the
 inspector serves connections from its own uid, and here the workload is

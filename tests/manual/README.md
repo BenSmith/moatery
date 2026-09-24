@@ -64,6 +64,7 @@ carrying the sealed key.
 ```bash
 python3 tests/manual/shape1_rig.py                  # every row green
 python3 tests/manual/shape1_rig.py --without-rules  # must go red
+python3 tests/manual/shape1_rig.py --broker-over-tcp  # the broker rows red
 ```
 
 Runs as the user. Two host facts need `sudo`, and both are undone at

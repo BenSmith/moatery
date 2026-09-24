@@ -15,6 +15,6 @@ ExecStart=/usr/libexec/customs/customs-inspect --name example \
     --state-dir %S/customs \
     --status %S/customs/status.json \
     --record %L/customs/requests.log \
-    --broker 127.129.0.1:8081
+    --broker unix:%t/customs/broker.sock
 StateDirectory=customs
 LogsDirectory=customs
