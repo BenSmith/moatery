@@ -37,6 +37,7 @@ from inspect_policy import load_policy
 from resolve_policy import RESOLVE_TTL, Policy
 from sd_listen import NotSocketActivated
 from tests import REPO_ROOT, load_script
+from tests.test_closure import RESOLVER, _closure, _lib_modules
 
 TYPE_A = 1
 TYPE_AAAA = 28
@@ -480,19 +481,23 @@ class TestAResponseGetsNoReply(unittest.TestCase):
 class TestNoUpstream(unittest.TestCase):
     """The property that closes DNS rather than filtering it."""
 
-    # The program is the entrypoint and the modules it answers through. A
-    # scan of the script alone would pass while the answering path, in a
-    # module beside it, grew a fallback.
-    RESPONDER_FILES = (
-        "libexec/customs-resolve",
-        "lib/dns_wire.py",
-        "lib/resolve_policy.py",
-        "lib/resolve_server.py",
-    )
+    # The program is the entrypoint and every module in its closure, as
+    # test_closure computes it. A list kept by hand would pass while a
+    # module it missed grew a fallback.
+    @staticmethod
+    def _responder_files():
+        mods = _lib_modules()
+        return [RESOLVER] + sorted(mods[m] for m in _closure(RESOLVER, mods))
 
     @staticmethod
-    def _tree(relative):
-        return ast.parse((Path(REPO_ROOT) / relative).read_text())
+    def _tree(path):
+        return ast.parse(Path(path).read_text())
+
+    def test_the_scan_reads_the_whole_closure(self):
+        names = [p.name for p in self._responder_files()]
+        self.assertIn("customs-resolve", names)
+        self.assertIn("inspect_policy.py", names)
+        self.assertEqual(len(names), 8)
 
     def test_the_responder_never_calls_out(self):
         """Parsed, not grepped: the words appear in the prose saying no
@@ -502,10 +507,10 @@ class TestNoUpstream(unittest.TestCase):
             "connect", "connect_ex", "create_connection", "getaddrinfo",
             "gethostbyname", "gethostbyname_ex", "getnameinfo", "urlopen",
         }
-        for relative in self.RESPONDER_FILES:
-            with self.subTest(file=relative):
+        for path in self._responder_files():
+            with self.subTest(file=path.name):
                 called = set()
-                for node in ast.walk(self._tree(relative)):
+                for node in ast.walk(self._tree(path)):
                     if isinstance(node, ast.Call):
                         func = node.func
                         name = (func.attr if isinstance(func, ast.Attribute)
@@ -514,24 +519,26 @@ class TestNoUpstream(unittest.TestCase):
                             called.add(name)
                 self.assertEqual(sorted(called & forbidden), [])
 
-    def _socket_constructions(self, relative):
-        return [node for node in ast.walk(self._tree(relative))
+    def _socket_constructions(self, path):
+        return [node for node in ast.walk(self._tree(path))
                 if isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "socket"]
 
     def test_the_program_constructs_no_socket_at_all(self):
-        for relative in self.RESPONDER_FILES:
-            with self.subTest(file=relative):
-                found = self._socket_constructions(relative)
+        for path in self._responder_files():
+            if path.name == "sd_listen.py":
+                continue
+            with self.subTest(file=path.name):
+                found = self._socket_constructions(path)
                 self.assertEqual(found, [], [ast.unparse(c) for c in found])
 
     def test_the_shared_constructor_only_adopts_an_inherited_fd(self):
         """sd_listen's socket.socket() appears once, with `fileno=` alone.
-        Without it the call would create a socket, and this is the one
-        module outside the list above that the responder's sockets come
-        from."""
-        found = self._socket_constructions("lib/sd_listen.py")
+        Without it the call would create a socket; it is the one module
+        of the closure the test above leaves to this one."""
+        found = self._socket_constructions(
+            Path(REPO_ROOT) / "lib" / "sd_listen.py")
         self.assertEqual(len(found), 1, [ast.unparse(c) for c in found])
         self.assertEqual([kw.arg for kw in found[0].keywords], ["fileno"])
         self.assertEqual(found[0].args, [])
