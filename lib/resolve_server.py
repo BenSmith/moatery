@@ -18,6 +18,7 @@ from dns_wire import (
     TCP_MAX,
     UDP_BUDGET,
     Malformed,
+    NotAQuery,
     build_answer,
     error_response,
     log,
@@ -120,6 +121,11 @@ def serve_datagram(sock, policy, counters=None):
             return
         log(f"  malformed query from {peer}: {exc}")
         reply = error_response(query, RCODE_FORMERR)
+    except NotAQuery:
+        # Not logged either: the log would be what a loop fills.
+        if counters is not None:
+            counters.record_malformed()
+        return
     except Exception as exc:  # noqa: BLE001
         # Anything else is a bug here, and the width is the point: let it
         # unwind and the process exits, restarts, and exits again on the
@@ -230,6 +236,10 @@ def handle_stream(conn, policy, counters=None, deadline=None):
                         return
                     log(f"  malformed TCP query: {exc}")
                     reply = error_response(query, RCODE_FORMERR)
+                except NotAQuery:
+                    if counters is not None:
+                        counters.record_malformed()
+                    continue
                 conn.sendall(struct.pack("!H", len(reply)) + reply)
         except (OSError, struct.error):
             return

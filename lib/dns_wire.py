@@ -44,6 +44,13 @@ class Malformed(Exception):
     """The query could not be parsed far enough to answer it."""
 
 
+class NotAQuery(Exception):
+    """The message is a response. It gets no reply, not even an error: a
+    responder that answers responses talks forever with another one, or
+    with itself given its own address as the source.
+    """
+
+
 def log(msg):
     print(msg, flush=True)
 
@@ -106,6 +113,8 @@ def build_answer(query, policy, counters=None):
     if len(query) < HEADER_LEN:
         raise Malformed("shorter than a DNS header")
     ident, flags, qdcount, _an, _ns, _ar = HEADER.unpack(query[:HEADER_LEN])
+    if flags & FLAG_QR:
+        raise NotAQuery()
 
     # The opcode echoed and RD preserved. RA is set because, from the
     # client's side, recursion is available: every name is answered, with
