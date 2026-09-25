@@ -3,7 +3,8 @@
 # explodes paired argv lists).
 line-length = 79
 include = ["lib/*.py", "libexec/customs-broker", "libexec/customs-inspect",
-           "libexec/customs-mint-ca", "container/customs-sidecar",
+           "libexec/customs-mint-ca", "libexec/customs-netns-listen",
+           "libexec/customs-resolve", "container/customs-sidecar",
            "tests/manual/*.py"]
 
 [lint]
@@ -14,4 +15,6 @@ select = ["E4", "E7", "E9", "F", "E501"]
 "libexec/customs-broker" = ["E402"]
 "libexec/customs-inspect" = ["E402"]
 "libexec/customs-mint-ca" = ["E402"]
+"libexec/customs-netns-listen" = ["E402"]
+"libexec/customs-resolve" = ["E402"]
 "container/customs-sidecar" = ["E402"]
