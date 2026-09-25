@@ -12,11 +12,9 @@ fallback to an empty policy.
 ```json
 {
   "tls": "inspect",
-  "hosts": ["pypi.org", "files.pythonhosted.org", "*.github.com",
-            "grpc.example.net"],
+  "hosts": ["pypi.org", "files.pythonhosted.org", "*.github.com"],
   "internal": ["git.corp.example"],
   "splice": ["updates.example.net"],
-  "http2": ["grpc.example.net"],
   "policy": [
     {"host": "api.anthropic.com", "methods": ["POST"],
      "paths": ["/v1/messages"], "credential": "anthropic"},
@@ -36,7 +34,6 @@ document that admits nothing.
 | `hosts` | list of patterns | hosts the workload may reach, with any method and any path |
 | `internal` | list of names | hosts the operator has deliberately given a private address; changes how a failed dial is reported, and opens nothing |
 | `splice` | list of patterns | hosts whose TLS is passed through undecrypted |
-| `http2` | list of patterns | terminated hosts offered h2 and relayed frame by frame |
 | `policy` | list of entries | per-host method and path rules, and brokered credentials |
 
 A **pattern** is an `fnmatch` pattern (`*`, `?`, `[...]`), matched
@@ -48,8 +45,8 @@ separately.
 ## Which hosts get through
 
 A host is admitted if it matches `hosts` or any `policy` entry's `host`.
-Nothing else admits one: a name in `splice`, `http2` or `internal` must
-also be admitted by one of those two.
+Nothing else admits one: a name in `splice` or `internal` must also be
+admitted by one of those two.
 
 An unadmitted host under `"inspect"` is not a dropped connection. The
 inspector completes the handshake with a certificate for the refused name
@@ -105,8 +102,8 @@ from its own `--host HOST=ID` flags, so the two must agree: the entry's
 what is sent. An inspector started without `--broker` refuses every
 brokered request with a 502.
 
-A brokered host must be terminated and read as HTTP/1.1, so it cannot be
-spliced or in `http2` (next section).
+A brokered host must be terminated and read, so it cannot be spliced
+(next section).
 
 A brokered request needs a `Content-Length`. The broker reads the body
 whole before it forwards it, and refuses a chunked one with `411 Length
@@ -123,18 +120,17 @@ guest the key.
 
 ## Refused at start
 
-Three combinations describe a rule that could never run, and the
-document is refused rather than one half being ignored:
+Two combinations describe a rule that could never run, and the document
+is refused rather than one half being ignored:
 
 - `policy` entries with `"tls": "splice"` — nothing is decrypted, so no
   method, path or credential applies;
-- a `policy` entry whose host overlaps a `splice` pattern;
-- a `policy` entry whose host overlaps an `http2` pattern — h2 headers
-  are relayed compressed, so there is no request line to match.
+- a `policy` entry whose host overlaps a `splice` pattern.
 
 Also refused: a key of the wrong type (a list that is not a list, a name
 that is empty or not a string, an entry with no `host`, `methods` or
-`paths` given as a string).
+`paths` given as a string), and an `http2` list that names a host (see
+[HTTP/2](#http2)).
 
 A `credential` that is not a non-empty string is ignored rather than
 refused; that request then goes to the origin unbrokered, and its record
@@ -156,27 +152,23 @@ in its request. Splice only names whose servers answer for themselves.
 Under `"inspect"` the workload must trust the inspector's CA before it
 first runs; see [DESIGN.md](DESIGN.md), "The same in every shape".
 
-## `http2`
+## HTTP/2
 
-A host in `http2` is terminated, offered h2 and nothing else, and
-relayed frame by frame without decoding. A client that does not speak h2
-to it (pip, Python's `requests`, `curl --http1.1`) is closed with no
-response, and the journal names the host and the `http2` entry. List a
-host here only if every client the workload points at it speaks h2, a
-gRPC endpoint say.
+Every terminated host is offered HTTP/1.1 alone, on both legs, whatever
+the client or the origin would prefer, so every request is read and the
+rules above apply to each one. A client that offers h2 beside HTTP/1.1
+takes HTTP/1.1 without a sign.
 
-What relaying frames gives up, beside `methods` and `paths` (which is
-why a `policy` entry cannot name such a host):
+A client that speaks only h2, a gRPC client say, is left with no protocol
+and fails. Its host goes in `splice`, where its h2 runs end to end and the
+host is checked by name alone, with everything `splice` says above. Many
+gRPC libraries also have a REST transport, which is read like any other
+request and keeps the host's rules.
 
-- The `:authority` of each request is not read, so it is not held to the
-  name the session was opened for, as `Host` is on HTTP/1.1 (a mismatch
-  there is answered 421). On a shared front that routes by authority, the
-  guest reaches other sites through the listed name, as it can through a
-  spliced one.
-- The record carries one line for the whole session, not one per request,
-  and the status file's `h2_unrecorded` counts those sessions.
-
-List a host here only if it is trusted as a whole, as with `splice`.
+An `http2` list that names a host fails the start, saying so; an empty
+one is ignored. HTTP/2 without TLS is not relayed either: an
+`Upgrade: h2c` offer is withheld from the origin, and a connection that
+opens with the HTTP/2 preface is answered 400.
 
 ## Upgrades
 
@@ -203,6 +195,6 @@ address. `internal` lists those names. When a dial fails:
 ## Port 80
 
 Cleartext requests on port 80 are decided by the same rules, by the
-`Host` header. `splice` and `http2` do not apply there. A brokered host
+`Host` header. `splice` does not apply there. A brokered host
 is brokered on port 80 too, and the broker reaches the origin over TLS
 either way.

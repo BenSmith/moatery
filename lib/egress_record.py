@@ -60,7 +60,6 @@ DROP_NOT_HTTP = "not HTTP"
 # entry, since a host cannot be in both `splice` and `policy`.
 DROP_NOT_HTTP_POLICY = "not HTTP (policy entry)"
 DROP_NOT_PERMITTED = "not permitted by policy"
-DROP_NOT_H2 = "not HTTP/2"
 # The dial to this workload's broker failed: a unit on this host, not the
 # provider, and so not DROP_UNREACHABLE.
 DROP_BROKER_UNREACHABLE = "credential broker unreachable"
@@ -84,7 +83,6 @@ DROP_REASONS = (
     DROP_MINT_FAILED,
     DROP_NOT_HTTP,
     DROP_NOT_HTTP_POLICY,
-    DROP_NOT_H2,
     DROP_NOT_PERMITTED,
     DROP_BROKER_UNREACHABLE,
 )
@@ -102,7 +100,6 @@ PER_HOST_REASONS = (
     DROP_CLIENT_CERT,
     DROP_NOT_HTTP,
     DROP_NOT_HTTP_POLICY,
-    DROP_NOT_H2,
 )
 
 # Where a drop whose reason is not in DROP_REASONS is counted, and shown
@@ -125,8 +122,8 @@ RECORD_DECISIONS = ("forward", "drop")
 
 # What the listener did with the connection: `forward` a cleartext request,
 # `terminate` a request inside a session this process completed, and
-# `splice` and `h2` the connection-level records of bytes never decoded.
-RECORD_MODES = ("forward", "terminate", "splice", "h2")
+# `splice` the connection-level record of bytes never decrypted.
+RECORD_MODES = ("forward", "terminate", "splice")
 
 
 def record_timestamp():

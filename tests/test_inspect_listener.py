@@ -37,7 +37,6 @@ from sd_listen import NotSocketActivated
 from tls_hello import HelloUnreadable, TLS_EXT_ECH, read_client_hello
 from http_target import (
     host_from_authority, normalise_path, normalise_target)
-from h2_framing import H2_PREFACE, H2Framing, NotH2
 from http_framing import (
     DRAIN_MAX, MAX_TRAILER_LINES, RELAY_CHUNK, RequestUnreadable, _Stream,
     copy_body,
@@ -55,7 +54,7 @@ from inspect_http import INTERIM_MAX, serve_cleartext
 from inspect_listener import Ceiling, Listener, build_minter
 import sd_listen
 from egress_upstream import (
-    ALPN_H2, BROKER_UPSTREAM_KEY, UPSTREAM_ALPN, UPSTREAMS_MAX,
+    BROKER_UPSTREAM_KEY, UPSTREAM_ALPN, UPSTREAMS_MAX,
     dial_failure_reason,
 )
 from egress_record import (
@@ -744,7 +743,6 @@ class TestPolicyLoading(unittest.TestCase):
             "hosts": ["example.com"],
             "internal": [{"host": "nas.example.com", "reason": "nas"}],
             "splice": [{"host": "pinned.example.com", "reason": "pinned"}],
-            "http2": [{"host": "grpc.example.com", "reason": "gRPC"}],
             "policy": [{"host": "api.example.com", "methods": ["GET"]}]})
         self.assertEqual(set(doc), set(Policy._fields) - NON_DOCUMENT_FIELDS)
         # The other direction of the exemption: a digest that leaked INTO the
@@ -824,16 +822,20 @@ class TestPolicyLoading(unittest.TestCase):
         self.assertIsNone(entry.paths)
         self.assertTrue(entry.permits("DELETE", "/anything"))
 
-    def test_the_document_carries_the_http2_list_through(self):
-        """Both halves against each other. A listener that dropped this on load
-        offers `http/1.1` to a host the operator listed for h2, which fails as
-        that one host being broken rather than as a key being ignored."""
-        path = self._write(json.dumps(policy_document({
-            "hosts": ["grpc.example.com"],
-            "http2": [{"host": "grpc.example.com", "reason": "gRPC"}]})))
-        policy = load_policy(path)
-        self.assertEqual(policy.http2, ("grpc.example.com",))
-        self.assertTrue(policy.speaks_h2("grpc.example.com"))
+    def test_an_http2_list_naming_a_host_is_refused(self):
+        """Ignored, it would leave that host's h2-only client failing with
+        nothing here saying why. The refusal names where such a host goes."""
+        path = self._write(json.dumps(
+            {"hosts": ["grpc.example.com"], "http2": ["grpc.example.com"]}))
+        with self.assertRaises(ValueError) as cm:
+            load_policy(path)
+        self.assertIn("'grpc.example.com'", str(cm.exception))
+        self.assertIn("'splice'", str(cm.exception))
+
+    def test_an_empty_http2_list_loads(self):
+        """What a writer that always emits the key sends."""
+        path = self._write(json.dumps({"hosts": ["a.example"], "http2": []}))
+        self.assertEqual(load_policy(path).hosts, ("a.example",))
 
     def test_a_malformed_http2_list_is_an_error(self):
         path = self._write(json.dumps({"hosts": [], "http2": "grpc.example"}))
@@ -1048,37 +1050,24 @@ class TestPolicyRefusals(unittest.TestCase):
                                  "methods": ["GET"]}]},
                     "'a.example'", repr(pattern), "'splice'")
 
-    def test_a_policy_host_in_the_http2_list_is_refused(self):
-        """The h2 relay never calls permits(): a GET-only entry beside an
-        `http2` entry let every method through."""
-        self._refused(
-            {"tls": "inspect", "http2": ["api.example.com"],
-             "policy": [{"host": "api.example.com", "methods": ["GET"]}]},
-            "'api.example.com'", "'http2'")
-
     def test_lists_that_do_not_overlap_the_policy_still_load(self):
         policy = self._load(
             {"tls": "inspect", "splice": ["cdn.example"],
-             "http2": ["grpc.example"],
              "policy": [{"host": "api.example", "methods": ["GET"]}]})
         self.assertTrue(policy.splices("cdn.example"))
-        self.assertTrue(policy.speaks_h2("grpc.example"))
         self.assertFalse(policy.splices("api.example"))
 
-    def test_a_governed_host_is_never_spliced_or_relayed_as_h2(self):
+    def test_a_governed_host_is_never_spliced(self):
         """The guard for what the overlap test cannot see. Two wildcards
         that match each other as literals in neither direction still share
         `ab.example.com`; the document loads, and the governed name is
-        terminated and policed rather than spliced or relayed."""
+        terminated and policed rather than spliced."""
         policy = self._load(
             {"tls": "inspect", "splice": ["*b.example.com"],
-             "http2": ["*b.example.com"],
              "policy": [{"host": "a*.example.com", "methods": ["GET"]}]})
         self.assertTrue(policy.governs("ab.example.com"))
         self.assertFalse(policy.splices("ab.example.com"))
-        self.assertFalse(policy.speaks_h2("ab.example.com"))
         self.assertTrue(policy.splices("xb.example.com"))
-        self.assertTrue(policy.speaks_h2("xb.example.com"))
 
 
 class TestPolicyComposition(unittest.TestCase):
@@ -1858,145 +1847,12 @@ class TestPerHostSplice(unittest.TestCase):
         self.assertEqual(doc["splice"], ["sum.golang.org"])
 
 
-class TestHttp2Framing(unittest.TestCase):
-    """The check that makes an `http2` entry mean SPEAKS H2, not EXEMPT.
+class TestTheOffer(unittest.TestCase):
 
-    Without it a listed host is a byte relay -- no Host binding, no `paths`, no
-    `methods`, and nothing establishing the bytes are h2 -- so a guest reaches
-    a full policy opt-out on any host somebody added for performance, by
-    writing different first bytes -- a policy opt-out by another name.
-    """
-
-    @staticmethod
-    def _frame(kind, stream=0, payload=b"", flags=0):
-        return (len(payload).to_bytes(3, "big") + bytes([kind, flags])
-                + stream.to_bytes(4, "big") + payload)
-
-    def test_the_preface_is_the_exact_rfc_bytes(self):
-        """Pinned as a literal rather than rebuilt from parts. It is 24 fixed
-        bytes chosen so an HTTP/1.1 server cannot mistake them for a request,
-        and a version this file computed could be wrong in a way that only
-        showed up against a real client."""
-        self.assertEqual(H2_PREFACE,
-                         b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
-        self.assertEqual(len(H2_PREFACE), 24)
-
-    def test_a_settings_frame_on_stream_zero_opens_a_connection(self):
-        framing = H2Framing()
-        framing.feed(self._frame(0x4, payload=b"\x00\x03\x00\x00\x00\x64"))
-        self.assertTrue(framing.aligned)
-
-    def test_an_empty_settings_frame_opens_a_connection(self):
-        """RFC 9113 §3.4: the client's opening SETTINGS MAY be empty, and a
-        check requiring a payload would refuse conforming clients."""
-        framing = H2Framing()
-        framing.feed(self._frame(0x4))
-        self.assertTrue(framing.aligned)
-
-    def test_a_first_frame_that_is_not_settings_is_refused(self):
-        """This is one of the two checks with real teeth. A guest that sent the
-        preface and then whatever it liked would otherwise be relayed, because
-        the length field is 24 arbitrary bits and nearly any byte string parses
-        as frames."""
-        framing = H2Framing()
-        with self.assertRaises(NotH2):
-            framing.feed(self._frame(0x1, stream=1, payload=b"headers"))
-
-    def test_a_first_settings_frame_off_stream_zero_is_refused(self):
-        framing = H2Framing()
-        with self.assertRaises(NotH2):
-            framing.feed(self._frame(0x4, stream=1))
-
-    def test_an_opening_settings_frame_of_a_ragged_length_is_refused(self):
-        """Settings are 6 bytes each (RFC 9113 §6.5), so a length that is not a
-        multiple of six is not a SETTINGS frame whatever the type byte says."""
-        framing = H2Framing()
-        with self.assertRaises(NotH2):
-            framing.feed(self._frame(0x4, payload=b"\x00\x03\x00"))
-
-    def test_a_frame_header_split_across_reads_is_reassembled(self):
-        """The scanner is fed whatever recv returned, not whole frames. A
-        version that parsed each chunk independently would refuse every real
-        connection whose opening SETTINGS straddled a segment boundary --
-        intermittently, and under load first."""
-        framing = H2Framing()
-        frame = self._frame(0x4, payload=b"\x00\x03\x00\x00\x00\x64")
-        for i in range(1, len(frame)):
-            scanner = H2Framing()
-            scanner.feed(frame[:i])
-            scanner.feed(frame[i:])
-            self.assertTrue(scanner.aligned, i)
-        framing.feed(frame)
-        self.assertTrue(framing.aligned)
-
-    def test_several_frames_in_one_read_stay_aligned(self):
-        framing = H2Framing()
-        framing.feed(self._frame(0x4)
-                     + self._frame(0x1, stream=1, payload=b"hpack")
-                     + self._frame(0x0, stream=1, payload=b"body"))
-        self.assertTrue(framing.aligned)
-
-    def test_a_stream_that_stops_part_way_through_a_frame_is_not_aligned(self):
-        """The one thing continuous framing actually catches. A relay checking
-        only the first frame would carry anything at all after it."""
-        framing = H2Framing()
-        framing.feed(self._frame(0x4) + b"\x00\x00\x40\x00\x00\x00\x00")
-        self.assertFalse(framing.aligned)
-
-    def test_the_reserved_bit_of_a_stream_id_is_ignored_not_refused(self):
-        """RFC 9113 §4.1: receivers must ignore it. Refusing a sender that sets
-        it would fail a conforming connection over a bit nothing reads."""
-        framing = H2Framing()
-        framing.feed(b"\x00\x00\x00\x04\x00\x80\x00\x00\x00")
-        self.assertTrue(framing.aligned)
-
-    def test_an_http11_request_never_reaches_the_framing_check(self):
-        """The preface does nearly all the work, and this says why the framing
-        scanner is not asked to be a conformance checker: everything that is
-        not h2 fails on byte one, before any of it runs."""
-        self.assertNotEqual(b"GET / HTTP/1.1\r\n"[:len(H2_PREFACE)],
-                            H2_PREFACE)
-
-
-class TestHttp2AlpnSelection(unittest.TestCase):
-    """Which protocol each leg offers, chosen from configuration alone.
-
-    The upstream leg is up BEFORE a leaf is minted, so nothing here
-    can sniff the guest and then speak what came back. And the offer BINDS
-    NOBODY -- a server offering http/1.1 alone facing a client offering h2
-    alone completes the handshake with no protocol negotiated and no alert -- so
-    these tests pin what is configured, and the refusals in TestHttp2Framing
-    and the non-HTTP check are what make it stick.
-    """
-
-    def _policy(self, mod, **kw):
-        return Policy(tls="inspect", hosts=("a.example", "grpc.example"),
-                          **kw)
-
-    def test_speaks_h2_is_the_list_and_not_the_mode(self):
-        mod = _mod()
-        policy = self._policy(mod, http2=("grpc.example",))
-        self.assertTrue(policy.speaks_h2("grpc.example"))
-        self.assertFalse(policy.speaks_h2("a.example"))
-
-    def test_speaks_h2_matches_by_pattern_and_normalises_the_name(self):
-        policy = Policy(tls="inspect", hosts=("*.example",),
-                            http2=("*.grpc.example",))
-        self.assertTrue(policy.speaks_h2("a.GRPC.example."))
-        self.assertFalse(policy.speaks_h2("grpc.example"),
-                         "fnmatch, not DNS suffix matching: the apex trap")
-
-    def test_the_two_contexts_offer_different_protocols(self):
-        """One context per offer rather than one whose ALPN is set per dial:
-        contexts are shared across connections, so mutating one before a
-        handshake races every other connection using it -- silently, and in the
-        direction that gives a host the offer another host asked for."""
-        mod = _mod()
-        listener = Listener([], io.StringIO(),
-                                policy=self._policy(mod, http2=("grpc.example",)))
-        self.assertIsNot(listener.inspection.upstream._ctx, listener.inspection.upstream._ctx_h2)
+    def test_both_legs_are_offered_http11_alone(self):
+        """The requests are read as HTTP/1.1 (TestBothLegsAreHttp11 has the
+        handshakes), so this is the one offer that can be made."""
         self.assertEqual(UPSTREAM_ALPN, ("http/1.1",))
-        self.assertEqual(ALPN_H2, ("h2",))
 
 
 class TestLogInjection(unittest.TestCase):
@@ -2933,13 +2789,12 @@ class TestCleartextPerRequest(unittest.TestCase):
         """The origin connection a brokered session never uses.
 
         _serve_tls_inspect dials the origin before reading the request, for
-        three reasons that all belong to the origin: hold the upstream leg open
-        before the mint, check the origin took an h2 offer, and fail early if it
-        is unreachable. On a brokered host the request goes to the broker, so
-        the connection was opened, verified and never written to -- and the
-        third reason did harm, making the ORIGIN's reachability and certificate
-        a prerequisite for a request that never goes there, reported against the
-        origin's name.
+        two reasons that both belong to the origin: hold the upstream leg open
+        before the mint, and fail early if it is unreachable. On a brokered
+        host the request goes to the broker, so the connection was opened,
+        verified and never written to -- and the second reason did harm,
+        making the ORIGIN's reachability and certificate a prerequisite for a
+        request that never goes there, reported against the origin's name.
 
         Asserted on the source because reaching the branch needs a full TLS
         handshake against a minted leaf. What the behavioural half can reach is
@@ -2952,9 +2807,6 @@ class TestCleartextPerRequest(unittest.TestCase):
         # Decided BEFORE the dial, or the dial has already happened.
         self.assertLess(fn.index("credential_for(host)"),
                         fn.index("insp.upstream.dial_tls("))
-        # And the offer stays a configuration decision: h2 is forced off rather
-        # than read off an origin connection that no longer exists.
-        self.assertIn("h2 = False", fn)
 
     def test_a_terminated_session_with_no_upstream_seeds_an_empty_pool(self):
         """The consequence, behaviourally: `upstream` is None on a brokered
@@ -3785,13 +3637,12 @@ class TestCounters(unittest.TestCase):
     """The rung's figures, emitted rather than rendered."""
 
     def _listener(self, hosts=("allowed.example",), internal=(), splice=(),
-                  http2=(), policy=()):
+                  policy=()):
         mod = _mod()
         out = io.StringIO()
         return mod, Listener([], out, policy=Policy(
             tls="splice", hosts=tuple(hosts),
             internal=tuple(internal), splice=tuple(splice),
-            http2=tuple(http2),
             policy=tuple(VmPolicyEntry(host=h, methods=m, paths=p)
                          for h, m, p in policy))), out
 
@@ -3919,17 +3770,16 @@ class TestCounters(unittest.TestCase):
         self.assertEqual(lists["tls"], "splice")
 
     def test_every_list_that_decides_something_is_reported(self):
-        """Three of these decide on their own -- `splice` exempts a host from
-        termination, `http2` changes what is offered on both legs, `policy`
-        decides individual requests. Reporting `hosts` and `internal` alone
-        answers 'what is this process enforcing' with a subset, in the one
-        file whose purpose is that the answer is not a guess."""
+        """Two of these decide on their own -- `splice` exempts a host from
+        termination, `policy` decides individual requests. Reporting `hosts`
+        and `internal` alone answers 'what is this process enforcing' with a
+        subset, in the one file whose purpose is that the answer is not a
+        guess."""
         _, listener, _ = self._listener(
-            splice=("pinned.example",), http2=("grpc.example",),
+            splice=("pinned.example",),
             policy=(("api.example", ("GET",), ("/v1/*",)),))
         lists = listener.status()["lists"]
         self.assertEqual(lists["splice"], ["pinned.example"])
-        self.assertEqual(lists["http2"], ["grpc.example"])
         self.assertEqual(lists["policy"],
                          [{"host": "api.example", "methods": ["GET"],
                            "paths": ["/v1/*"], "credential": None}])

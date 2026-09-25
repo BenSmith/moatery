@@ -22,16 +22,13 @@ from egress_ca import LeafRefused
 from egress_mint import MintFailed, MintThrottled
 from egress_plane import TLS
 from egress_record import (
-    DROP_MINT_FAILED, DROP_NOT_ALLOWLISTED, DROP_NOT_H2, DROP_NOT_HTTP,
+    DROP_MINT_FAILED, DROP_NOT_ALLOWLISTED, DROP_NOT_HTTP,
     DROP_NOT_HTTP_POLICY, DROP_NO_NAME, DROP_RELAY_FAILED, DROP_THROTTLED,
     Record,
 )
 from egress_relay import relay
 import egress_relay
-from egress_upstream import (
-    ALPN_H2, UPSTREAM_ALPN, dial_failure_reason, tls_failure,
-)
-from h2_framing import H2_PREFACE, H2Framing, NotH2
+from egress_upstream import UPSTREAM_ALPN, dial_failure_reason, tls_failure
 from http_framing import (
     RequestUnreadable, _Stream, is_http_request_start, send_response,
 )
@@ -102,20 +99,15 @@ def serve_tls(insp, conn, where):
 def _serve_tls_inspect(insp, conn, where, host, allowed):
     """Terminate one connection: decide, dial, mint, handshake, serve.
 
-    The origin is dialled before the guest's handshake, so the protocol
-    offered to the guest comes from the policy and never from what the
-    guest asked for, and a host that cannot be reached costs a leaf only to
-    carry the refusal.
+    The origin is dialled before the guest's handshake, so a host that
+    cannot be reached costs a leaf only to carry the refusal.
     """
     upstream = None
     refusal = None            # (drop reason, status, phrase, journal text)
-    h2 = insp.policy.speaks_h2(host)
     # A brokered host's requests go to the broker, per request, so the
     # origin is not dialled here: that would make its reachability and
     # certificate a condition of requests that never reach it.
     brokered = allowed and insp.policy.credential_for(host) is not None
-    if brokered:
-        h2 = False
     if not allowed:
         refusal = (DROP_NOT_ALLOWLISTED, 403, "Forbidden",
                    (f"{host} matches no `hosts` pattern and no `policy` "
@@ -124,8 +116,7 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
         pass
     else:
         try:
-            upstream = insp.upstream.dial_tls(
-                host, ALPN_H2 if h2 else UPSTREAM_ALPN)
+            upstream = insp.upstream.dial_tls(host)
         except ssl.SSLError as exc:
             reason, text = tls_failure(host, exc)
             refusal = (reason, 502, "Bad Gateway", text)
@@ -133,21 +124,6 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
             reason = dial_failure_reason(host, insp.policy.internal)
             refusal = (reason, 502, "Bad Gateway",
                        f"{host} could not be reached: {exc}")
-        else:
-            # An h2 offer binds nobody: an HTTP/1.1-only origin completes
-            # the handshake selecting nothing, and the guest's preface
-            # would be relayed into it as garbage.
-            if h2 and upstream.sock.selected_alpn_protocol() != "h2":
-                upstream.sock.close()
-                upstream = None
-                refusal = (
-                    DROP_NOT_H2, 502, "Bad Gateway",
-                    f"{host} is in the `http2` list but did not select "
-                    f"h2 for this connection, so there is no HTTP/2 session "
-                    f"to relay. Either it does not speak h2 -- drop the "
-                    f"entry and let it be inspected as HTTP/1.1 -- or it "
-                    f"cannot take this workload's CA, and belongs in the "
-                    f"`splice` list")
     leaf = None
     try:
         # `denied` picks the cache: only names the policy refused go in the
@@ -167,11 +143,7 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
     if leaf is None:
         return
     try:
-        # h2 only when there is a session to relay: a refusal is an
-        # HTTP/1.1 response.
-        tls_conn = wrap_guest(
-            conn, leaf,
-            ALPN_H2 if (h2 and refusal is None) else UPSTREAM_ALPN)
+        tls_conn = wrap_guest(conn, leaf)
     except (ssl.SSLError, OSError) as exc:
         # A leaf evicted before it was loaded fails here too, and it is a
         # cache-sizing fault, not a guest that distrusts the CA. The caches
@@ -218,12 +190,8 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
             _bump_answer(tls_conn, status, phrase)
             return
         insp.counters.record_termination()
-        insp.log(f"terminate {where} host={host}"
-                            f"{' h2' if h2 else ''}")
-        if h2:
-            _serve_h2(insp, tls_conn, where, host, upstream)
-        else:
-            serve_terminated(insp, tls_conn, where, host, upstream)
+        insp.log(f"terminate {where} host={host}")
+        serve_terminated(insp, tls_conn, where, host, upstream)
     finally:
         try:
             tls_conn.close()
@@ -244,78 +212,12 @@ def _bump_answer(tls_conn, status, phrase):
     send_response(tls_conn, status, phrase, close=True)
 
 
-def wrap_guest(conn, leaf, alpn=UPSTREAM_ALPN):
+def wrap_guest(conn, leaf):
     """Complete the guest's handshake as the origin it dialled."""
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(str(leaf.path))
-    ctx.set_alpn_protocols(list(alpn))
+    ctx.set_alpn_protocols(list(UPSTREAM_ALPN))
     return ctx.wrap_socket(conn, server_side=True)
-
-
-def _serve_h2(insp, tls_conn, where, host, upstream):
-    """Relay one h2 session frame by frame, refusing what is not h2.
-
-    Nothing is decoded, so `:authority`, `methods` and `paths` go unread;
-    the check holds an `http2` entry to meaning "speaks h2" rather than "is
-    exempt". One record covers the session, and `h2_unrecorded` counts it.
-    """
-    rec = Record(insp.record, where, "h2", host=host)
-    rec.dialled(upstream.sock)
-    try:
-        client = _Stream(tls_conn)
-        tls_conn.settimeout(egress_relay.CONNECTION_TIMEOUT)
-        try:
-            preface = client.read_exactly(len(H2_PREFACE))
-        except (RequestUnreadable, OSError) as exc:
-            _drop_not_h2(insp, where, host, rec,
-                         f"the connection preface never arrived ({exc})")
-            return
-        if preface != H2_PREFACE:
-            _drop_not_h2(insp, where, host, rec,
-                         f"{preface[:8]!r} is not the connection preface")
-            return
-        framing = H2Framing()
-        # What the preface read took past its 24 bytes is the guest's
-        # opening SETTINGS, which the scanner exists to check.
-        surplus = client.take_buffered()
-        try:
-            framing.feed(surplus)
-        except NotH2 as exc:
-            _drop_not_h2(insp, where, host, rec, exc)
-            return
-        try:
-            upstream.sock.sendall(preface + surplus)
-            # An h2 origin sends its SETTINGS at once, and the dial's
-            # early read may already hold them.
-            early = upstream.take_buffered()
-            if early:
-                tls_conn.sendall(early)
-        except OSError as exc:
-            insp.drop(where, DROP_RELAY_FAILED, exc, host=host, rec=rec)
-            return
-        try:
-            relay(tls_conn, upstream.sock, on_client_bytes=framing.feed)
-        except NotH2 as exc:
-            _drop_not_h2(insp, where, host, rec, exc)
-            return
-        except OSError as exc:
-            insp.drop(where, DROP_RELAY_FAILED, exc, host=host, rec=rec)
-            return
-        rec.set(decision="forward")
-        insp.counters.record_h2_unrecorded()
-        if not framing.aligned:
-            _drop_not_h2(insp, where, host, rec,
-                         "the connection ended part-way through a frame")
-    finally:
-        rec.emit()
-        upstream.sock.close()
-
-
-def _drop_not_h2(insp, where, host, rec, why):
-    insp.drop(where, DROP_NOT_H2,
-              f"{why}. {host} is in the `http2` list and this session did "
-              f"not speak h2; drop the entry, or move the host to the "
-              f"splice list", host=host, rec=rec)
 
 
 def serve_terminated(insp, tls_conn, where, host, upstream):

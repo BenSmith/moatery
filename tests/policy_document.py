@@ -6,8 +6,8 @@ has. The listener's tests still need a writer to test the reader against
 -- a listener reading a key nothing writes is a policy that loads clean and
 authorises nothing -- so this is one, taking the same shape of input the
 tests were written for: a network table with `hosts`, `tls`, and
-`internal`/`splice`/`http2` as lists of `{"host": ..., "reason": ...}`
-tables, and `policy` as a list of entry tables.
+`internal`/`splice` as lists of `{"host": ..., "reason": ...}` tables, and
+`policy` as a list of entry tables.
 
 What it normalises is what the document's vocabulary (lib/inspect_document)
 says a writer normalises: `methods` uppercased, `methods` and `paths` null
@@ -65,6 +65,5 @@ def policy_document(net: dict) -> dict:
         "hosts": list(hosts) if isinstance(hosts, list) else [],
         "internal": _hosts_of(net, "internal"),
         "splice": _hosts_of(net, "splice"),
-        "http2": _hosts_of(net, "http2"),
         "policy": _entries(net),
     }

@@ -212,7 +212,6 @@ def write_policy(path):
         "hosts": [PROVIDER],
         "internal": [],
         "splice": [],
-        "http2": [],
         "policy": [{"host": PROVIDER, "methods": None, "paths": None,
                     "credential": CREDENTIAL}],
     }, indent=2) + "\n")

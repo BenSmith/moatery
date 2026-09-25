@@ -47,7 +47,6 @@ from tls_hello import HelloUnreadable, read_client_hello
 from http_target import (
     SCHEME_HTTP, SCHEME_HTTPS, host_from_authority, redirect_target,
 )
-from h2_framing import H2_PREFACE
 from http_framing import (
     Framing, HTTP_METHOD_MAX, ReadTimedOut, RequestUnreadable, _Stream,
     _is_count,
@@ -64,7 +63,6 @@ from egress_record import (
     DROP_BROKER_UNREACHABLE,
     DROP_CLIENT_CERT,
     DROP_INTERNAL,
-    DROP_NOT_H2,
     DROP_NOT_HTTP,
     DROP_NOT_HTTP_POLICY,
     DROP_NOT_PERMITTED,
@@ -145,10 +143,8 @@ class _Origin:
                  alpn=("http/1.1",)):
         self.ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         self.ctx.load_cert_chain(str(pem))
-        # Configurable so an h2 test can have a real origin that offers `h2`
-        # and answers with frames. A fixed list here would make every h2
-        # assertion pass or fail on this file's opinion rather than on the
-        # listener's, which is the shape these tests exist to avoid.
+        # Configurable so a test can have an origin that prefers `h2`, and
+        # see what the listener's offer makes of it.
         self.ctx.set_alpn_protocols(list(alpn))
         self.alpn_seen = []
         if client_ca is not None:
@@ -271,25 +267,20 @@ class TerminationCase(unittest.TestCase):
         return Minter("demo", self.state, **kwargs)
 
     def _listener(self, mod, origin, *, hosts=("localhost",), trust=True,
-                  minter=None, http2=(), entries=()):
+                  minter=None, entries=()):
         out = io.StringIO()
         # `entries` is the `policy` list as (host, methods, paths) triples.
         policy = Policy(
-            tls="inspect", hosts=tuple(hosts), http2=tuple(http2),
+            tls="inspect", hosts=tuple(hosts),
             policy=tuple(VmPolicyEntry(host=h, methods=m, paths=pa)
                          for h, m, pa in entries))
         listener = Listener([unittest.mock.Mock()], out, policy=policy,
                                 minter=minter or self._minter(mod))
         if trust:
-            # BOTH contexts, each keeping its own offer. Pointing them at one
-            # object would make an h2 test pass while the product offered
-            # http/1.1 upstream, which is the drift the two-context split
-            # exists to prevent.
-            for attr, alpn in (("_ctx", ["http/1.1"]), ("_ctx_h2", ["h2"])):
-                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                ctx.load_verify_locations(str(self.origin_ca_cert))
-                ctx.set_alpn_protocols(alpn)
-                setattr(listener.inspection.upstream, attr, ctx)
+            # The product's own context, trusting the test origin as well, so
+            # what it offers upstream is what these tests see.
+            listener.inspection.upstream._ctx.load_verify_locations(
+                str(self.origin_ca_cert))
         return listener, out
 
     def _guest_context(self):
@@ -298,11 +289,12 @@ class TerminationCase(unittest.TestCase):
         return ctx
 
     def _exchange(self, listener, origin, *, request=None, host=None,
-                  guest_ctx=None):
+                  guest_ctx=None, alpn_out=None):
         """Drive one whole connection and return (response bytes, error).
 
         The listener half runs in a thread because both ends of a TLS handshake
-        have to be live at once; the test is the guest.
+        have to be live at once; the test is the guest. `alpn_out`, a list,
+        receives the protocol the guest's handshake selected.
         """
         ours, guest = _tcp_pair()
         self.addCleanup(ours.close)
@@ -329,6 +321,8 @@ class TerminationCase(unittest.TestCase):
             tls = None
             try:
                 tls = ctx.wrap_socket(guest, server_hostname=host or self.HOST)
+                if alpn_out is not None:
+                    alpn_out.append(tls.selected_alpn_protocol())
                 tls.sendall(request or (
                     f"GET / HTTP/1.1\r\nHost: {host or self.HOST}\r\n"
                     f"Connection: close\r\n\r\n").encode())
@@ -1386,11 +1380,9 @@ class TestWhatCountsAsTheStartOfARequest(unittest.TestCase):
 
     def test_the_h2_preface_is_left_to_the_parser(self):
         """`PRI * HTTP/2.0` IS a request line; what it is not is one this
-        listener speaks ON THIS PATH. It gets the parser's 400, not a close.
-        The preface-and-frame check that reads it properly is reached only for
-        a host in the `http2` list; a host that is not in that list and
-        opens with the preface anyway is a client ignoring the ALPN, and it is
-        answered rather than closed."""
+        listener speaks. It gets the parser's 400, not a close: a client that
+        opens with the preface has ignored the ALPN, and it is answered
+        rather than closed."""
         self.check(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", True)
 
     def test_a_leading_space_is_not_a_method(self):
@@ -1619,354 +1611,33 @@ class TestTheNonHttpRefusalIsSplitByPolicy(TerminationCase):
 
 
 @unittest.skipUnless(_have_openssl(), "openssl is not installed")
-class TestAnHttp2HostIsRelayedAtFrameLevel(TerminationCase):
-    """The `http2` list, end to end through a real handshake.
+class TestBothLegsAreHttp11(TerminationCase):
+    """Whatever either end prefers. The requests are read as HTTP/1.1, so a
+    leg that settled on h2 would carry frames nothing here can read."""
 
-    THIS IS THE TEST THE UNIT ONES CANNOT REPLACE. Every part of this feature
-    can be individually green while the seam is inert: the ALPN swap chooses a
-    tuple nothing hands to a context, the framing scanner is fed by nothing,
-    the preface is read off a stream whose buffered surplus is then dropped so
-    the guest's opening SETTINGS never reaches the origin. All three build a
-    plausible argv and produce a connection that hangs. So this drives a real
-    client, offering h2, at a real origin that also offers h2, and asserts on
-    the protocol both ends actually negotiated and on the frames that came
-    back.
-    """
-
-    SETTINGS = b"\x00\x00\x00\x04\x00\x00\x00\x00\x00"
-    SETTINGS_ACK = b"\x00\x00\x00\x04\x01\x00\x00\x00\x00"
-
-    def _h2_origin(self, follow=False):
-        """An origin that speaks h2 and answers with one frame.
-
-        `follow` keeps it reading after that answer. It is off by default so
-        the relay ends when the origin closes and a test's read loop
-        terminates -- and ON for the mid-session test, which otherwise never
-        gets its second write read at all.
-        """
-        origin = _Origin(self.origin_pem, alpn=("h2",),
-                         response=self.SETTINGS_ACK, follow=follow)
-        self.addCleanup(origin.close)
-        return origin
-
-    def _h2_exchange(self, listener, origin, payload, then=None):
-        """One h2 connection, guest side. Returns (bytes back, error, alpn).
-
-        `then` is written after the first bytes come back, which is the only
-        way to reach the RELAY's copy of the framing scanner: everything sent
-        in one write arrives while the preface is still being read and is
-        handled by the pre-relay feed instead. A break disabling the relay
-        scanner reads green without this.
-        """
-        ours, guest = _tcp_pair()
-        self.addCleanup(ours.close)
-        self.addCleanup(guest.close)
-        ours.settimeout(3.0)
-        guest.settimeout(3.0)
-        served = threading.Thread(
-            target=serve_tls, args=(listener.inspection, ours, _where("tls")), daemon=True)
-        negotiated = []
-        # The origin's port, on the plane object both the splice dial
-        # (inspect_tls's) and the verifying dial (egress_upstream's) read.
-        with unittest.mock.patch.object(
-                inspect_tls, "TLS",
-                TLS._replace(guest_port=origin.port)), \
-                unittest.mock.patch.object(
-                    egress_upstream, "TLS",
-                    TLS._replace(guest_port=origin.port)):
-            served.start()
-            ctx = self._guest_context()
-            ctx.set_alpn_protocols(["h2"])
-            back, error, tls = b"", None, None
-            try:
-                tls = ctx.wrap_socket(guest, server_hostname=self.HOST)
-                negotiated.append(tls.selected_alpn_protocol())
-                tls.sendall(payload)
-                while True:
-                    chunk = tls.recv(65536)
-                    if not chunk:
-                        break
-                    back += chunk
-                    if then is not None:
-                        tls.sendall(then)
-                        then = None
-            except (ssl.SSLError, OSError) as exc:
-                error = exc
-            finally:
-                if tls is not None:
-                    tls.close()
-            served.join(timeout=15)
-        return back, error, negotiated[0] if negotiated else None
-
-    def test_both_legs_negotiate_h2_and_the_frames_cross(self):
-        """The gate. h2 offered to the guest, h2 offered upstream, the guest's
-        preface and opening SETTINGS delivered to the origin, and the origin's
-        own frame delivered back."""
-        mod = _mod()
-        origin = self._h2_origin()
-        listener, out = self._listener(mod, origin, http2=("localhost",))
-        back, error, alpn = self._h2_exchange(
-            listener, origin, H2_PREFACE + self.SETTINGS)
-        self.assertIsNone(error)
-        self.assertEqual(alpn, "h2", "the guest leg did not negotiate h2")
-        self.assertEqual(origin.alpn_seen, ["h2"],
-                         "the upstream leg did not negotiate h2")
-        self.assertEqual(origin.requests[0], H2_PREFACE + self.SETTINGS,
-                         "the preface and the opening SETTINGS must both "
-                         "reach the origin, unaltered")
-        self.assertEqual(back, self.SETTINGS_ACK)
-        self.assertIn("terminate", out.getvalue())
-        self.assertIn("h2", out.getvalue())
-
-    def test_a_host_not_listed_is_offered_http11_on_the_same_listener(self):
-        """Per host, not per listener -- which is the whole mechanism. ALPN is
-        selected after the SNI is known, so one connection can be downgraded
-        while another on the same listener keeps h2."""
+    def test_a_guest_preferring_h2_is_given_http11(self):
         mod = _mod()
         origin = _Origin(self.origin_pem)
         self.addCleanup(origin.close)
-        listener, _ = self._listener(mod, origin, http2=("other.example",))
+        listener, _ = self._listener(mod, origin)
+        ctx = self._guest_context()
+        ctx.set_alpn_protocols(["h2", "http/1.1"])
+        alpn = []
+        response, error = self._exchange(listener, origin, guest_ctx=ctx,
+                                         alpn_out=alpn)
+        self.assertIsNone(error)
+        self.assertEqual(alpn, ["http/1.1"])
+        self.assertIn(b"200 OK", response)
+
+    def test_an_origin_preferring_h2_is_asked_for_http11(self):
+        mod = _mod()
+        origin = _Origin(self.origin_pem, alpn=("h2", "http/1.1"))
+        self.addCleanup(origin.close)
+        listener, _ = self._listener(mod, origin)
         response, error = self._exchange(listener, origin)
         self.assertIsNone(error)
-        self.assertIn(b"200 OK", response)
         self.assertEqual(origin.alpn_seen, ["http/1.1"])
-
-    def test_an_http11_request_on_an_http2_host_is_refused(self):
-        """What makes the key mean SPEAKS H2 rather than EXEMPT. Without the
-        preface check this is a byte relay: no Host binding, no policy, and a
-        guest opting out of the terminating plane by writing different first
-        bytes on a host somebody listed for performance."""
-        mod = _mod()
-        origin = self._h2_origin()
-        listener, out = self._listener(mod, origin, http2=("localhost",))
-        back, _, _ = self._h2_exchange(
-            listener, origin,
-            b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
-        self.assertEqual(back, b"", "a close, not an HTTP answer")
-        self.assertEqual(origin.requests, [],
-                         "a refused stream must never reach the origin")
-        self.assertEqual(
-            listener.status()["drop_reasons"][DROP_NOT_H2], 1)
-        self.assertIn("not HTTP/2", out.getvalue())
-        self.assertIn("splic", out.getvalue(),
-                      "the refusal must name a remedy `validate` accepts")
-
-    def test_a_preface_followed_by_a_non_settings_frame_is_refused(self):
-        """The preface alone is not enough: a guest that sends it and then
-        anything at all would otherwise be relayed, because a 24-bit length
-        field makes almost any byte string parse as frames."""
-        mod = _mod()
-        origin = self._h2_origin()
-        listener, _ = self._listener(mod, origin, http2=("localhost",))
-        headers = b"\x00\x00\x05\x01\x04\x00\x00\x00\x01hpack"
-        self._h2_exchange(listener, origin, H2_PREFACE + headers)
-        self.assertEqual(
-            listener.status()["drop_reasons"][DROP_NOT_H2], 1)
-        self.assertEqual(origin.requests, [],
-                         "the scanner must run BEFORE the forward, or a "
-                         "stream it refuses has already reached the origin "
-                         "and the refusal is only a log line")
-
-    def test_a_preface_that_is_not_THE_preface_is_refused(self):
-        """The preface check on its own, with the framing check unable to cover
-
-        for it. The obvious version of this test -- send an HTTP/1.1 request --
-        passes with the preface check deleted, because the bytes after its
-        first 24 do not parse as a frame either and the scanner refuses them.
-        So the payload here is 24 bytes that are NOT the preface followed by a
-        perfectly legal SETTINGS frame: only the preface check can say no, and
-        with it gone this is relayed to the origin.
-        """
-        mod = _mod()
-        origin = self._h2_origin()
-        listener, _ = self._listener(mod, origin, http2=("localhost",))
-        self.assertEqual(len(H2_PREFACE), 24)
-        back, _, _ = self._h2_exchange(
-            listener, origin, b"X" * 24 + self.SETTINGS)
-        self.assertEqual(back, b"")
-        self.assertEqual(origin.requests, [])
-        self.assertEqual(
-            listener.status()["drop_reasons"][DROP_NOT_H2], 1)
-
-    def test_a_stream_that_stops_framing_MID_SESSION_is_refused_AT_THE_END(self):
-        """The relay's copy of the scanner, and the limit of what it can do.
-
-        Every other payload here arrives in one write and is consumed by the
-        feed before the relay starts, so a break disabling the relay's
-        on_client_bytes leaves the rest of this class green.
-
-        AND THE NAME OF THIS TEST IS THE FINDING. The first version asserted
-        that the refused bytes never reached the origin, which is what the
-        pre-relay feed achieves and what the check reads as if it does. It
-        does not: a frame header is 24 arbitrary length bits, so `GET /secr`
-        parses as a frame announcing a 4.6MB payload and the scanner has
-        nothing to object to until the connection ends short of it. By then
-        the bytes are relayed.
-
-        So the mid-session guarantee is ALIGNMENT AT CLOSE, not refusal in
-        flight -- which is worth having (the connection is counted and named
-        as not-h2, and an operator sees the host) and is worth writing down as
-        the weaker thing it is. What actually binds `http2` to h2 is the
-        preface and the opening SETTINGS, both of which are checked before a
-        byte moves. Closing this residual means decoding frames properly,
-        which is HPACK work.
-        """
-        mod = _mod()
-        origin = self._h2_origin(follow=True)
-        listener, _ = self._listener(mod, origin, http2=("localhost",))
-        self._h2_exchange(listener, origin,
-                          H2_PREFACE + self.SETTINGS,
-                          then=b"GET /secret HTTP/1.1\r\n\r\n")
-        self.assertEqual(
-            listener.status()["drop_reasons"][DROP_NOT_H2], 1)
-        # Pinned as it is, not as it ought to be: this is the residual, and a
-        # test that asserted the stronger property would have to be deleted by
-        # whoever eventually closes it rather than tightened.
-        self.assertIn(b"GET /secret", b"".join(origin.requests))
-
-    def test_the_upstream_leg_is_closed_when_the_session_ends(self):
-        """Found by a ResourceWarning while every other assertion here was
-        green, which is the whole reason it gets a test.
-
-        The h2 branch does not go through serve_terminated, and that is where
-        the upstream socket is closed on the HTTP/1.1 path -- so this leaked
-        one verified TLS socket, owned by the workload uid, per connection, in
-        a process a guest can open connections to at will. Nothing about the
-        exchange is wrong while it happens: the frames cross, the counters
-        reconcile, and the collector eventually gets the socket.
-        """
-        mod = _mod()
-        origin = self._h2_origin()
-        listener, _ = self._listener(mod, origin, http2=("localhost",))
-        legs = []
-        real = listener.inspection.upstream.dial_tls
-
-        def capture(host, *args):
-            leg = real(host, *args)
-            legs.append(leg)
-            return leg
-
-        listener.inspection.upstream.dial_tls = capture
-        self._h2_exchange(listener, origin, H2_PREFACE + self.SETTINGS)
-        self.assertEqual(len(legs), 1)
-        # ON THE FD, not on a count of open descriptors. This file already
-        # records why (see the guest-socket close test): CPython collects the
-        # socket soon after the handler returns and closes it anyway, so a
-        # count-based test passes with the close deleted -- which is exactly
-        # what a first attempt at this test did.
-        self.assertEqual(legs[0].sock.fileno(), -1,
-                         "the h2 branch returned with its upstream leg open")
-
-    def test_the_refusal_is_counted_per_host(self):
-        """It is an operator's list of hosts to reconsider -- the entry is
-        wrong, or the host needs splicing -- so it is worth a name, exactly
-        like the non-HTTP refusal it shares a remedy with."""
-        mod = _mod()
-        origin = self._h2_origin()
-        listener, _ = self._listener(mod, origin, http2=("localhost",))
-        self._h2_exchange(listener, origin, b"not h2 at all, not even close")
-        per_host = listener.status()["per_host"][DROP_NOT_H2]
-        self.assertEqual(dict(per_host).get("localhost"), 1, per_host)
-
-    # --- and the ORIGIN half of the same question ---
-
-    def _http11_origin(self):
-        """An origin listed in `http2` that offers `http/1.1` and nothing else.
-
-        The operator's mistake, and the one an ALPN offer cannot report by
-        itself: ALPN_H2 says at length that a server speaking only HTTP/1.1
-        COMPLETES this handshake and selects nothing, with no alert. So the
-        fixture is not exotic -- it is the ordinary web server somebody added
-        to the `http2` list by mistake.
-        """
-        origin = _Origin(self.origin_pem, alpn=("http/1.1",))
-        self.addCleanup(origin.close)
-        return origin
-
-    def test_an_origin_that_did_not_select_h2_is_refused_not_relayed(self):
-        """The guest half of this key is checked exhaustively; unchecked, the
-        origin half would have the guest's preface relayed into an HTTP/1.1
-        server and fail as garbage no figure names.
-
-        DROP_NOT_H2 cannot fire from the other side here: the guest is
-        speaking h2 perfectly, and it is the ENTRY that is wrong.
-        """
-        mod = _mod()
-        origin = self._http11_origin()
-        listener, out = self._listener(mod, origin, http2=("localhost",))
-        back, _, _ = self._h2_exchange(
-            listener, origin, H2_PREFACE + self.SETTINGS)
-        self.assertEqual(listener.status()["drop_reasons"][DROP_NOT_H2], 1)
-        self.assertEqual(origin.requests, [],
-                         "the guest's preface must never reach a server that "
-                         "did not select h2")
-        self.assertIn("bump", out.getvalue())
-
-    def test_the_journal_names_both_ways_out(self):
-        """Drop the entry, or move the host to splice. Neither is guessable
-        from `502`, and the journal line is the only place either is said:
-        the guest's body names neither list."""
-        mod = _mod()
-        origin = self._http11_origin()
-        listener, out = self._listener(mod, origin, http2=("localhost",))
-        back, _, _ = self._h2_exchange(
-            listener, origin, H2_PREFACE + self.SETTINGS)
-        text = back.decode("latin-1")
-        self.assertIn("502", text)
-        self.assertNotIn("http2", text)
-        self.assertNotIn("splice", text)
-        log = out.getvalue()
-        self.assertIn("did not select h2", log)
-        self.assertIn("`http2`", log)
-        self.assertIn("`splice`", log)
-
-    def test_the_answer_is_readable_because_the_guest_leg_stays_http11(self):
-        """A refusal is an HTTP/1.1 response, so the guest leg must not have
-        been offered h2 for it -- otherwise the one thing this connection was
-        going to say arrives in a protocol it just advertised it was not."""
-        mod = _mod()
-        origin = self._http11_origin()
-        listener, _ = self._listener(mod, origin, http2=("localhost",))
-        back, error, alpn = self._h2_exchange(
-            listener, origin, H2_PREFACE + self.SETTINGS)
-        self.assertIsNone(error)
-        self.assertIsNone(alpn, "the guest offered h2 alone and must have been "
-                                "answered with no selection, not with h2")
-        self.assertTrue(back.startswith(b"HTTP/1.1 502"), back[:40])
-
-    def test_the_refused_origin_leg_is_closed(self):
-        """The refusal branch has never had an upstream to close -- every
-        other refusal is taken before the dial or by its failure -- so this
-        one closes its own, and a later tidy-up moving that into the branch
-        would leak a verified socket per connection."""
-        mod = _mod()
-        origin = self._http11_origin()
-        listener, _ = self._listener(mod, origin, http2=("localhost",))
-        legs = []
-        real = listener.inspection.upstream.dial_tls
-
-        def capture(host, *args):
-            leg = real(host, *args)
-            legs.append(leg)
-            return leg
-
-        listener.inspection.upstream.dial_tls = capture
-        self._h2_exchange(listener, origin, H2_PREFACE + self.SETTINGS)
-        self.assertEqual(len(legs), 1)
-        self.assertEqual(legs[0].sock.fileno(), -1,
-                         "the origin leg was left open by the refusal")
-
-    def test_a_host_not_in_http2_is_unaffected_by_the_check(self):
-        """The check is asked only of an `http2` host. An ordinary terminated
-        host facing an origin that selects nothing is the COMMON case -- most
-        origins offer h2 and take our http/1.1 by not selecting -- and a check
-        that fired there would refuse most of the web."""
-        mod = _mod()
-        origin = self._http11_origin()
-        listener, _ = self._listener(mod, origin)
-        self._exchange(listener, origin)
-        self.assertEqual(
-            listener.status()["drop_reasons"][DROP_NOT_H2], 0)
+        self.assertIn(b"200 OK", response)
 
 
 class TestWhatTheStatusFileCarriesFromARealExchange(TerminationCase):

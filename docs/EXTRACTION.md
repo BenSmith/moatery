@@ -72,6 +72,9 @@ repo:
 - Its test modules that import partially from the closure importing
   from the installed package.
 - Its two closure tests retired in favour of `test_closure.py` here.
+- Its `[[vm.network.http2]]` hosts rendered as `splice` entries: customs
+  relays no HTTP/2 and refuses an `http2` list that names a host. Its
+  `h2_unrecorded` figure retired with it.
 
 Nothing changes in customs.
 

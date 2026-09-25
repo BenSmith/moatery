@@ -32,16 +32,12 @@ BROKER_UPSTREAM_KEY = "broker\x00"
 
 # What is offered upstream and to the guest, from configuration, never
 # mirrored from the guest's own offer.
-UPSTREAM_ALPN = ("http/1.1",)
-
-# What a host in the `http2` list is offered instead, on both legs.
 #
 # An offer binds nobody: a server offering http/1.1 alone completes the
 # handshake with a client offering h2 alone, and neither side selects
-# anything. What holds a terminated host to HTTP/1.1 is the non-HTTP
-# refusal in inspect_tls._is_http, and an `http2` host to h2 the preface
-# check in _serve_h2, not these tuples.
-ALPN_H2 = ("h2",)
+# anything. What holds a terminated connection to HTTP/1.1 is the non-HTTP
+# refusal in inspect_tls._is_http and the request parser, not this tuple.
+UPSTREAM_ALPN = ("http/1.1",)
 
 
 class Upstream:
@@ -52,10 +48,6 @@ class Upstream:
         # turn it off.
         self._ctx = ssl.create_default_context()
         self._ctx.set_alpn_protocols(list(UPSTREAM_ALPN))
-        # A second context rather than per-dial ALPN: contexts are shared
-        # across connections, and mutating one would race them.
-        self._ctx_h2 = ssl.create_default_context()
-        self._ctx_h2.set_alpn_protocols(list(ALPN_H2))
         # This workload's broker: (address, port), a socket path, or None.
         self._broker_endpoint = (
             None if broker_endpoint is None
@@ -71,14 +63,12 @@ class Upstream:
         return _Stream(sock)
 
 
-    def dial_tls(self, host, alpn=UPSTREAM_ALPN):
+    def dial_tls(self, host):
         """A verified TLS session to an allowlisted name, as a _Stream."""
         sock = socket.create_connection(
             (host, TLS.guest_port), timeout=egress_relay.CONNECTION_TIMEOUT)
         try:
-            ctx = (self._ctx_h2 if alpn == ALPN_H2
-                   else self._ctx)
-            ssock = ctx.wrap_socket(sock, server_hostname=host)
+            ssock = self._ctx.wrap_socket(sock, server_hostname=host)
         except BaseException:
             sock.close()
             raise

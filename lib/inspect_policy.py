@@ -34,7 +34,6 @@ class Policy(NamedTuple):
     hosts: tuple
     internal: tuple = ()
     splice: tuple = ()
-    http2: tuple = ()
     policy: tuple = ()
     # The digest of the text parsed, echoed into the status file so a reader
     # can tell a listener enforcing the file on disk from one holding an older
@@ -45,7 +44,7 @@ class Policy(NamedTuple):
     def summary(self) -> str:
         return (f"tls={self.tls} hosts={len(self.hosts)} "
                 f"internal={len(self.internal)} splice={len(self.splice)} "
-                f"http2={len(self.http2)} policy={len(self.policy)}")
+                f"policy={len(self.policy)}")
 
     def admits(self, host: str) -> bool:
         """Whether this name is on a list at all: the question at the front of
@@ -82,14 +81,6 @@ class Policy(NamedTuple):
             return True
         return (hostname_match(host, self.splice)
                 and not self.governs(host))
-
-    def speaks_h2(self, host: str) -> bool:
-        """Whether this terminated host is offered h2 and relayed by frame.
-
-        Never a host a policy entry governs: an h2 request's headers are
-        relayed compressed, so there is no request line to match.
-        """
-        return hostname_match(host, self.http2) and not self.governs(host)
 
     def credential_for(self, host: str):
         """The credential name this host's requests are brokered with, or None.
@@ -132,8 +123,7 @@ def load_policy(path):
     hosts = _names(doc, "hosts", path)
     internal = _names(doc, "internal", path)
     splice = _names(doc, "splice", path)
-    # Patterns are not normalised here; hostname_match normalises both sides.
-    http2 = _names(doc, "http2", path)
+    _refuse_http2(doc, path)
     entries = doc.get("policy")
     if entries is None:
         entries = []
@@ -177,11 +167,10 @@ def load_policy(path):
                 m.upper() for m in methods),
             paths=None if paths is None else tuple(paths),
             credential=credential))
-    _refuse_inert_entries(path, tls, policy, splice, http2)
+    _refuse_inert_entries(path, tls, policy, splice)
     return Policy(tls=tls, hosts=tuple(hosts),
                   internal=tuple(normalise_hostname(h) for h in internal),
-                  splice=tuple(splice), http2=tuple(http2),
-                  policy=tuple(policy), digest=digest)
+                  splice=tuple(splice), policy=tuple(policy), digest=digest)
 
 
 def _names(doc, key, path):
@@ -202,13 +191,30 @@ def _names(doc, key, path):
     return value
 
 
-def _refuse_inert_entries(path, tls, entries, splice, http2):
+def _refuse_http2(doc, path):
+    """Refuse an `http2` list that names a host.
+
+    Every terminated host is offered HTTP/1.1 alone. Ignored, the list would
+    leave a client that speaks only h2 failing against its host with nothing
+    here saying why. An empty one is what a writer that always emits the key
+    sends, and says nothing.
+    """
+    names = _names(doc, "http2", path)
+    if names:
+        raise ValueError(
+            f"{path}: 'http2' names {', '.join(map(repr, names))}: HTTP/2 is "
+            f"not relayed, and every terminated host is offered HTTP/1.1 "
+            f"alone. A host whose client speaks only h2 (gRPC) goes in "
+            f"'splice', where its h2 runs end to end and the host is checked "
+            f"by name alone")
+
+
+def _refuse_inert_entries(path, tls, entries, splice):
     """Refuse a document whose policy entries could never run.
 
-    `methods` and `paths` need a decrypted HTTP/1.1 request, which the
-    whole-workload splice, a per-host splice and h2 each leave a host
-    without. Such an entry is refused at start, naming both halves, rather
-    than one half being ignored.
+    `methods` and `paths` need a decrypted request, which the whole-workload
+    splice and a per-host splice each leave a host without. Such an entry is
+    refused at start, naming both halves, rather than one half being ignored.
     """
     if not entries:
         return
@@ -218,12 +224,11 @@ def _refuse_inert_entries(path, tls, entries, splice, http2):
             f"connection is never decrypted, so no entry's methods, paths "
             f"or credential could apply. Use tls 'inspect' and splice only "
             f"the hosts that cannot take the CA, or drop the entries")
-    for key, patterns in (("splice", splice), ("http2", http2)):
-        for entry in entries:
-            for pattern in patterns:
-                if patterns_overlap(entry.host, pattern):
-                    raise ValueError(
-                        f"{path}: policy entry {entry.host!r} overlaps "
-                        f"{key!r} entry {pattern!r}: that host is never "
-                        f"read as an HTTP/1.1 request, so the entry could "
-                        f"never run. Keep one of the two")
+    for entry in entries:
+        for pattern in splice:
+            if patterns_overlap(entry.host, pattern):
+                raise ValueError(
+                    f"{path}: policy entry {entry.host!r} overlaps "
+                    f"'splice' entry {pattern!r}: that host is never read "
+                    f"as an HTTP request, so the entry could never run. "
+                    f"Keep one of the two")

@@ -1,7 +1,7 @@
 """egress_relay: the byte splice, and the two timeouts every plane spends.
 
 `relay` moves bytes both ways until a side closes or goes idle: for a
-spliced connection, a terminated one after a 101, and an h2 session.
+spliced connection, and a terminated one after a 101.
 
 CONNECTION_TIMEOUT bounds every wait up to a decision and
 RELAY_IDLE_TIMEOUT every wait after one. One number cannot do both: a long
@@ -41,8 +41,8 @@ class _Direction:
     direction suggests.
     """
 
-    def __init__(self, src, dst, check=None):
-        self.src, self.dst, self.check = src, dst, check
+    def __init__(self, src, dst):
+        self.src, self.dst = src, dst
         self.buf = bytearray()
         # The chunk a TLS write was refused on: OpenSSL requires the retry
         # to carry the same bytes.
@@ -69,10 +69,6 @@ class _Direction:
             return None
         self.read_on = selectors.EVENT_READ
         if data:
-            if self.check is not None:
-                # Before the buffer, so a refused stream never reaches the
-                # far side.
-                self.check(data)
             self.buf += data
         return data
 
@@ -92,7 +88,7 @@ class _Direction:
         return sent > 0
 
 
-def relay(client, upstream, on_client_bytes=None):
+def relay(client, upstream):
     """Move bytes both ways until either side closes or goes idle.
 
     Neither direction waits on the other: each is read while its buffer has
@@ -103,13 +99,8 @@ def relay(client, upstream, on_client_bytes=None):
     the guest abandoned. Idle means no byte moved either way for
     RELAY_IDLE_TIMEOUT, and before a close it raises TimeoutError if bytes
     were still waiting for a side that stopped reading.
-
-    `on_client_bytes`, when given, sees every byte from `client` before it
-    is forwarded, and may raise to end the relay. Only the guest's direction
-    is checked: the origin is a name the workload allowlisted, reached over
-    a verified session.
     """
-    directions = (_Direction(client, upstream, on_client_bytes),
+    directions = (_Direction(client, upstream),
                   _Direction(upstream, client))
     sel = selectors.DefaultSelector()
     watching = {}

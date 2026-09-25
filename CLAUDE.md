@@ -53,7 +53,8 @@ substrate, SELinux labelling) or narrates history. Module names and
 every identifier workloadctl imports are unchanged (`docs/EXTRACTION.md`
 lists them). "Guest" and "workload" remain as the words for the thing
 behind the inspector. Diffing against workloadctl is a diff of prose and
-messages, the two entrypoints' names, and the shape-1b and 1n flags:
+messages, the two entrypoints' names, the `http2` list (customs relays
+no HTTP/2 and refuses the list), and the shape-1b and 1n flags:
 the broker's `--listen unix:PATH` (`UnixServer`, `peer_uid_unix`), the
 inspector's `--broker unix:PATH`, `--caller-uid` and `--netns-pid`
 (`listed_in`, `netns_tables`, the lookup's tables as a parameter), and

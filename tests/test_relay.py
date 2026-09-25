@@ -219,33 +219,6 @@ class TestBothDirectionsAtOnce(unittest.TestCase):
             thread.join(10)
         self.assertEqual(outcome, {"returned": True})
 
-    def test_the_guest_check_sees_every_byte_before_it_is_forwarded(self):
-        """The check may raise to end the relay, and the bytes it refused
-        never reach the origin."""
-        guest, relay_client, relay_upstream, origin = self._pairs()
-        seen = bytearray()
-
-        class Refused(Exception):
-            pass
-
-        def check(data):
-            if b"REFUSE" in data:
-                raise Refused()
-            seen.extend(data)
-
-        thread, outcome = _relay_in_thread(relay_client, relay_upstream,
-                                           on_client_bytes=check)
-        guest.sendall(b"fine")
-        origin.settimeout(5)
-        self.assertEqual(origin.recv(100), b"fine")
-        guest.sendall(b"REFUSE")
-        thread.join(5)
-        self.assertIsInstance(outcome.get("raised"), Refused)
-        self.assertEqual(bytes(seen), b"fine")
-        origin.settimeout(0.3)
-        with self.assertRaises(TimeoutError):
-            origin.recv(100)
-
     def test_the_sockets_are_left_with_the_idle_timeout(self):
         guest, relay_client, relay_upstream, _origin = self._pairs()
         thread, _ = _relay_in_thread(relay_client, relay_upstream)

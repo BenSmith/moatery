@@ -214,7 +214,7 @@ class TestTheInspectorBehindTheLauncher(unittest.TestCase):
         self.policy = os.path.join(self.dir, "policy.json")
         with open(self.policy, "w") as fh:
             json.dump({"tls": "splice", "hosts": [], "internal": [],
-                       "splice": [], "http2": [], "policy": []}, fh)
+                       "splice": [], "policy": []}, fh)
         self.status = os.path.join(self.dir, "status.json")
         self.record = os.path.join(self.dir, "record.jsonl")
 

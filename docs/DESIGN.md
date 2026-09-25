@@ -22,7 +22,6 @@ are in [examples/](../examples/).
     "hosts": ["api.example.com"],
     "internal": [],
     "splice": [],
-    "http2": [],
     "policy": [
       {"host": "api.example.com", "methods": ["POST"],
        "paths": ["/v1/messages"], "credential": "example"}
@@ -449,7 +448,7 @@ The privilege boundary between the two programs survives inside one
 container as two uids: the broker as uid 201 owning the key file `0400`
 and the socket `0660` under the shared group 200, the inspector as uid
 200. The inspector is the exposed surface (it parses workload-controlled
-ClientHellos and HTTP/1 and /2 framing); the broker holds the key; the
+ClientHellos and HTTP/1 framing); the broker holds the key; the
 socket hop is the line. The responder parses workload-controlled queries
 too and holds nothing, so it runs as the inspector's uid. `setuid()` clears every capability, so no
 `DAC_OVERRIDE` bridges them whatever the container was started with.

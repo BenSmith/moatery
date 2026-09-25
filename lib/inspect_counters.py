@@ -39,9 +39,6 @@ class Counters:
         # Records the per-request sink could not take. The warning is logged
         # once; this is what shows the record is incomplete.
         self.record_failures = 0
-        # h2 sessions, whose requests are not in the record: nothing in them
-        # was decoded.
-        self.h2_unrecorded = 0
         # Connections admitted whose caller the lookup could not name.
         self.caller_unresolved = 0
         # Pre-seeded, so an absent reason and a zero one look the same.
@@ -69,7 +66,6 @@ class Counters:
             "hosts": list(policy.hosts) if policy else [],
             "internal": list(policy.internal) if policy else [],
             "splice": list(policy.splice) if policy else [],
-            "http2": list(policy.http2) if policy else [],
             "policy": [
                 {"host": e.host,
                  "methods": None if e.methods is None else list(e.methods),
@@ -108,11 +104,6 @@ class Counters:
         """One connection admitted without naming its caller."""
         with self._lock:
             self.caller_unresolved += 1
-
-    def record_h2_unrecorded(self) -> None:
-        """One h2 session whose requests this process never decoded."""
-        with self._lock:
-            self.h2_unrecorded += 1
 
     def record_bump(self) -> None:
         """One handshake completed to deliver a refusal; the refusal itself
@@ -160,7 +151,6 @@ class Counters:
                 "ech": {"seen": self.ech_seen, "alarm": self.ech_alarm},
                 "bumped": self.bumped,
                 "record_failures": self.record_failures,
-                "h2_unrecorded": self.h2_unrecorded,
                 "caller_unresolved": self.caller_unresolved,
                 "internal_refusals": self.internal_refusals.snapshot(),
                 "internal_refusals_total": self.internal_refusals.total,
