@@ -154,6 +154,19 @@ def peer_caller(locals_, peer, tables=PROC_NET_TCP):
     return None, orphaned
 
 
+# The first byte of the kernel's struct tcp_info: the connection's state.
+TCP_ESTABLISHED = 1
+
+
+def peer_closed(sock):
+    """Whether the far end of an accepted TCP connection has already closed
+    or reset it. A reset leaves no row in the table at all, so a caller the
+    lookup could not name is only innocent while its connection is up.
+    """
+    info = sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_INFO, 1)
+    return info[0] != TCP_ESTABLISHED
+
+
 def listed_in(sock, tables=PROC_NET_TCP):
     """Whether `sock` has a row in one of `tables`, by inode; None if none
     of them can be read.

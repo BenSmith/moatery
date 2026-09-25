@@ -34,7 +34,9 @@ from egress_status import write_status
 import inspect_http
 import inspect_tls
 from inspect_scope import Inspection
-from peer_identity import PROC_NET_TCP, local_endpoints, peer_caller
+from peer_identity import (
+    PROC_NET_TCP, local_endpoints, peer_caller, peer_closed,
+)
 
 
 # The ceiling on connections being served, well above a guest's honest
@@ -253,13 +255,15 @@ class Listener:
         try:
             caller, orphaned = peer_caller(local_endpoints(conn), peer[:2],
                                            self._peer_tables)
+            if caller is None and not orphaned:
+                orphaned = peer_closed(conn)
         except Exception:
             # A second layer that throws must not take the connection path
             # down with it.
             caller, orphaned = None, False
         if orphaned:
-            # The caller wrote and closed before it could be looked up, which
-            # any local uid can choose to do.
+            # The caller wrote and closed or reset before it could be looked
+            # up, which any local uid can choose to do.
             self.inspection.drop(where, DROP_CALLER_CLOSED, verb="rejected")
             conn.close()
             return False
