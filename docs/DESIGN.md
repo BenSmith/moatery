@@ -633,16 +633,49 @@ boundary the rules hang on.
 
 ## Shape 3: a cosy container
 
-[cosy](https://github.com/BenSmith/cosy) is shape 1 — or, since it
-installs nothing on the host, shape 1b — with a home directory and a
-display. Its `cosy network` subcommand already enters the container's
-netns from the host via `podman unshare nsenter`, so the rule step has a
-place to live, and cosy passes `--volume`/`--env` through to podman. What
-cosy would need to grow: a way to say the policy (`cosy network policy
-NAME --allow HOST --credential HOST=CRED` writing the JSON) and either
-the user units or the sidecar. Base cosy containers hold 5 capabilities,
-none of them `NET_ADMIN`; a cosy container on a custom network gains
-`NET_ADMIN` and is out of scope.
+[cosy](https://github.com/BenSmith/cosy) makes rootless podman
+containers with a home directory and a display, and installs nothing
+on the host. Nothing here or in cosy joins the two yet: this is how
+they would, from what cosy does today. Not proved.
+
+What cosy already gives:
+
+- Its default network is podman's, pasta for a rootless container, the
+  same as shape 1's. No `--network` flag is passed.
+- Its capabilities: `--cap-drop=ALL`, then CHOWN, DAC_OVERRIDE, FOWNER,
+  SETUID and SETGID, and six more when systemd is pid 1 (FSETID, KILL,
+  NET_BIND_SERVICE, SETFCAP, SETPCAP, SYS_CHROOT). None is `NET_ADMIN`,
+  so the workload cannot undo rules in its namespace.
+- Its `network` subcommands (`inspect`, `capture`, `throttle` and the
+  rest) enter the container's namespace with `podman unshare nsenter`,
+  which is how the rules go in. None of them loads nft rules today.
+- `--volume` and `--env` pass through to podman: the bundle, its
+  variables and the placeholder.
+- It creates and starts in separate steps (`podman create`, then
+  `podman start`), so there is a place for the steps between.
+
+Shape 1n fits it best: the listeners inside the namespace, no host
+ports, nothing redirected out of it. Shape 1 works as well. Both put the
+programs on the host, which cosy does not; shape 1b keeps them in an
+image but needs a pod, and cosy makes no pods.
+
+What cosy would have to grow:
+
+- A way to say the policy, writing the JSON (say `cosy network policy
+  NAME --allow HOST --credential HOST=CRED`), the CA mint and the
+  bundle, and the broker's credential.
+- `create → init → rules → listeners → start` in place of `create →
+  start`, and on every start, not only the first. A stopped container
+  loses its namespace, and the rules and listeners with it; cosy starts
+  an existing container from `run` and `enter` as well as after a
+  create, and recreates. Each of those paths starts with `podman init`,
+  loads the rules and runs `customs-netns-listen` before `podman start`.
+- The broker, run as the user alongside the container and stopped with
+  it.
+
+Out of scope: a cosy container on a custom network (`--network NAME`).
+cosy adds `NET_ADMIN` and `NET_RAW` for one, and the workload could then
+rewrite its own rules.
 
 ## What customs does not do, on purpose
 
