@@ -161,8 +161,8 @@ class TestLibIsTheClosure(unittest.TestCase):
         mods = _lib_modules()
         self.assertEqual(
             sorted(_closure(RESOLVER, mods)),
-            ["dns_wire", "egress_status", "inspect_document",
-             "inspect_policy", "resolve_policy", "resolve_server",
+            ["egress_status", "inspect_document", "inspect_policy",
+             "resolve_policy", "resolve_serve", "resolve_wire",
              "sd_listen"])
 
     def test_the_broker_closure_is_the_four_broker_modules(self):

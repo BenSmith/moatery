@@ -25,8 +25,9 @@ has to think about.
 
 ## The interface
 
-Module names are unchanged from workloadctl, and so is every identifier
-its shipped code imports from `lib/`:
+Module names are unchanged from workloadctl, but for the responder's
+two (below), and so is every identifier its shipped code imports from
+`lib/`:
 
 ```
 broker_profiles   BROKER_DEFAULT_AUTH_FORMAT BROKER_DEFAULT_AUTH_HEADER
@@ -83,3 +84,7 @@ switch. `customs-resolve` was taken from it without the static map
 workloadctl's VMs use to name non-HTTP destinations, and takes its
 answers as flags rather than from a document workloadctl writes; the two
 share the wire parser's shape and the no-upstream test, not a module.
+After the switch `workload-vm-resolve` imports `inspect_document` from
+here, so both trees' `lib/` are on its path, and its `dns_wire` and
+`resolve_server` would load whichever came first. customs' are named
+apart: `resolve_wire` and `resolve_serve`.

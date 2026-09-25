@@ -31,8 +31,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import dns_wire
-import resolve_server
+import resolve_serve
+import resolve_wire
 from inspect_policy import load_policy
 from resolve_policy import RESOLVE_TTL, Policy
 from sd_listen import NotSocketActivated
@@ -123,10 +123,10 @@ class Reply:
 
 def _silenced_log():
     """The per-query log, captured rather than printed, through both
-    bindings: build_answer logs through dns_wire's name, the serve loop
+    bindings: build_answer logs through resolve_wire's name, the serve loop
     through the copy it imported."""
     logged = []
-    dns_wire.log = resolve_server.log = logged.append
+    resolve_wire.log = resolve_serve.log = logged.append
     return logged
 
 
@@ -141,7 +141,7 @@ def _policy(address6=ADDRESS6, admits=None):
 
 
 def _answer(policy, *args, **kwargs):
-    return Reply(dns_wire.build_answer(query(*args, **kwargs), policy))
+    return Reply(resolve_wire.build_answer(query(*args, **kwargs), policy))
 
 
 class TestSynthesis(unittest.TestCase):
@@ -186,7 +186,7 @@ class TestSynthesis(unittest.TestCase):
         self.assertEqual(RESOLVE_TTL, 3600)
 
     def test_the_id_and_question_are_echoed(self):
-        raw = dns_wire.build_answer(
+        raw = resolve_wire.build_answer(
             query("example.com", TYPE_A, ident=0xBEEF), self.policy)
         self.assertEqual(Reply(raw).id, 0xBEEF)
         self.assertEqual(Reply(raw).qdcount, 1)
@@ -270,9 +270,9 @@ class TestEdns(unittest.TestCase):
         self.assertEqual(reply.arcount, 0)
 
     def test_the_answer_is_identical_with_and_without_opt(self):
-        with_opt = dns_wire.build_answer(
+        with_opt = resolve_wire.build_answer(
             query("example.com", TYPE_A, opt=True), self.policy)
-        without = dns_wire.build_answer(
+        without = resolve_wire.build_answer(
             query("example.com", TYPE_A), self.policy)
         self.assertEqual(with_opt[2:], without[2:])
 
@@ -292,51 +292,51 @@ class TestMalformed(unittest.TestCase):
     def test_a_query_with_no_question_gets_formerr(self):
         raw = struct.pack("!HHHHHH", 0x1234, 0x0100, 0, 0, 0, 0)
         self.assertEqual(
-            Reply(dns_wire.build_answer(raw, self.policy)).rcode, 1)
+            Reply(resolve_wire.build_answer(raw, self.policy)).rcode, 1)
 
     def test_a_compression_pointer_in_the_question_is_refused(self):
         raw = struct.pack("!HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0)
         raw += b"\xc0\x0c" + struct.pack("!HH", TYPE_A, CLASS_IN)
-        with self.assertRaises(dns_wire.Malformed):
-            dns_wire.build_answer(raw, self.policy)
+        with self.assertRaises(resolve_wire.Malformed):
+            resolve_wire.build_answer(raw, self.policy)
 
     def test_a_name_ending_exactly_at_the_message_boundary_is_refused(self):
         """Found by the fuzz in workloadctl, pinned here. Without read_name's
         end-of-message guard it is an IndexError, which the loop does not
         catch, and the workload's only nameserver exits on one packet."""
         raw = bytes.fromhex("00010100000100000000b9000100")
-        with self.assertRaises(dns_wire.Malformed):
-            dns_wire.build_answer(raw, self.policy)
+        with self.assertRaises(resolve_wire.Malformed):
+            resolve_wire.build_answer(raw, self.policy)
 
     def test_a_truncated_header_is_refused(self):
-        with self.assertRaises(dns_wire.Malformed):
-            dns_wire.build_answer(b"\x12\x34", self.policy)
+        with self.assertRaises(resolve_wire.Malformed):
+            resolve_wire.build_answer(b"\x12\x34", self.policy)
 
     def test_a_name_running_past_the_message_is_refused(self):
         raw = struct.pack("!HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0) + b"\x09abc"
-        with self.assertRaises(dns_wire.Malformed):
-            dns_wire.build_answer(raw, self.policy)
+        with self.assertRaises(resolve_wire.Malformed):
+            resolve_wire.build_answer(raw, self.policy)
 
     def test_a_question_without_type_and_class_is_refused(self):
         raw = (struct.pack("!HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0)
                + encode_name("example.com") + b"\x00")
-        with self.assertRaises(dns_wire.Malformed):
-            dns_wire.build_answer(raw, self.policy)
+        with self.assertRaises(resolve_wire.Malformed):
+            resolve_wire.build_answer(raw, self.policy)
 
     def test_a_response_is_not_answered(self):
         """Its own FORMERR would be a response too, so an error reply is
         no way out of a loop; there is no reply at all."""
         raw = bytearray(query("example.com", TYPE_A))
         raw[2] |= 0x80
-        with self.assertRaises(dns_wire.NotAQuery):
-            dns_wire.build_answer(bytes(raw), self.policy)
-        answered = dns_wire.build_answer(query("example.com", TYPE_A),
+        with self.assertRaises(resolve_wire.NotAQuery):
+            resolve_wire.build_answer(bytes(raw), self.policy)
+        answered = resolve_wire.build_answer(query("example.com", TYPE_A),
                                          self.policy)
-        with self.assertRaises(dns_wire.NotAQuery):
-            dns_wire.build_answer(answered, self.policy)
+        with self.assertRaises(resolve_wire.NotAQuery):
+            resolve_wire.build_answer(answered, self.policy)
 
     def test_an_error_response_carries_the_queried_id(self):
-        raw = dns_wire.error_response(
+        raw = resolve_wire.error_response(
             query("example.com", TYPE_A, ident=0x4242), 1)
         self.assertEqual(Reply(raw).id, 0x4242)
         self.assertTrue(Reply(raw).qr)
@@ -371,13 +371,13 @@ class TestLogInjectionViaLabel(unittest.TestCase):
         self.policy = _policy(admits=_admits("allowed.example"))
 
     def test_a_label_with_a_newline_is_malformed(self):
-        with self.assertRaises(dns_wire.Malformed):
-            dns_wire.build_answer(query(self._forged, TYPE_A), self.policy)
+        with self.assertRaises(resolve_wire.Malformed):
+            resolve_wire.build_answer(query(self._forged, TYPE_A), self.policy)
 
     def test_it_is_refused_before_it_is_logged_or_counted(self):
-        counters = resolve_server.Counters()
-        with self.assertRaises(dns_wire.Malformed):
-            dns_wire.build_answer(query(self._forged, TYPE_A), self.policy,
+        counters = resolve_serve.Counters()
+        with self.assertRaises(resolve_wire.Malformed):
+            resolve_wire.build_answer(query(self._forged, TYPE_A), self.policy,
                                   counters=counters)
         self.assertEqual(self.logged, [])
         self.assertEqual(counters.snapshot()["unlisted_names"], {})
@@ -386,8 +386,8 @@ class TestLogInjectionViaLabel(unittest.TestCase):
         """serve_datagram logs the refusal itself, so the property has to
         hold over that path too."""
         sock = _OneDatagram(query(self._forged, TYPE_A))
-        counters = resolve_server.Counters()
-        resolve_server.serve_datagram(sock, self.policy, counters=counters)
+        counters = resolve_serve.Counters()
+        resolve_serve.serve_datagram(sock, self.policy, counters=counters)
         self.assertEqual(Reply(sock.sent).rcode, 1)
         self.assertEqual(counters.snapshot()["queries"]["malformed"], 1)
         self.assertTrue(self.logged)
@@ -398,8 +398,8 @@ class TestLogInjectionViaLabel(unittest.TestCase):
     def test_every_control_character_goes_with_the_newline(self):
         for ch in ("\n", "\r", "\x00", "\x7f", "\t", "\x1b"):
             with self.subTest(ch=ch):
-                with self.assertRaises(dns_wire.Malformed):
-                    dns_wire.build_answer(
+                with self.assertRaises(resolve_wire.Malformed):
+                    resolve_wire.build_answer(
                         query(f"a{ch}b.example", TYPE_A), self.policy)
 
     def test_an_ordinary_name_still_answers(self):
@@ -417,10 +417,10 @@ class TestUdpSurvivesABugInItself(unittest.TestCase):
 
     def _serve(self, msg=None):
         sock = _OneDatagram(msg or query("broken.example", TYPE_A))
-        counters = resolve_server.Counters()
-        with mock.patch.object(resolve_server, "build_answer",
+        counters = resolve_serve.Counters()
+        with mock.patch.object(resolve_serve, "build_answer",
                                side_effect=ZeroDivisionError("boom")):
-            resolve_server.serve_datagram(sock, _policy(), counters=counters)
+            resolve_serve.serve_datagram(sock, _policy(), counters=counters)
         return sock, counters
 
     def test_it_is_servfail_and_not_formerr(self):
@@ -449,14 +449,14 @@ class TestAResponseGetsNoReply(unittest.TestCase):
 
     def setUp(self):
         self.logged = _silenced_log()
-        self.response = dns_wire.build_answer(
+        self.response = resolve_wire.build_answer(
             query("example.com", TYPE_A), _policy())
         self.logged.clear()
 
     def test_over_udp(self):
         sock = _OneDatagram(self.response)
-        counters = resolve_server.Counters()
-        resolve_server.serve_datagram(sock, _policy(), counters=counters)
+        counters = resolve_serve.Counters()
+        resolve_serve.serve_datagram(sock, _policy(), counters=counters)
         self.assertIsNone(sock.sent)
         self.assertEqual(self.logged, [])
         self.assertEqual(counters.snapshot()["queries"]["malformed"], 1)
@@ -468,7 +468,7 @@ class TestAResponseGetsNoReply(unittest.TestCase):
         far.sendall(struct.pack("!H", len(self.response)) + self.response
                     + struct.pack("!H", len(ask)) + ask)
         far.shutdown(socket.SHUT_WR)
-        resolve_server.handle_stream(near, _policy(),
+        resolve_serve.handle_stream(near, _policy(),
                                      deadline=time.monotonic() + 2)
         replies = b""
         while chunk := far.recv(4096):
@@ -544,9 +544,9 @@ class TestNoUpstream(unittest.TestCase):
         self.assertEqual(found[0].args, [])
 
     def test_the_only_socket_call_is_address_formatting(self):
-        self.assertEqual(dns_wire.pack_address("192.0.2.1"),
+        self.assertEqual(resolve_wire.pack_address("192.0.2.1"),
                          b"\xc0\x00\x02\x01")
-        self.assertEqual(len(dns_wire.pack_address("2001:db8::1")), 16)
+        self.assertEqual(len(resolve_wire.pack_address("2001:db8::1")), 16)
 
 
 class TestOnTheWire(unittest.TestCase):
@@ -583,7 +583,7 @@ class TestOnTheWire(unittest.TestCase):
             server.bind(("127.0.0.1", 0))
             client.settimeout(5)
             client.sendto(query("example.com", TYPE_A), server.getsockname())
-            resolve_server.serve_datagram(server, self.policy)
+            resolve_serve.serve_datagram(server, self.policy)
             raw, _peer = client.recvfrom(4096)
         self.assertEqual(Reply(raw).addresses(), [ADDRESS])
 
@@ -591,7 +591,7 @@ class TestOnTheWire(unittest.TestCase):
         """RFC 7766 clients reuse the connection."""
         listener, address = self._listener()
         with socket.create_connection(address, timeout=5) as client:
-            resolve_server.serve_stream(listener, self.policy)
+            resolve_serve.serve_stream(listener, self.policy)
             replies = [self._ask(client, name)
                        for name in ("one.example", "two.example")]
         self.assertEqual([r.addresses() for r in replies],
@@ -619,9 +619,9 @@ class TestTcpDoesNotHoldTheLoop(unittest.TestCase):
         listener, address = self._listener()
         with socket.create_connection(address, timeout=5):
             started = time.monotonic()
-            resolve_server.serve_stream(listener, self.policy)
+            resolve_serve.serve_stream(listener, self.policy)
             self.assertLess(time.monotonic() - started,
-                            resolve_server.TCP_IDLE_TIMEOUT / 2)
+                            resolve_serve.TCP_IDLE_TIMEOUT / 2)
 
     def test_a_dribbling_peer_is_ended_by_the_lifetime(self):
         """A length prefix promising more than will arrive. The deadline is
@@ -631,7 +631,7 @@ class TestTcpDoesNotHoldTheLoop(unittest.TestCase):
         payload = query("example.com", TYPE_A)
         far.sendall(struct.pack("!H", len(payload) + 64) + payload)
         started = time.monotonic()
-        resolve_server.handle_stream(near, self.policy,
+        resolve_serve.handle_stream(near, self.policy,
                                      deadline=time.monotonic() + 0.3)
         elapsed = time.monotonic() - started
         self.assertLess(elapsed, 5.0)
@@ -642,19 +642,19 @@ class TestTcpDoesNotHoldTheLoop(unittest.TestCase):
         self.addCleanup(far.close)
         payload = query("example.com", TYPE_A)
         far.sendall((struct.pack("!H", len(payload)) + payload) * 50)
-        resolve_server.handle_stream(near, self.policy,
+        resolve_serve.handle_stream(near, self.policy,
                                      deadline=time.monotonic() + 0.3)
         self.assertTrue(far.recv(2))
 
     def test_connections_past_the_ceiling_are_closed_not_queued(self):
         listener, address = self._listener()
-        slots = resolve_server._TcpSlots(limit=1)
+        slots = resolve_serve._TcpSlots(limit=1)
         clients = []
         for _ in range(2):
             client = socket.create_connection(address, timeout=5)
             self.addCleanup(client.close)
             clients.append(client)
-            resolve_server.serve_stream(listener, self.policy, slots=slots)
+            resolve_serve.serve_stream(listener, self.policy, slots=slots)
         payload = query("example.com", TYPE_A)
         clients[1].sendall(struct.pack("!H", len(payload)) + payload)
         self.assertEqual(clients[1].recv(4096), b"")
@@ -664,10 +664,10 @@ class TestTcpDoesNotHoldTheLoop(unittest.TestCase):
 
     def test_a_finished_connection_gives_its_slot_back(self):
         listener, address = self._listener()
-        slots = resolve_server._TcpSlots(limit=1)
+        slots = resolve_serve._TcpSlots(limit=1)
         for _ in range(3):
             with socket.create_connection(address, timeout=5) as client:
-                resolve_server.serve_stream(listener, self.policy,
+                resolve_serve.serve_stream(listener, self.policy,
                                             slots=slots)
                 self.assertEqual(
                     TestOnTheWire._ask(client, "example.com").addresses(),
@@ -681,7 +681,7 @@ class TestTcpDoesNotHoldTheLoop(unittest.TestCase):
                 self.fail("the slot was never given back")
 
     def test_counters_are_taken_under_a_lock(self):
-        counters = resolve_server.Counters()
+        counters = resolve_serve.Counters()
         errors = []
 
         def hammer():
@@ -758,8 +758,8 @@ class TestFuzz(unittest.TestCase):
         for _ in range(self.ITERATIONS):
             data = self._mutate(rng, corpus)
             try:
-                reply = dns_wire.build_answer(data, self.policy)
-            except (dns_wire.Malformed, dns_wire.NotAQuery):
+                reply = resolve_wire.build_answer(data, self.policy)
+            except (resolve_wire.Malformed, resolve_wire.NotAQuery):
                 continue
             except Exception as exc:  # noqa: BLE001
                 self.fail(f"{type(exc).__name__}: {exc} on {data.hex()}")
@@ -767,7 +767,7 @@ class TestFuzz(unittest.TestCase):
             self.assertTrue(struct.unpack("!H", reply[2:4])[0] & 0x8000,
                             data.hex())
             self.assertEqual(reply[:2], data[:2], data.hex())
-            self.assertLessEqual(len(reply), dns_wire.UDP_BUDGET,
+            self.assertLessEqual(len(reply), resolve_wire.UDP_BUDGET,
                                  data.hex())
 
 
@@ -779,10 +779,10 @@ class TestCounters(unittest.TestCase):
         self.logged = _silenced_log()
         self.policy = _policy(admits=_admits("allowed.example",
                                              "*.ok.example"))
-        self.counters = resolve_server.Counters()
+        self.counters = resolve_serve.Counters()
 
     def answer(self, *args, **kwargs):
-        return dns_wire.build_answer(query(*args, **kwargs), self.policy,
+        return resolve_wire.build_answer(query(*args, **kwargs), self.policy,
                                      counters=self.counters)
 
     def test_a_query_for_an_unlisted_name_is_counted_as_unlisted(self):
@@ -820,7 +820,7 @@ class TestCounters(unittest.TestCase):
 
     def test_an_aaaa_with_no_v6_address_is_nodata(self):
         policy = _policy(address6=None, admits=_admits("allowed.example"))
-        dns_wire.build_answer(query("allowed.example", TYPE_AAAA), policy,
+        resolve_wire.build_answer(query("allowed.example", TYPE_AAAA), policy,
                               counters=self.counters)
         snap = self.counters.snapshot()
         self.assertEqual(snap["queries"], {"synthesised": 0, "nodata": 1,
@@ -835,7 +835,7 @@ class TestCounters(unittest.TestCase):
 
     def test_counters_are_optional_and_the_bytes_do_not_change(self):
         self.assertEqual(self.answer("allowed.example", TYPE_A),
-                         dns_wire.build_answer(query("allowed.example",
+                         resolve_wire.build_answer(query("allowed.example",
                                                      TYPE_A), self.policy))
 
     def test_the_names_are_logged_with_their_type(self):
@@ -855,22 +855,22 @@ class TestStatusFile(unittest.TestCase):
         self.path = os.path.join(self.dir, "resolve-status.json")
 
     def test_it_writes_the_counters(self):
-        counters = resolve_server.Counters()
+        counters = resolve_serve.Counters()
         counters.record_answer("a.example", 1, True)
-        resolve_server.emit_status(self.path, counters)
+        resolve_serve.emit_status(self.path, counters)
         doc = json.loads(Path(self.path).read_text())
         self.assertEqual(doc["queries"]["synthesised"], 1)
         self.assertIn("written_at", doc)
 
     def test_an_unwritable_path_never_takes_the_responder_down(self):
-        resolve_server.emit_status(
+        resolve_serve.emit_status(
             os.path.join(self.dir, "no", "such", "s.json"),
-            resolve_server.Counters())
+            resolve_serve.Counters())
 
     def test_an_unserialisable_counter_never_takes_the_responder_down(self):
-        counters = resolve_server.Counters()
+        counters = resolve_serve.Counters()
         counters.snapshot = lambda: {"later": object()}
-        resolve_server.emit_status(self.path, counters)
+        resolve_serve.emit_status(self.path, counters)
         self.assertFalse(Path(self.path).exists())
 
     def test_the_loop_writes_before_the_first_query(self):
@@ -882,7 +882,7 @@ class TestStatusFile(unittest.TestCase):
             seen.append(Path(self.path).exists())
             return True
 
-        resolve_server.serve([], _policy(), resolve_server.Counters(),
+        resolve_serve.serve([], _policy(), resolve_serve.Counters(),
                              self.path, stop=stop)
         self.assertEqual(seen, [True])
 

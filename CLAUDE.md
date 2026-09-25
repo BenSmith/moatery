@@ -24,8 +24,8 @@ copy (2026-09-24) of workloadctl's:
   libexec/workload-inspect-listener   # → customs-inspect
   libexec/workload-vm-resolve         # → customs-resolve
   lib/                                # the 24-module closure
-  lib/dns_wire.py lib/resolve_server.py  # the responder, less its
-                                         # static map
+  lib/dns_wire.py                     # → resolve_wire.py  } less the
+  lib/resolve_server.py               # → resolve_serve.py } static map
   tests/test_vm_resolve.py            # → tests/test_resolve.py
   tests/test_broker_closure.py        # holds the broker closure
   tests/test_inspector_closure.py     # holds the inspector closure
@@ -48,18 +48,19 @@ fix that matters to both goes to both. At the release the copy there is
 deleted.
 
 The prose is renamed: nothing under `lib/` or `libexec/` says
-"workloadctl", cites its docs, uses its vocabulary (renderer, `validate`,
-substrate, SELinux labelling) or narrates history. Module names and
-every identifier workloadctl imports are unchanged (`docs/EXTRACTION.md`
-lists them). "Guest" and "workload" remain as the words for the thing
-behind the inspector. Diffing against workloadctl is a diff of prose and
-messages, the two entrypoints' names, the `http2` list (customs relays
-no HTTP/2 and refuses the list), and the shape-1b and 1n flags:
-the broker's `--listen unix:PATH` (`UnixServer`, `peer_uid_unix`), the
-inspector's `--broker unix:PATH`, `--caller-uid` and `--netns-pid`
-(`listed_in`, `netns_tables`, the lookup's tables as a parameter), and
-the record naming a unix upstream. Fixes are mirrored to workloadctl on a branch;
-the flags reach it with the dependency, not by mirror.
+"workloadctl", cites its docs, uses its vocabulary (renderer,
+`validate`, substrate, SELinux labelling) or narrates history. Module
+names, but the responder's two, and every identifier workloadctl imports
+are unchanged (`docs/EXTRACTION.md` lists them). "Guest" and "workload"
+remain as the words for the thing behind the inspector. Diffing against
+workloadctl is a diff of prose and messages, the two entrypoints' names,
+the `http2` list (customs relays no HTTP/2 and refuses the list), and
+the shape-1b and 1n flags: the broker's `--listen unix:PATH`
+(`UnixServer`, `peer_uid_unix`), the inspector's `--broker unix:PATH`,
+`--caller-uid` and `--netns-pid` (`listed_in`, `netns_tables`, the
+lookup's tables as a parameter), and the record naming a unix upstream.
+Fixes are mirrored to workloadctl on a branch; the flags reach it with
+the dependency, not by mirror.
 
 `libexec/customs-netns-listen` is customs-only too: it binds the
 inspector's planes in a rootless container's network namespace and execs
@@ -76,8 +77,10 @@ It is customs-only and has no workloadctl counterpart.
 `libexec/customs-resolve` is workloadctl's VM responder made a program
 of its own: every name answered with `--address`, counted against the
 inspector's policy, never forwarded. `lib/resolve_policy.py` is
-customs'; `dns_wire` and `resolve_server` are workloadctl's less the
-static map. A fix to the wire parser or the serve loop that applies to
+customs'; `resolve_wire` and `resolve_serve` are workloadctl's
+`dns_wire` and `resolve_server` less the static map, named apart because
+workloadctl keeps its pair and, after the switch, has both directories
+on its path. A fix to the wire parser or the serve loop that applies to
 workloadctl's is mirrored.
 
 ## Conventions carried over from workloadctl

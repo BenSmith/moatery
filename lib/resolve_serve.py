@@ -12,7 +12,8 @@ import struct
 import threading
 import time
 
-from dns_wire import (
+from egress_status import STATUS_TOP_N, BoundedCounts, write_status
+from resolve_wire import (
     RCODE_FORMERR,
     RCODE_SERVFAIL,
     TCP_MAX,
@@ -23,7 +24,6 @@ from dns_wire import (
     error_response,
     log,
 )
-from egress_status import STATUS_TOP_N, BoundedCounts, write_status
 
 # How long a TCP peer may hold a connection with nothing on it. Clients
 # reuse connections (RFC 7766), but an idle one must not pin a slot.
