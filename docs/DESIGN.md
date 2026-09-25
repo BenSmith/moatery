@@ -354,13 +354,18 @@ namespace.
 **The caller check.** The caller's socket is in the container's table,
 not the host's. `--netns-pid PID` points the inspector's lookups at
 `/proc/PID/net/tcp` and `tcp6`. The uid there is the host's view of it:
-container root is the user, so the default (the inspector's own uid)
-serves a workload running as root, and a workload running as another
-uid inside is one of the user's subuids outside, which `--caller-uid`
-names. At start the inspector checks that every listener it was handed
-has a row in the table its lookups read, and refuses to start otherwise.
-Started without `--netns-pid`, it would look every caller up in the
-host's table, find none, and admit them all unnamed.
+container root is the user, and every other uid inside is one of the
+user's subuids. With `--netns-pid` the inspector serves all of them,
+every uid PID's user namespace maps, read from its `uid_map` at start
+and logged as `callers served:`. The listeners are on the namespace's
+loopback, so nothing outside it can reach them, and every caller is the
+workload: its user, root under sudo, a service's own uid. `--caller-uid`
+narrows that to one uid; a namespace that maps every uid is refused,
+since serving it would serve anyone. At start the inspector also checks
+that every listener it was handed has a row in the table its lookups
+read, and refuses to start otherwise. Started without `--netns-pid`, it
+would look every caller up in the host's table, find none, and admit
+them all unnamed.
 
 ```
 # 1–2. as shape 1: CA + bundle + policy.json; the broker's user unit

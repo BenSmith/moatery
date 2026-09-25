@@ -432,6 +432,34 @@ class TestUnmappableUids(unittest.TestCase):
         self.assertFalse(hasattr(peer_identity, "workload_name"))
 
 
+class TestNamespaceUids(unittest.TestCase):
+    """The uids of another process's user namespace, in the numbering the
+    socket tables report to this one."""
+
+    def test_this_namespace_is_read_in_its_own_numbering(self):
+        with open("/proc/self/uid_map") as f:
+            expected = peer_identity.userns_ranges(f.read())
+        self.assertEqual(peer_identity.namespace_uids(os.getpid()), expected)
+
+    def test_another_namespace_is_read_in_this_ones(self):
+        """From outside, the second column is the reader's numbering: a
+        rootless container's root is the user's uid here, not 0, and its
+        subuids are the range far above it."""
+        stats = iter([os.stat_result((0,) * 10),
+                      os.stat_result((0, 1) + (0,) * 8)])
+        with mock.patch.object(peer_identity.os, "stat",
+                               side_effect=lambda path: next(stats)), \
+                mock.patch.object(peer_identity.Path, "read_text",
+                                  return_value=ROOTLESS_NS):
+            self.assertEqual(peer_identity.namespace_uids(4242),
+                             [(1000, 1), (524288, 65536)])
+
+    def test_an_unreadable_namespace_is_none(self):
+        with mock.patch.object(peer_identity.Path, "read_text",
+                               side_effect=FileNotFoundError):
+            self.assertIsNone(peer_identity.namespace_uids(4242))
+
+
 class TestIdentifyRefusals(unittest.TestCase):
     """Nothing rescues a caller the table does not name.
 

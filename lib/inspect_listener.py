@@ -35,7 +35,7 @@ import inspect_http
 import inspect_tls
 from inspect_scope import Inspection
 from peer_identity import (
-    PROC_NET_TCP, local_endpoints, peer_caller, peer_closed,
+    PROC_NET_TCP, in_ranges, local_endpoints, peer_caller, peer_closed,
 )
 
 
@@ -107,7 +107,7 @@ class Listener:
 
     def __init__(self, sockets, out=None, limit=MAX_CONNECTIONS, policy=None,
                  status_path=None, minter=None, record_path=None,
-                 broker_endpoint=None, caller_uid=None,
+                 broker_endpoint=None, caller_uid=None, caller_ranges=None,
                  peer_tables=PROC_NET_TCP):
         self._sockets = list(sockets)
         self._ceiling = Ceiling(limit)
@@ -116,6 +116,11 @@ class Listener:
         # The one uid served, or None for this process's own. A sidecar's
         # workload is another uid by design.
         self._caller_uid = caller_uid
+        # Or every uid of the workload's user namespace, as (start, count):
+        # listeners bound in its network namespace are reachable from
+        # nowhere else.
+        self._caller_ranges = (None if caller_ranges is None
+                               else tuple(caller_ranges))
         # The socket tables callers are looked up in: this process's own
         # namespace's, or the one the listeners were bound in.
         self._peer_tables = tuple(peer_tables)
@@ -267,8 +272,7 @@ class Listener:
             self.inspection.drop(where, DROP_CALLER_CLOSED, verb="rejected")
             conn.close()
             return False
-        own = os.getuid() if self._caller_uid is None else self._caller_uid
-        if caller is not None and caller != own:
+        if caller is not None and not self._serves(caller):
             self.inspection.drop(where, DROP_FOREIGN_CALLER, verb="rejected",
                                  caller_uid=caller)
             conn.close()
@@ -279,6 +283,12 @@ class Listener:
         if caller is None:
             self.inspection.counters.record_caller_unresolved()
         return True
+
+    def _serves(self, uid):
+        if self._caller_ranges is not None:
+            return in_ranges(uid, self._caller_ranges)
+        own = os.getuid() if self._caller_uid is None else self._caller_uid
+        return uid == own
 
     def _serve(self, conn, where, plane):
         try:

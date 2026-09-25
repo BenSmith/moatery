@@ -531,7 +531,7 @@ def probe(pid, dns, secret, over_tcp):
     riglib.origin_rows(secret)
 
     say("counters (waiting for the inspector's next status write)")
-    status = riglib.await_status(STATUS.read_text, after=probe_started)
+    status = riglib.await_status(STATUS.read_text, after=time.time())
     if status is None:
         row("counters: the inspector wrote its status", False,
             f"{STATUS} not updated within 40 s")
@@ -558,11 +558,8 @@ def teardown(keep):
 
 # --- main --------------------------------------------------------------------
 
-probe_started = 0.0
-
 
 def main():
-    global probe_started
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--keep", action="store_true",
                     help="leave the container for inspection")
@@ -617,7 +614,6 @@ def main():
             load_rules(pid, not args.without_neighbour_discovery,
                        not args.without_dns_redirect)
         run(["podman", "start", CONTAINER])
-        probe_started = time.time()
         probe(pid, dns, secret, args.broker_over_tcp)
     finally:
         teardown(args.keep)

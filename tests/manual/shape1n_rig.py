@@ -42,6 +42,9 @@ THE ROWS
             credential. The provider is on the host's 127.0.0.1, which the
             container cannot reach, so the 200 is also the observation that
             the inspector's upstream dial left from the host's namespace.
+  another   a request from another uid inside the container, a subuid
+  uid       outside, is served too: the inspector serves every uid of the
+            container's user namespace, which is how sudo inside works.
   broker    the broker holds no TCP socket; the container has no path to
             its socket.
   unlisted  from inside, a host the policy does not name is refused by the
@@ -313,6 +316,9 @@ else:
 
 # Not port 53, which the redirect takes.
 FILTERED_UDP = ("192.0.2.1", 9)
+# A uid inside the container that is not root, the user outside.
+OTHER_UID = 65534
+
 # HTTP/3's port: dropped like port 9, and counted as `quic` first.
 QUIC_UDP = ("192.0.2.1", 443)
 
@@ -451,6 +457,18 @@ def probe(pid, dns, secret):
         hit is not None,
         f"{hit}" if hit else f"records for {PROVIDER}: {forwarded}")
 
+    say("another uid")
+    sub = run(["podman", "exec", "--user", str(OTHER_UID), CONTAINER,
+               "curl", "-s", "-S", "--max-time", "15",
+               "--cacert", CA_BUNDLE_IN_CONTAINER, "-o", "/dev/null",
+               "-w", "%{http_code}",
+               "-H", f"Authorization: Bearer {PLACEHOLDER}",
+               f"https://{PROVIDER}/v1/probe"], check=False, timeout=30)
+    row(f"another uid: uid {OTHER_UID} inside is served too",
+        sub.returncode == 0 and sub.stdout.strip() == "200",
+        f"curl rc={sub.returncode} http={sub.stdout.strip()} "
+        f"{sub.stderr.strip()}")
+
     say("broker")
     bpid = run(["systemctl", "--user", "show", "-p", "MainPID", "--value",
                 f"{UNIT}-broker.service"]).stdout.strip()
@@ -477,7 +495,7 @@ def probe(pid, dns, secret):
     riglib.origin_rows(secret)
 
     say("counters (waiting for the inspector's next status write)")
-    status = riglib.await_status(STATUS.read_text, after=probe_started)
+    status = riglib.await_status(STATUS.read_text, after=time.time())
     if status is None:
         row("counters: the inspector wrote its status", False,
             f"{STATUS} not updated within 40 s")
@@ -504,11 +522,8 @@ def teardown(keep):
 
 # --- main --------------------------------------------------------------------
 
-probe_started = 0.0
-
 
 def main():
-    global probe_started
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--keep", action="store_true",
                     help="leave the container for inspection")
@@ -559,7 +574,6 @@ def main():
         start_inspector(pid, not args.without_netns_pid)
         start_responder(pid)
         run(["podman", "start", CONTAINER])
-        probe_started = time.time()
         probe(pid, dns, secret)
     finally:
         teardown(args.keep)

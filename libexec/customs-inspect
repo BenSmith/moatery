@@ -12,6 +12,11 @@ the unit writes; nothing is derived. tests/test_closure.py holds that line.
 It serves one uid: its own, or --caller-uid's in a sidecar, where the
 workload is another uid by design. A uid this namespace cannot represent is
 refused at start, since every connection would read as the overflow uid.
+With --netns-pid and no --caller-uid it serves every uid of that process's
+user namespace: listeners bound in the workload's network namespace are
+reachable from nowhere else, so every caller is the workload, sudo
+included. A namespace that maps every uid is refused, since that serves
+anyone.
 
 The policy is read once, here; one that cannot be read fails the start.
 
@@ -37,7 +42,7 @@ sys.dont_write_bytecode = True
 from inspect_policy import load_policy
 from inspect_listener import Listener, build_minter
 from peer_identity import (
-    PROC_NET_TCP, listed_in, netns_tables, unmappable_uids)
+    PROC_NET_TCP, listed_in, namespace_uids, netns_tables, unmappable_uids)
 from sd_listen import NotSocketActivated
 from sd_listen import (
     inherited_listening_sockets as sd_inherited_listening_sockets)
@@ -120,13 +125,28 @@ def parse_args(argv):
     parser.add_argument("--caller-uid", type=int, default=None,
                         metavar="UID",
                         help="the one uid whose connections are served; "
-                             "absent means this process's own")
+                             "absent means this process's own, or with "
+                             "--netns-pid every uid of that process's user "
+                             "namespace")
     parser.add_argument("--netns-pid", type=int, default=None,
                         metavar="PID",
                         help="the process whose network namespace the "
                              "listeners were bound in; callers are looked "
                              "up in its socket table")
     return parser.parse_args(argv[1:])
+
+
+def spans(ranges):
+    """(start, count) ranges as "1000, 524288-589823", adjacent ones
+    joined."""
+    merged = []
+    for start, count in sorted(ranges):
+        if merged and merged[-1][1] == start:
+            merged[-1][1] = start + count
+        else:
+            merged.append([start, start + count])
+    return ", ".join(str(a) if b - a == 1 else f"{a}-{b - 1}"
+                     for a, b in merged)
 
 
 def main(argv=None):
@@ -152,6 +172,23 @@ def main(argv=None):
             print(f"error: this user namespace cannot represent uid "
                   f"{args.caller_uid} ({name}); every connection would be "
                   "refused as foreign", file=sys.stderr)
+            return 1
+    caller_ranges = None
+    if args.caller_uid is None and args.netns_pid is not None:
+        caller_ranges = namespace_uids(args.netns_pid)
+        if caller_ranges is None:
+            print(f"error: cannot read the user namespace of pid "
+                  f"{args.netns_pid}; caller identification needs it",
+                  file=sys.stderr)
+            return 1
+        if not caller_ranges or any(
+                start == 0 and count >= 0xFFFFFFFF
+                for start, count in caller_ranges):
+            print(f"error: pid {args.netns_pid}'s user namespace maps "
+                  f"{'no' if not caller_ranges else 'every'} uid, so "
+                  f"serving its uids would serve "
+                  f"{'no one' if not caller_ranges else 'anyone'}; name "
+                  f"the uid served with --caller-uid", file=sys.stderr)
             return 1
     try:
         policy = load_policy(policy_path)
@@ -194,8 +231,11 @@ def main(argv=None):
                         record_path=args.record,
                         broker_endpoint=args.broker,
                         caller_uid=args.caller_uid,
+                        caller_ranges=caller_ranges,
                         peer_tables=tables)
     print(f"policy loaded from {policy_path}: {policy.summary}", flush=True)
+    if caller_ranges is not None:
+        print(f"callers served: uids {spans(caller_ranges)}", flush=True)
     signal.signal(signal.SIGTERM, lambda *_args: listener.stop())
     # logrotate renames the file and HUPs; the handler only sets a flag (see
     # RequestLog.reopen).

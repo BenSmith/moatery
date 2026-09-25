@@ -59,8 +59,9 @@ workloadctl is a diff of prose and messages, the two entrypoints' names,
 the `http2` list (customs relays no HTTP/2 and refuses the list), and
 the shape-1b and 1n flags: the broker's `--listen unix:PATH`
 (`UnixServer`, `peer_uid_unix`), the inspector's `--broker unix:PATH`,
-`--caller-uid` and `--netns-pid` (`listed_in`, `netns_tables`, the
-lookup's tables as a parameter), and the record naming a unix upstream.
+`--caller-uid` and `--netns-pid` (`listed_in`, `netns_tables`,
+`namespace_uids`, the lookup's tables and the served uid ranges as
+parameters), and the record naming a unix upstream.
 Fixes are mirrored to workloadctl on a branch; the flags reach it with
 the dependency, not by mirror.
 
@@ -138,7 +139,7 @@ a document workloadctl writes.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 786)
+just test     # all unit tests (unittest discover; 794)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user

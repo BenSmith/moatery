@@ -1605,10 +1605,60 @@ class TestEntrypointWiring(unittest.TestCase):
         pid = os.getpid()
         rc, listener, err = self._started(
             ["--netns-pid", str(pid)],
-            inherited_listening_sockets=lambda: [sock])
+            inherited_listening_sockets=lambda: [sock],
+            namespace_uids=lambda pid: [(524288, 65536)])
         self.assertEqual(rc, 0, err)
         self.assertEqual(listener._peer_tables,
                          peer_identity.netns_tables(pid))
+
+    def test_the_netns_pid_serves_its_namespaces_uids(self):
+        """Listeners in the workload's network namespace are reachable only
+        from it, so its whole uid range is the workload: its user, and root
+        under sudo, which is another uid on the host. The ranges handed on
+        are the ones read for that pid."""
+        sock = self._bound()
+        asked = []
+        ranges = [(524288, 1000), (1000, 1), (525289, 64536)]
+        rc, listener, err = self._started(
+            ["--netns-pid", "4242"],
+            inherited_listening_sockets=lambda: [sock],
+            listed_in=lambda s, tables: True,
+            namespace_uids=lambda pid: asked.append(pid) or ranges)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(asked, [4242])
+        self.assertEqual(listener._caller_ranges, tuple(ranges))
+
+    def test_the_served_uids_are_logged_with_adjacent_ranges_joined(self):
+        mod = _mod()
+        self.assertEqual(
+            mod.spans([(525288, 64536), (1000, 1), (524288, 1000)]),
+            "1000, 524288-589823")
+        self.assertEqual(mod.spans([(0, 1), (2, 3)]), "0, 2-4")
+
+    def test_a_told_caller_uid_is_served_alone_under_netns_pid(self):
+        sock = self._bound()
+        rc, listener, err = self._started(
+            ["--netns-pid", "4242", "--caller-uid", "10007"],
+            inherited_listening_sockets=lambda: [sock],
+            listed_in=lambda s, tables: True,
+            namespace_uids=lambda pid: self.fail("the map was read"))
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(listener._caller_ranges)
+        self.assertEqual(listener._caller_uid, 10007)
+
+    def test_a_namespace_that_cannot_bound_the_uids_refuses_to_start(self):
+        """Unreadable, empty, or mapping every uid: none of them names the
+        workload, and the last would serve anyone at all."""
+        for ranges, said in ((None, "cannot read"),
+                             ([], "maps no uid"),
+                             ([(0, 4294967295)], "maps every uid")):
+            with self.subTest(said=said):
+                rc, listener, err = self._started(
+                    ["--netns-pid", "4242"],
+                    namespace_uids=lambda pid, r=ranges: r)
+                self.assertEqual(rc, 1)
+                self.assertIsNone(listener)
+                self.assertIn(said, err)
 
     def test_a_listener_the_lookups_cannot_see_refuses_to_start(self):
         """Bound in a container's namespace and started without
@@ -1623,7 +1673,8 @@ class TestEntrypointWiring(unittest.TestCase):
         self.assertIn("--netns-pid left out", err)
         rc, listener, err = self._started(
             ["--netns-pid", "4242"], inherited_listening_sockets=lambda: [sock],
-            listed_in=lambda s, tables: None)
+            listed_in=lambda s, tables: None,
+            namespace_uids=lambda pid: [(524288, 65536)])
         self.assertEqual(rc, 1)
         self.assertIsNone(listener)
         self.assertIn("pid 4242", err)
@@ -4429,13 +4480,14 @@ class TestCallerIdentity(unittest.TestCase):
     OWN_UID = 10007
 
     def _handled(self, mod, caller_uid, own_uid=OWN_UID, told=None,
-                 orphaned=False, closed=False):
+                 orphaned=False, closed=False, ranges=None):
         """Drive one connection with the caller lookup answering `caller_uid`,
         in a listener running as `own_uid` and told to serve `told`, over a
         connection the caller has `closed` or not."""
         local = ("198.18.0.1", CLEARTEXT.inspect_port)
         out = io.StringIO()
-        listener = Listener([_listener_with(local)], out, caller_uid=told)
+        listener = Listener([_listener_with(local)], out, caller_uid=told,
+                            caller_ranges=ranges)
         conn = _mock_conn()
         with unittest.mock.patch("os.getuid", return_value=own_uid), \
                 unittest.mock.patch.object(inspect_listener, "peer_caller",
@@ -4478,6 +4530,26 @@ class TestCallerIdentity(unittest.TestCase):
         self.assertIn(DROP_FOREIGN_CALLER, log)
         self.assertIn(f"caller_uid={self.OWN_UID}", log)
         conn.close.assert_called()
+
+    def test_every_uid_of_the_namespace_is_served_and_no_other(self):
+        """The netns placement: container root, the user and a subuid are
+        all the workload; the edges of each range are exact, and the
+        listener's own uid is served only if a range holds it."""
+        mod = _mod()
+        ranges = ((524288, 1000), (self.OWN_UID, 1), (600000, 10))
+        for uid in (524288, 525287, self.OWN_UID, 600000, 600009):
+            with self.subTest(served=uid):
+                _listener, _conn, log = self._handled(mod, uid, ranges=ranges)
+                self.assertNotIn(DROP_FOREIGN_CALLER, log)
+        for uid in (0, 524287, 525288, self.OWN_UID + 1, 600010):
+            with self.subTest(refused=uid):
+                _listener, conn, log = self._handled(mod, uid, ranges=ranges)
+                self.assertIn(DROP_FOREIGN_CALLER, log)
+                self.assertIn(f"caller_uid={uid}", log)
+                conn.close.assert_called()
+        _listener, _conn, log = self._handled(mod, self.OWN_UID,
+                                              ranges=((524288, 1000),))
+        self.assertIn(DROP_FOREIGN_CALLER, log)
 
     def test_root_is_refused_even_though_nftables_exempts_it(self):
         """The nft guard exempts `meta skuid != 0` so a host-wide drop does not

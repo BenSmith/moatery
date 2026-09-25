@@ -223,6 +223,38 @@ def userns_ranges(uid_map):
     return ranges
 
 
+def namespace_uids(pid):
+    """The uids of `pid`'s user namespace as (start, count) ranges, in this
+    process's numbering, which is how the socket tables report them; None
+    if the map cannot be read.
+
+    Read from another namespace, uid_map's second column is already in the
+    reader's; read from the same one, the first column is.
+    """
+    try:
+        uid_map = Path(f"/proc/{pid}/uid_map").read_text()
+        ours = os.stat("/proc/self/ns/user")
+        theirs = os.stat(f"/proc/{pid}/ns/user")
+    except OSError:
+        return None
+    if (ours.st_dev, ours.st_ino) == (theirs.st_dev, theirs.st_ino):
+        return userns_ranges(uid_map)
+    ranges = []
+    for line in uid_map.splitlines():
+        f = line.split()
+        if len(f) != 3:
+            continue
+        try:
+            ranges.append((int(f[1]), int(f[2])))
+        except ValueError:
+            continue
+    return ranges
+
+
+def in_ranges(uid, ranges):
+    return any(start <= uid < start + count for start, count in ranges)
+
+
 def userns_maps_everything(uid_map):
     """Whether this is an unrestricted namespace -- the initial one, in
     practice."""
@@ -236,9 +268,7 @@ def unmappable_uids(uids, uid_map):
     map the whole workload range.
     """
     ranges = userns_ranges(uid_map)
-    return [uid for uid in uids
-            if not any(start <= uid < start + count
-                       for start, count in ranges)]
+    return [uid for uid in uids if not in_ranges(uid, ranges)]
 
 
 def overflow_uid():

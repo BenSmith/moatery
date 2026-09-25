@@ -629,7 +629,7 @@ def probe(sidecar_pid, workload_pid, secret, dns):
     say("counters (waiting for the inspector's next status write)")
     status = riglib.await_status(
         lambda: sidecar_file(f"{STATE_IN_SIDECAR}/status.json"),
-        after=probe_started)
+        after=time.time())
     if status is None:
         row("counters: the inspector wrote its status", False,
             "status.json not updated within 40 s")
@@ -714,11 +714,8 @@ def teardown(keep):
 
 # --- main --------------------------------------------------------------------
 
-probe_started = 0.0
-
 
 def main():
-    global probe_started
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--keep", action="store_true",
                     help="leave the pod, its volume and the secret")
@@ -773,7 +770,6 @@ def main():
                              not args.without_dns_redirect,
                              not args.without_private_drop)
         workload_pid = start_workload()
-        probe_started = time.time()
         probe(sidecar_pid, workload_pid, secret, dns)
         lifecycle(secret)
     finally:

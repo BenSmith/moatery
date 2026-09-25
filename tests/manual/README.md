@@ -162,14 +162,17 @@ python3 tests/manual/shape1n_rig.py --without-dns-redirect # dns red
 ```
 
 **Rows.** Shape 1's premise, DNS, silent-drop, quic, request, broker,
-unlisted, origin and counter rows, and two of its own. The inspector is
+unlisted, origin and counter rows, and three of its own. The inspector is
 up on the listeners it was handed, and their inodes are rows in the
 container's socket table and in none of the host's. Nothing listens on
 the host's `127.0.0.1` at either plane, for the user or another uid;
 the request row, which reaches the same planes from inside, is the
 control. The request's 200 is also the observation that the inspector's
 upstream dial left from the host's namespace: the stub is on the host's
-`127.0.0.1`, which the container cannot reach.
+`127.0.0.1`, which the container cannot reach. A request from another
+uid inside the container (65534, a subuid outside) is served too: the
+inspector serves every uid of the container's user namespace, which is
+what sudo inside needs.
 
 `--without-netns-pid` starts the inspector without the flag. It must
 refuse to start, since its lookups would read the host's table, which
