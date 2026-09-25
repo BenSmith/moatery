@@ -31,13 +31,16 @@ in the units, `~/.local/state` is `%S`, and `~/.local/state/log` is `%L`.
 
 ## Once
 
-The policy (see [POLICY.md](../docs/POLICY.md)):
+The policy (see [POLICY.md](../docs/POLICY.md)). The brokered entry names
+the endpoints the workload calls: without `paths`, any endpoint that
+echoes a request's headers hands the guest the key.
 
 ```
 mkdir -p ~/.config/customs
 cat > ~/.config/customs/policy.json <<'EOF'
 {"hosts": ["pypi.org", "files.pythonhosted.org"],
- "policy": [{"host": "api.example.com", "credential": "example"}]}
+ "policy": [{"host": "api.example.com", "methods": ["POST"],
+             "paths": ["/v1/messages"], "credential": "example"}]}
 EOF
 ```
 

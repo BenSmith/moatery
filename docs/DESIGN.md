@@ -24,8 +24,8 @@ are in [examples/](../examples/).
     "splice": [],
     "http2": [],
     "policy": [
-      {"host": "api.example.com", "methods": null, "paths": null,
-       "credential": "example"}
+      {"host": "api.example.com", "methods": ["POST"],
+       "paths": ["/v1/messages"], "credential": "example"}
     ]
   }
   ```
