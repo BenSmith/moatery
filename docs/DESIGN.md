@@ -261,6 +261,7 @@ table netdev customs {
                   nd-router-solicit } accept
     ip daddr 169.254.1.3 tcp dport { 8443, 8080, 8053 } accept
     ip daddr 169.254.1.3 udp dport 8053 accept
+    udp dport 443 counter comment "quic"
     counter comment "dropped"
   }
 }
@@ -271,6 +272,20 @@ podman start NAME
 `create → init → rules → start` closes the first-packet window: no
 workload process exists until the rules are in. Step 5 is per-start; a
 wrapper or a user unit with `ExecStartPre=` makes it persistent.
+
+The chain's counters are its only trace. `dropped` is every packet it
+dropped; `quic` counts the ones among them bound for UDP 443, which is
+HTTP/3, before they fall to the drop. A client that tries HTTP/3 and
+falls back to TCP is served on the fallback, so the counter is where the
+attempt shows. Both are read in the netns:
+
+```
+podman unshare nsenter -t PID -n nft list chain netdev customs egress
+```
+
+A `log` statement would write nothing: the kernel discards netfilter's
+log lines from any namespace but the host's unless
+`net.netfilter.nf_log_all_netns` is set, which takes the host's root.
 
 Before step 3 the CA has to exist: `customs-mint-ca --name x
 --state-dir DIR`, once, with the inspector's own `--state-dir`. It keeps
@@ -372,6 +387,7 @@ table inet customs {
 table netdev customs {
   chain egress {
     type filter hook egress device "$DEV" priority 0; policy drop
+    udp dport 443 counter comment "quic"
     counter comment "dropped"
   }
 }
@@ -504,6 +520,7 @@ table netdev customs {
     meta mark 0x1 ip daddr 169.254.1.1 udp dport 53 accept
     meta mark 0x1 ip daddr 169.254.1.1 tcp dport 53 accept
     meta mark 0x1 accept
+    udp dport 443 counter comment "quic"
     counter comment "dropped"
   }
 }

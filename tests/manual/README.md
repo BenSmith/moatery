@@ -91,7 +91,9 @@ UDP and TCP and to a nameserver that does not exist, are answered with
 the loopback map; an AAAA gets no records; the provider's name is
 answered the same; the responder's status names the unlisted names and
 not the provider's. The container has no `--add-host`, so the request
-and unlisted rows resolve through the responder too. The request (200;
+and unlisted rows resolve through the responder too. A filtered UDP
+send returns without error while the drop counter moves, and one to
+443 moves the `quic` counter too. The request (200;
 the real key arrived; the container's environment holds
 the placeholder only; the broker's journal grew by one; the record says
 `forward` under the credential). The broker's address is unreachable
@@ -159,7 +161,7 @@ python3 tests/manual/shape1n_rig.py --without-netns-pid    # inspector red
 python3 tests/manual/shape1n_rig.py --without-dns-redirect # dns red
 ```
 
-**Rows.** Shape 1's premise, DNS, silent-drop, request, broker,
+**Rows.** Shape 1's premise, DNS, silent-drop, quic, request, broker,
 unlisted, origin and counter rows, and two of its own. The inspector is
 up on the listeners it was handed, and their inodes are rows in the
 container's socket table and in none of the host's. Nothing listens on
@@ -225,8 +227,8 @@ broker and the inspector as the two image users and the responder as
 the inspector's, and the supervising pid 1 holds no capability). Shape
 1's DNS rows, answered by the sidecar's responder with the pod's
 loopback; the unlisted row resolves through it too, while the provider's
-name is in the pod's hosts file, which the sidecar's dials need. The
-request (200; the real key arrived;
+name is in the pod's hosts file, which the sidecar's dials need. Shape
+1's silent-drop and quic rows. The request (200; the real key arrived;
 the workload's environment holds the placeholder only; the broker's log
 grew by one; the record says `forward` under the credential with
 `upstream` naming the socket path). The broker's path is ENOENT from the

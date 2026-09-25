@@ -34,6 +34,9 @@ THE ROWS
             filter: an output `policy drop` fails the send with EPERM, a
             tell no real network gives. The counter proves the packet was
             dropped, not delivered.
+  quic      a UDP send to 443, HTTP/3's port, moves the egress chain's
+            `quic` counter, which the silent row's port-9 send left at
+            zero, and the drop counter with it.
   request   from inside, with the placeholder, the provider answers 200 and
             reports that the REAL key arrived; the container's environment
             holds only the placeholder; the inspector's record names the
@@ -57,10 +60,10 @@ THE ROWS
             stub distinguishes at all.
 
 `--without-rules` skips loading the netns rules and changes nothing else.
-The `premise`, `dns`, `silent`, `request`, `neighbour`, `unlisted` and
-`counters` rows must go red -- the inspector is never even activated, and
-with no egress chain the drop counter is absent -- and a run where they
-stay green is measuring nothing. `--without-dns-redirect` leaves the
+The `premise`, `dns`, `silent`, `quic`, `request`, `neighbour`,
+`unlisted` and `counters` rows must go red -- the inspector is never even
+activated, and with no egress chain the counters are absent -- and a run
+where they stay green is measuring nothing. `--without-dns-redirect` leaves the
 port-53 lines out of the redirect: the queries go to pasta's forwarder,
 which the egress chain drops, and `dns`, `request`, `neighbour`,
 `unlisted` and `counters` must go red.
@@ -313,6 +316,7 @@ table netdev customs {{
     type filter hook egress device "{dev}" priority 0; policy drop
 {nd}    ip daddr {LOOPBACK_MAP} tcp dport {ports} accept
     ip daddr {LOOPBACK_MAP} udp dport {RESOLVE_PORT} accept
+    udp dport 443 counter comment "quic"
     counter comment "dropped"
   }}
 }}
@@ -379,15 +383,17 @@ else:
 # TEST-NET-1: never routed, and named by no accept line, so a packet to it
 # falls to the egress chain's drop. Not port 53, which the redirect takes.
 FILTERED_UDP = ("192.0.2.1", 9)
+# HTTP/3's port: dropped like port 9, and counted as `quic` first.
+QUIC_UDP = ("192.0.2.1", 443)
 
 
-def dropped_counter(pid):
-    """The egress chain's drop counter, in packets, or -1 if the chain is
-    absent (as under --without-rules)."""
+def chain_counter(pid, comment):
+    """The egress chain's counter with this comment, in packets, or -1 if
+    the chain is absent (as under --without-rules)."""
     out = in_netns(pid, ["nft", "list", "chain", "netdev", "customs",
                          "egress"], check=False).stdout
     for line in out.splitlines():
-        if "packets" in line and "dropped" in line:
+        if "packets" in line and f'comment "{comment}"' in line:
             fields = line.split()
             return int(fields[fields.index("packets") + 1])
     return -1
@@ -414,10 +420,22 @@ def probe(pid, dns, secret, over_tcp):
     say("silent drop")
     sent = in_netns(pid, ["python3", "-c", UDP_SEND, FILTERED_UDP[0],
                           str(FILTERED_UDP[1])], check=False).stdout.strip()
-    moved = dropped_counter(pid)
+    moved = chain_counter(pid, "dropped")
     row("silent drop: a filtered UDP send returns rc=0, not EPERM",
         sent == "sent" and moved >= 1,
         f"send={sent!r}, dropped counter={moved}")
+
+    say("quic")
+    before = chain_counter(pid, "quic")
+    sent = in_netns(pid, ["python3", "-c", UDP_SEND, QUIC_UDP[0],
+                          str(QUIC_UDP[1])], check=False).stdout.strip()
+    counted = chain_counter(pid, "quic")
+    dropped = chain_counter(pid, "dropped")
+    row("quic: a UDP send to 443 is counted as quic, and dropped",
+        sent == "sent" and before == 0 and counted == 1
+        and dropped > moved,
+        f"send={sent!r}, quic counter {before} -> {counted}, "
+        f"dropped counter {moved} -> {dropped}")
 
     say("request")
     before = journal("broker").count(" ok ")
