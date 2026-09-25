@@ -81,6 +81,10 @@ the CA and the per-host certificates); systemd 256 or later for
 `LoadCredentialEncrypted=` in a user unit; podman with pasta for the
 container shapes.
 
+Building the RPM takes `just` and `rpmbuild` (rpm-build): `just rpm`
+builds from the checkout into `rpmbuild/RPMS/`, with the programs and
+their modules in `/usr/libexec/customs/`.
+
 ## Status
 
 Version 0.1.0, not yet released. Both programs have run end to end on a
