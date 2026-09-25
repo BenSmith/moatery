@@ -6,8 +6,8 @@
 workloads, to be lifted out of workloadctl into its own project. Read
 `README.md`, then `docs/DESIGN.md` (how the pair applies to a rootless
 container, a pod sidecar, a VM, and cosy), `docs/POLICY.md` (the policy
-document) and `docs/EXTRACTION.md` (the dependency decision, the
-identifiers workloadctl imports, and what the first release switches).
+document) and `docs/INTERFACE.md` (the names workloadctl imports and
+the status file paths it reads).
 `examples/` holds shape-1 user units and a logrotate configuration,
 installed to `/usr/libexec/customs/` and run end to end on the proving
 host.
@@ -41,17 +41,19 @@ Design, threat model and operating instructions for the pair as it exists:
   tests/manual/README.md   # "Writing a row here" preamble, before any rig
 ```
 
-The decision in `docs/EXTRACTION.md` is dependency: workloadctl will
-require customs and run its entrypoints. Until customs has a first
-release there is nothing to require, so workloadctl keeps its copy and a
-fix that matters to both goes to both. At the release the copy there is
-deleted.
+workloadctl will require customs and run its entrypoints: a
+dependency, not two copies, because under copies every shared fix is a
+merge someone must remember, and the fixes flow one way (the shapes here
+reach code paths workloadctl's layouts never do). Until customs has a
+first release there is nothing to require, so workloadctl keeps its copy
+and a fix that matters to both goes to both ("Until the first release",
+below).
 
 The prose is renamed: nothing under `lib/` or `libexec/` says
 "workloadctl", cites its docs, uses its vocabulary (renderer,
 `validate`, substrate, SELinux labelling) or narrates history. Module
 names, but the responder's two, and every identifier workloadctl imports
-are unchanged (`docs/EXTRACTION.md` lists them). "Guest" and "workload"
+are unchanged (`docs/INTERFACE.md` lists them). "Guest" and "workload"
 remain as the words for the thing behind the inspector. Diffing against
 workloadctl is a diff of prose and messages, the two entrypoints' names,
 the `http2` list (customs relays no HTTP/2 and refuses the list), and
@@ -83,6 +85,29 @@ workloadctl keeps its pair and, after the switch, has both directories
 on its path. A fix to the wire parser or the serve loop that applies to
 workloadctl's is mirrored.
 
+## Until the first release
+
+Delete this section at the switch. At the first release (a tag and the
+RPM from `just rpm`) the workloadctl copy is deleted, not maintained;
+whatever of `customs-mirror` is unmerged is superseded by the
+dependency. What the switch costs, all in the hypervisor repo:
+
+- `Requires: customs` in its spec.
+- Its units naming the two entrypoints here (or two symlinks under its
+  own libexec).
+- Its test modules that import partially from the closure importing
+  from the installed package.
+- Its two closure tests retired in favour of `test_closure.py` here.
+- Its `[[vm.network.http2]]` hosts rendered as `splice` entries: customs
+  relays no HTTP/2 and refuses an `http2` list that names a host. Its
+  `h2_unrecorded` figure retired with it.
+
+Nothing changes in customs. workloadctl's own responder,
+`workload-vm-resolve`, is not part of the switch: `customs-resolve` was
+taken from it without the static map workloadctl's VMs use to name
+non-HTTP destinations, and takes its answers as flags rather than from
+a document workloadctl writes.
+
 ## Conventions carried over from workloadctl
 
 - **Stdlib only.** No third-party imports in anything that ships. System
@@ -113,7 +138,7 @@ workloadctl's is mirrored.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 784)
+just test     # all unit tests (unittest discover; 786)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user

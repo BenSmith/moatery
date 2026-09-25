@@ -67,6 +67,8 @@ flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
   container, with the inspector's listeners on the host or in the
   container; a sidecar in a pod; a VM; a cosy container; and what the
   host has to do that customs does not (private addresses among it).
+- [docs/INTERFACE.md](docs/INTERFACE.md): what stays stable for a
+  program that imports the modules or reads the inspector's status file.
 - [examples/](examples/): user units, a logrotate configuration, and the
   one-time setup for a rootless container.
 - `customs-inspect --help`, `customs-broker --help`,
