@@ -147,7 +147,20 @@ every host.
 Nothing inside means the `Host` header too. A spliced name on a shared
 front, such as a CDN that routes by `Host`, reaches every other site behind
 that front: the guest names the allowed host in its handshake and another
-in its request. Splice only names whose servers answer for themselves.
+in its request. Splice only names whose servers answer for themselves,
+and never a wildcard over a provider's shared domain, which admits every
+customer on it.
+
+A hello carrying encrypted_client_hello (ECH) is refused on a connection
+that would be spliced, with the reason `ECH on a spliced connection`.
+ECH encrypts a second name inside the hello, and a front that supports it
+serves that one, whatever the outer name the inspector checked. A
+client's GREASE ECH is built to look the same, so both are refused. A
+Chromium-based client sends it by default and fails against a spliced
+host until it is turned off (`--disable-features=EncryptedClientHello`)
+or the host is terminated. Clients on OpenSSL (Python, Node, curl) and
+Go send none unless configured to. A terminated connection takes ECH:
+the inspector completes that handshake itself.
 
 Under `"inspect"` the workload must trust the inspector's CA before it
 first runs; see [DESIGN.md](DESIGN.md), "The same in every shape".

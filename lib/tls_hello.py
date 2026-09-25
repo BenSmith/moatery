@@ -37,8 +37,8 @@ TLS_CLIENT_HELLO = 0x01
 TLS_EXT_SERVER_NAME = 0x0000
 TLS_SNI_HOST_NAME = 0x00
 
-# RFC 9460 encrypted_client_hello, read by the ECH tripwire only; the
-# parser skips it by its length like any other extension.
+# RFC 9460 encrypted_client_hello, read by the ECH figures and the splice
+# refusal; the parser skips it by its length like any other extension.
 TLS_EXT_ECH = 0xfe0d
 
 

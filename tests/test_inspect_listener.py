@@ -61,6 +61,7 @@ from egress_record import (
     DROP_CEILING,
     DROP_CLIENT_CERT,
     DROP_CALLER_CLOSED,
+    DROP_ECH_SPLICED,
     DROP_FOREIGN_CALLER,
     DROP_MISDIRECTED,
     DROP_MISDIRECTED_LISTED,
@@ -3627,6 +3628,77 @@ class TestEchTripwire(unittest.TestCase):
         self._serve(listener, raw)
         self.assertEqual(listener.inspection.counters.ech_seen, 1)
         self.assertEqual(listener.inspection.counters.ech_alarm, 1)
+
+
+class TestEchIsNeverSpliced(unittest.TestCase):
+    """The name a splice is decided on is the hello's outer one. Under ECH
+    the front serves the name encrypted inside it, which a splice never
+    opens, so a spliced ECH hello reaches whatever that name is."""
+
+    def _serve(self, policy, payload):
+        out = io.StringIO()
+        listener = Listener([], out, policy=policy,
+                            minter=unittest.mock.Mock())
+        guest, ours = socket.socketpair()
+        self.addCleanup(guest.close)
+        self.addCleanup(ours.close)
+        guest.sendall(payload)
+        guest.shutdown(socket.SHUT_WR)
+        ours.settimeout(2.0)
+        upstream, far = socket.socketpair()
+        self.addCleanup(upstream.close)
+        self.addCleanup(far.close)
+        with unittest.mock.patch.object(
+                inspect_tls, "_serve_tls_inspect") as term, \
+                unittest.mock.patch.object(
+                    socket, "create_connection",
+                    return_value=upstream) as dial:
+            serve_tls(listener.inspection, ours, _where("tls"))
+        return listener, out.getvalue(), term, dial
+
+    def _refused(self, listener, log, term, dial, host):
+        dial.assert_not_called()
+        term.assert_not_called()
+        self.assertEqual(
+            listener.status()["drop_reasons"][DROP_ECH_SPLICED], 1)
+        self.assertIn(f"host={host}", log)
+        self.assertIn(DROP_ECH_SPLICED, log)
+
+    def test_a_per_host_splice_refuses_it_before_the_dial(self):
+        policy = Policy(tls="inspect", hosts=("cdn.example",),
+                        splice=("cdn.example",))
+        self._refused(*self._serve(policy, _hello_bytes(
+            _ech_extension(), server_name="cdn.example")), "cdn.example")
+
+    def test_the_whole_workload_splice_refuses_it(self):
+        policy = Policy(tls="splice", hosts=("cdn.example",))
+        self._refused(*self._serve(policy, _hello_bytes(
+            _ech_extension(), server_name="cdn.example")), "cdn.example")
+
+    def test_the_captured_ech_hello_is_refused(self):
+        raw = (ROOT / "tests" / "fixtures" / "ech-clienthello.bin").read_bytes()
+        policy = Policy(tls="splice", hosts=("cloudflare-ech.com",))
+        self._refused(*self._serve(policy, raw), "cloudflare-ech.com")
+
+    def test_a_hello_without_it_is_still_spliced(self):
+        policy = Policy(tls="inspect", hosts=("cdn.example",),
+                        splice=("cdn.example",))
+        listener, _, term, dial = self._serve(policy, _hello_bytes(
+            _grease_extension(), server_name="cdn.example"))
+        dial.assert_called_once()
+        term.assert_not_called()
+        self.assertEqual(
+            listener.status()["drop_reasons"][DROP_ECH_SPLICED], 0)
+
+    def test_a_terminated_host_takes_it(self):
+        """Terminated, this process completes the handshake itself, and the
+        request inside names its host in the clear."""
+        policy = Policy(tls="inspect", hosts=("a.example",))
+        listener, _, term, dial = self._serve(policy, _hello_bytes(
+            _ech_extension(), server_name="a.example"))
+        term.assert_called_once()
+        self.assertEqual(
+            listener.status()["drop_reasons"][DROP_ECH_SPLICED], 0)
 
 
 # The reason argument of a refusal: Inspection.drop's second.

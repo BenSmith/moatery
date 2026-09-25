@@ -22,7 +22,7 @@ from egress_ca import LeafRefused
 from egress_mint import MintFailed, MintThrottled
 from egress_plane import TLS
 from egress_record import (
-    DROP_MINT_FAILED, DROP_NOT_ALLOWLISTED, DROP_NOT_HTTP,
+    DROP_ECH_SPLICED, DROP_MINT_FAILED, DROP_NOT_ALLOWLISTED, DROP_NOT_HTTP,
     DROP_NOT_HTTP_POLICY, DROP_NO_NAME, DROP_RELAY_FAILED, DROP_THROTTLED,
     Record,
 )
@@ -34,7 +34,7 @@ from http_framing import (
 )
 from http_target import SCHEME_HTTPS
 import inspect_http
-from tls_hello import HelloUnreadable, read_client_hello
+from tls_hello import TLS_EXT_ECH, HelloUnreadable, read_client_hello
 
 
 def serve_tls(insp, conn, where):
@@ -69,6 +69,20 @@ def serve_tls(insp, conn, where):
         return
     if not allowed:
         insp.drop(where, DROP_NOT_ALLOWLISTED, host=host, mode="splice")
+        return
+    # The name checked is the hello's outer one. Under ECH the front serves
+    # the inner one, which a splice never opens; GREASE and real ECH are
+    # built to look alike, so both are refused.
+    if TLS_EXT_ECH in hello.extensions:
+        insp.drop(where, DROP_ECH_SPLICED,
+                  f"the ClientHello carries encrypted_client_hello, and a "
+                  f"spliced connection is never opened, so the front may "
+                  f"serve the name encrypted inside it rather than {host}. "
+                  f"A client's GREASE looks the same as real ECH, and "
+                  f"Chromium-based clients send it by default: turn it off "
+                  f"in the client (--disable-features=EncryptedClientHello), "
+                  f"or have {host} terminated instead of spliced",
+                  host=host, mode="splice")
         return
     # The name the policy authorised is dialled, never the address the
     # guest aimed at, which is this listener.

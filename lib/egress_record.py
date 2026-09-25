@@ -63,6 +63,9 @@ DROP_NOT_PERMITTED = "not permitted by policy"
 # The dial to this workload's broker failed: a unit on this host, not the
 # provider, and so not DROP_UNREACHABLE.
 DROP_BROKER_UNREACHABLE = "credential broker unreachable"
+# A hello that would be spliced carries encrypted_client_hello, which can
+# name a host other than the one the splice was decided on.
+DROP_ECH_SPLICED = "ECH on a spliced connection"
 
 DROP_REASONS = (
     DROP_NOT_ALLOWLISTED,
@@ -85,6 +88,7 @@ DROP_REASONS = (
     DROP_NOT_HTTP_POLICY,
     DROP_NOT_PERMITTED,
     DROP_BROKER_UNREACHABLE,
+    DROP_ECH_SPLICED,
 )
 
 # The reasons that also get a per-host figure: those an operator fixes by
@@ -100,6 +104,7 @@ PER_HOST_REASONS = (
     DROP_CLIENT_CERT,
     DROP_NOT_HTTP,
     DROP_NOT_HTTP_POLICY,
+    DROP_ECH_SPLICED,
 )
 
 # Where a drop whose reason is not in DROP_REASONS is counted, and shown
