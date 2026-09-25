@@ -12,10 +12,11 @@ fallback to an empty policy.
 ```json
 {
   "tls": "inspect",
-  "hosts": ["pypi.org", "files.pythonhosted.org", "*.github.com"],
+  "hosts": ["pypi.org", "files.pythonhosted.org", "*.github.com",
+            "grpc.example.net"],
   "internal": ["git.corp.example"],
   "splice": ["updates.example.net"],
-  "http2": ["files.pythonhosted.org"],
+  "http2": ["grpc.example.net"],
   "policy": [
     {"host": "api.anthropic.com", "methods": ["POST"],
      "paths": ["/v1/messages"], "credential": "anthropic"},
@@ -157,9 +158,15 @@ first runs; see [DESIGN.md](DESIGN.md), "The same in every shape".
 
 ## `http2`
 
-A host in `http2` is terminated, offered h2, and relayed frame by frame
-without decoding. What that gives up, beside `methods` and `paths` (which
-is why a `policy` entry cannot name such a host):
+A host in `http2` is terminated, offered h2 and nothing else, and
+relayed frame by frame without decoding. A client that does not speak h2
+to it (pip, Python's `requests`, `curl --http1.1`) is closed with no
+response, and the journal names the host and the `http2` entry. List a
+host here only if every client the workload points at it speaks h2, a
+gRPC endpoint say.
+
+What relaying frames gives up, beside `methods` and `paths` (which is
+why a `policy` entry cannot name such a host):
 
 - The `:authority` of each request is not read, so it is not held to the
   name the session was opened for, as `Host` is on HTTP/1.1 (a mismatch
