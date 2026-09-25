@@ -13,6 +13,10 @@ there (with --resolver, 127.0.0.1:8053 over UDP and TCP) and exits; this
 process stays in the host's namespaces and execs the command with the
 listeners as fds 3 onward, LISTEN_PID and LISTEN_FDS set. The lib module
 is netns_listen.
+
+Under a Type=notify unit it sends READY=1 once the listeners are bound,
+before the exec, so a unit ordered after it (the workload's) starts only
+when a connection can no longer be refused.
 """
 
 import argparse
@@ -25,7 +29,7 @@ sys.dont_write_bytecode = True
 
 from netns_listen import (
     PLANE_LISTENERS, RESOLVER_LISTENERS, BindFailed, hand_over,
-    listeners_in)
+    listeners_in, notify_ready)
 
 
 def parse_args(argv):
@@ -62,6 +66,12 @@ def main(argv=None):
     except (OSError, BindFailed) as exc:
         print(f"error: cannot bind in pid {args.pid}'s network namespace: "
               f"{exc}", file=sys.stderr)
+        return 1
+    try:
+        notify_ready()
+    except OSError as exc:
+        print(f"error: cannot tell the service manager the listeners are "
+              f"bound: {exc}", file=sys.stderr)
         return 1
     try:
         hand_over(socks, args.command)

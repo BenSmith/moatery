@@ -11,6 +11,7 @@ ordinary user, from a checkout:
     python3 tests/manual/shape1n_rig.py [--keep] [--without-rules]
                                         [--without-dns-redirect]
                                         [--without-netns-pid]
+                                        [--without-notify]
 
 The two host facts riglib needs sudo for are shape 1's, undone at teardown.
 
@@ -18,6 +19,9 @@ THE ROWS
 
   premise   the container's bounding set holds no CAP_NET_ADMIN; the rules
             are in its netns.
+  ready     the units are Type=notify: when systemd reported each started,
+            its ports were already listening in the container's namespace,
+            so a workload ordered after them cannot dial before the bind.
   inspector the inspector is up on the listeners the launcher handed it,
             and both are rows in the container's socket table, none in the
             host's.
@@ -61,6 +65,8 @@ must go red.
 `--without-netns-pid` starts the inspector without it, so its lookups
 would read the host's table: it must refuse to start, and inspector,
 request, unlisted and counters go red.
+`--without-notify` starts the two units as Type=simple, reported started
+when forked, before the launcher has bound anything: ready must go red.
 """
 
 import argparse
@@ -141,12 +147,36 @@ def start_broker():
     sys.exit("broker never listened:\n" + journal("broker"))
 
 
-def start_inspector(pid, netns_pid):
+# Whether each unit's ports were listening in the container's namespace
+# the moment systemd-run returned, which is when systemd reported it
+# started.
+READY = {}
+
+
+def listening(pid, proto, port):
+    """Whether 127.0.0.1:port is bound in pid's namespace: a TCP row in
+    LISTEN, or a UDP row, which is unconnected."""
+    want = f"0100007F:{port:04X}"
+    state = "0A" if proto == "tcp" else "07"
+    try:
+        lines = Path(f"/proc/{pid}/net/{proto}").read_text().splitlines()
+    except OSError:
+        return False
+    return any(f[1] == want and f[3] == state
+               for f in (line.split() for line in lines[1:]))
+
+
+def unit_type(notify):
+    return ["-p", f"Type={'notify' if notify else 'simple'}"]
+
+
+def start_inspector(pid, netns_pid, notify):
     """The recipe's line: a transient unit, started once the netns exists
     and before the workload does. The launcher binds in the container's
     namespace and execs the inspector with the listeners."""
     extra = ["--netns-pid", str(pid)] if netns_pid else []
     run(["systemd-run", "--user", "--quiet", "--unit", f"{UNIT}-inspect",
+         *unit_type(notify),
          *(f"--setenv={k}={v}" for k, v in ENV.items()),
          sys.executable, str(CHECKOUT / "libexec" / "customs-netns-listen"),
          "--pid", str(pid), "--",
@@ -154,6 +184,8 @@ def start_inspector(pid, netns_pid):
          "--name", NAME, "--policy", str(POLICY), "--state-dir", str(STATE),
          "--status", str(STATUS), "--record", str(RECORD),
          "--broker", f"unix:{BROKER_SOCKET}", *extra])
+    READY["inspector"] = [listening(pid, "tcp", port)
+                          for port in (INSPECT_TLS, INSPECT_CLEARTEXT)]
     for _ in range(50):
         if STATUS.exists() or not unit_active():
             break
@@ -162,16 +194,19 @@ def start_inspector(pid, netns_pid):
         f" (pid {unit_pid()})")
 
 
-def start_responder(pid):
+def start_responder(pid, notify):
     """The same launcher with --resolver: the responder's port bound in the
     container's namespace, and every name answered with its loopback."""
     run(["systemd-run", "--user", "--quiet", "--unit", f"{UNIT}-resolve",
+         *unit_type(notify),
          f"--setenv=PYTHONPATH={ENV['PYTHONPATH']}",
          sys.executable, str(CHECKOUT / "libexec" / "customs-netns-listen"),
          "--pid", str(pid), "--resolver", "--",
          sys.executable, str(CHECKOUT / "libexec" / "customs-resolve"),
          "--name", NAME, "--address", "127.0.0.1", "--policy", str(POLICY),
          "--status", str(RESOLVE_STATUS)])
+    READY["responder"] = [listening(pid, proto, RESOLVE_PORT)
+                          for proto in ("udp", "tcp")]
     for _ in range(50):
         if RESOLVE_STATUS.exists() or not unit_active("resolve"):
             break
@@ -386,6 +421,12 @@ def probe(pid, dns, secret):
         f"inodes {inodes}; in the container's {sorted(inside)}; "
         f"in the host's {sorted(outside)}")
 
+    say("ready")
+    for unit, seen in READY.items():
+        row(f"ready: the {unit}'s ports were listening in the container "
+            "when its unit was reported started", seen and all(seen),
+            f"listening: {seen}")
+
     say("host")
     for port in (INSPECT_TLS, INSPECT_CLEARTEXT):
         where = f"127.0.0.1:{port}"
@@ -537,6 +578,9 @@ def main():
                     help="start the inspector without --netns-pid; it must "
                          "refuse, and inspector, request, unlisted and "
                          "counters go red")
+    ap.add_argument("--without-notify", action="store_true",
+                    help="start the listener units as Type=simple; ready "
+                         "must go red")
     args = ap.parse_args()
 
     riglib.preflight(
@@ -571,8 +615,9 @@ def main():
             say("  rules NOT loaded, as asked")
         else:
             load_rules(pid, not args.without_dns_redirect)
-        start_inspector(pid, not args.without_netns_pid)
-        start_responder(pid)
+        start_inspector(pid, not args.without_netns_pid,
+                        not args.without_notify)
+        start_responder(pid, not args.without_notify)
         run(["podman", "start", CONTAINER])
         probe(pid, dns, secret)
     finally:
@@ -587,6 +632,7 @@ def main():
         (args.without_netns_pid, "--without-netns-pid: inspector, "
                                  "request, unlisted and counters are "
                                  "expected red"),
+        (args.without_notify, "--without-notify: ready is expected red"),
     ) if flag]
     rc = riglib.report("; ".join(expected) or None)
     if rc:

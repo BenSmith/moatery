@@ -81,7 +81,7 @@ def _launch(pid, command, *flags, **kw):
     return subprocess.run(
         [sys.executable, str(LAUNCHER), "--pid", str(pid), *flags, "--",
          *command],
-        capture_output=True, text=True, env=ENV, timeout=30, **kw)
+        capture_output=True, text=True, timeout=30, **{"env": ENV, **kw})
 
 
 # A child that joins the target's namespaces and runs `body` there. A
@@ -168,6 +168,72 @@ class TestTheLauncherRefuses(unittest.TestCase):
                 self.assertRaises(netns_listen.BindFailed) as caught:
             netns_listen.listeners_in(os.getpid())
         self.assertIn("Operation not permitted", str(caught.exception))
+
+
+class TestReadiness(unittest.TestCase):
+    """Type=notify: READY=1 once the listeners are bound, and only then,
+    so the workload ordered after the unit finds them there."""
+
+    def _notify_socket(self):
+        path = os.path.join(tempfile.mkdtemp(), "notify")
+        self.addCleanup(shutil.rmtree, os.path.dirname(path))
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.addCleanup(sock.close)
+        sock.bind(path)
+        sock.settimeout(5)
+        return path, sock
+
+    def test_ready_is_sent_and_the_variable_removed(self):
+        path, sock = self._notify_socket()
+        environ = {"NOTIFY_SOCKET": path, "OTHER": "1"}
+        netns_listen.notify_ready(environ)
+        self.assertEqual(sock.recv(64), b"READY=1")
+        self.assertEqual(environ, {"OTHER": "1"})
+
+    def test_an_abstract_socket_is_reached(self):
+        name = f"customs-test-{os.getpid()}-{time.monotonic_ns()}"
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.addCleanup(sock.close)
+        sock.bind("\0" + name)
+        sock.settimeout(5)
+        netns_listen.notify_ready({"NOTIFY_SOCKET": "@" + name})
+        self.assertEqual(sock.recv(64), b"READY=1")
+
+    def test_nothing_is_sent_unasked(self):
+        environ = {"OTHER": "1"}
+        netns_listen.notify_ready(environ)
+        self.assertEqual(environ, {"OTHER": "1"})
+
+    def test_the_launcher_tells_after_the_bind_and_the_program_is_not_asked(
+            self):
+        path, sock = self._notify_socket()
+        pid = _target(self)
+        _joined(self, pid)
+        done = _launch(pid, [sys.executable, "-c", """
+import os
+print(os.environ.get("NOTIFY_SOCKET", "unset"), os.environ["LISTEN_FDS"])
+"""], env={**ENV, "NOTIFY_SOCKET": path})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(sock.recv(64), b"READY=1")
+        self.assertEqual(done.stdout.split(), ["unset", "2"])
+
+    def test_a_failed_bind_is_never_reported_ready(self):
+        path, sock = self._notify_socket()
+        done = _launch(2 ** 22 + 7, ["true"],
+                       env={**ENV, "NOTIFY_SOCKET": path})
+        self.assertEqual(done.returncode, 1)
+        sock.settimeout(0.2)
+        with self.assertRaises(TimeoutError):
+            sock.recv(64)
+
+    def test_an_unreachable_manager_fails_the_start(self):
+        pid = _target(self)
+        _joined(self, pid)
+        done = _launch(pid, ["true"], env={
+            **ENV, "NOTIFY_SOCKET": os.path.join(tempfile.gettempdir(),
+                                                 "no-such-notify-socket")})
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("cannot tell the service manager", done.stderr)
 
 
 class TestTheListenersAreInTheTarget(unittest.TestCase):

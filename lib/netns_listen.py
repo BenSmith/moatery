@@ -115,6 +115,22 @@ def _received(ours, child, count):
     raise BindFailed(msg.decode(errors="replace") or "the child exited")
 
 
+def notify_ready(environ=os.environ):
+    """Tell the service manager the listeners are bound, if the unit is
+    Type=notify: a connection that arrives from now on waits in a backlog,
+    so the workload may start. NOTIFY_SOCKET is removed, since the program
+    run next does not answer for the bind."""
+    path = environ.pop("NOTIFY_SOCKET", None)
+    if not path:
+        return
+    if path.startswith("@"):
+        path = "\0" + path[1:]
+    with socket.socket(socket.AF_UNIX,
+                       socket.SOCK_DGRAM | socket.SOCK_CLOEXEC) as sock:
+        sock.connect(path)
+        sock.sendall(b"READY=1")
+
+
 def hand_over(socks, argv):
     """Become `argv` with `socks` as descriptors 3 onward and LISTEN_PID
     and LISTEN_FDS set, as a socket unit starts a service. Never

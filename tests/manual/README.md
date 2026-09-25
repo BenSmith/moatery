@@ -159,10 +159,11 @@ python3 tests/manual/shape1n_rig.py                        # every row green
 python3 tests/manual/shape1n_rig.py --without-rules        # must go red
 python3 tests/manual/shape1n_rig.py --without-netns-pid    # inspector red
 python3 tests/manual/shape1n_rig.py --without-dns-redirect # dns red
+python3 tests/manual/shape1n_rig.py --without-notify       # ready red
 ```
 
 **Rows.** Shape 1's premise, DNS, silent-drop, quic, request, broker,
-unlisted, origin and counter rows, and three of its own. The inspector is
+unlisted, origin and counter rows, and four of its own. The inspector is
 up on the listeners it was handed, and their inodes are rows in the
 container's socket table and in none of the host's. Nothing listens on
 the host's `127.0.0.1` at either plane, for the user or another uid;
@@ -173,6 +174,11 @@ upstream dial left from the host's namespace: the stub is on the host's
 uid inside the container (65534, a subuid outside) is served too: the
 inspector serves every uid of the container's user namespace, which is
 what sudo inside needs.
+
+The listener units are `Type=notify`: when `systemd-run` returned, each
+unit's ports were already listening in the container's namespace.
+`--without-notify` starts them as `Type=simple`, and on the proving host
+neither had bound anything by then.
 
 `--without-netns-pid` starts the inspector without the flag. It must
 refuse to start, since its lookups would read the host's table, which

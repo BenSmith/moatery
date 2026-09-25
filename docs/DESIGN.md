@@ -398,12 +398,12 @@ table netdev customs {
 }
 NFT
 # 5. the inspector and the responder, transient user units for this start
-systemd-run --user --unit customs-inspect-NAME \
+systemd-run --user --unit customs-inspect-NAME -p Type=notify \
   customs-netns-listen --pid "$PID" -- \
   customs-inspect --name x --policy … --state-dir … --status … \
     --record … --broker "unix:$XDG_RUNTIME_DIR/customs/broker.sock" \
     --netns-pid "$PID"
-systemd-run --user --unit customs-resolve-NAME \
+systemd-run --user --unit customs-resolve-NAME -p Type=notify \
   customs-netns-listen --pid "$PID" --resolver -- \
   customs-resolve --name x --address 127.0.0.1 --policy … --status …
 podman start NAME
@@ -412,7 +412,12 @@ systemctl --user stop customs-inspect-NAME customs-resolve-NAME
 ```
 
 `create → init → rules → listeners → start`: the workload's first packet
-meets both the redirect and a listener. Nothing the workload may send
+meets both the redirect and a listener. `Type=notify` is what makes the
+listener step finish when they are bound: customs-netns-listen sends
+READY=1 after the bind and before the exec, so `systemd-run` (or a unit
+the workload's is ordered after) returns only then. As `Type=simple`
+the unit is started when forked, and a first dial can find nothing
+listening and be refused. Nothing the workload may send
 crosses the egress device, so the chain accepts nothing, not even the
 neighbour discovery shape 1 needs for the map. IPv6 is as in shape 1:
 the listeners and the redirect are v4, and a v6 dial falls to the
