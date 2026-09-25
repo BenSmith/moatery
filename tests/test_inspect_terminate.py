@@ -1619,7 +1619,7 @@ class TestBothLegsAreHttp11(TerminationCase):
         mod = _mod()
         origin = _Origin(self.origin_pem)
         self.addCleanup(origin.close)
-        listener, _ = self._listener(mod, origin)
+        listener, out = self._listener(mod, origin)
         ctx = self._guest_context()
         ctx.set_alpn_protocols(["h2", "http/1.1"])
         alpn = []
@@ -1628,6 +1628,31 @@ class TestBothLegsAreHttp11(TerminationCase):
         self.assertIsNone(error)
         self.assertEqual(alpn, ["http/1.1"])
         self.assertIn(b"200 OK", response)
+        # The offer is reported, and a client that can fall back is not
+        # the one the h2-only note is for.
+        line, = [line for line in out.getvalue().splitlines()
+                 if line.startswith("terminate ")]
+        self.assertTrue(line.endswith(' alpn="h2,http/1.1"'), line)
+        self.assertNotIn("note ", out.getvalue())
+
+    def test_a_guest_offering_only_h2_is_noted(self):
+        """Its handshake selects nothing. This guest sends HTTP/1.1 anyway;
+        a gRPC client would not, and the note is where that shows."""
+        mod = _mod()
+        origin = _Origin(self.origin_pem)
+        self.addCleanup(origin.close)
+        listener, out = self._listener(mod, origin)
+        ctx = self._guest_context()
+        ctx.set_alpn_protocols(["h2"])
+        alpn = []
+        self._exchange(listener, origin, guest_ctx=ctx, alpn_out=alpn)
+        self.assertEqual(alpn, [None])
+        note, = [line for line in out.getvalue().splitlines()
+                 if line.startswith("note ")]
+        self.assertIn("host=localhost", note)
+        self.assertIn('reason="h2 only: ', note)
+        self.assertIn("splice localhost", note)
+        self.assertEqual(listener.status()["notes"]["h2 only"], 1)
 
     def test_an_origin_preferring_h2_is_asked_for_http11(self):
         mod = _mod()

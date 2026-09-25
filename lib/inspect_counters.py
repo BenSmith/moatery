@@ -8,7 +8,8 @@ import threading
 
 from inspect_document import TLS_DEFAULT
 from egress_record import (
-    DROP_INTERNAL, DROP_REASONS, DROP_UNCLASSIFIED, PER_HOST_REASONS,
+    DROP_INTERNAL, DROP_REASONS, DROP_UNCLASSIFIED, NOTE_ECH, NOTE_KINDS,
+    PER_HOST_REASONS,
 )
 from egress_status import STATUS_TOP_N, BoundedCounts
 from tls_hello import TLS_EXT_ECH
@@ -16,10 +17,12 @@ from tls_hello import TLS_EXT_ECH
 class Counters:
     """What the listener reports, and the only place any of it is defined.
 
-    `ech_seen` counts the encrypted_client_hello extension wherever it
-    appears, which GREASE dominates, so it measures capability. `ech_alarm`
-    counts the extension on a hello whose name matched no list, which is
-    real ECH reaching for somewhere policy refuses.
+    `notes` counts the journal's note lines by kind. `ech.seen` is the ECH
+    note's count: the encrypted_client_hello extension wherever it appears,
+    which GREASE dominates, so it measures capability. `ech.alarm` counts
+    the extension on a hello whose name matched no list, which is real ECH
+    reaching for somewhere policy refuses. `alpn_offered` counts the
+    protocols hellos offered, each once per hello.
 
     `dispositions` is not one unit: a TLS decision is per connection
     (`spliced`, `terminated`) and a cleartext or terminated one per request
@@ -44,8 +47,9 @@ class Counters:
         # Pre-seeded, so an absent reason and a zero one look the same.
         self.drop_reasons = {reason: 0 for reason in DROP_REASONS}
         self._unclassified = 0
-        self.ech_seen = 0
+        self.notes = {kind: 0 for kind in NOTE_KINDS}
         self.ech_alarm = 0
+        self.alpn_offered = BoundedCounts(top_n)
         self.per_host = {reason: BoundedCounts(top_n)
                          for reason in PER_HOST_REASONS}
         # Brokered requests, by host and by credential name, never the
@@ -76,14 +80,19 @@ class Counters:
         }
 
     def record_hello(self, hello, on_a_list: bool) -> None:
-        """The ECH tripwire, once per readable ClientHello. `on_a_list` is
-        the decision already taken, not matched again."""
-        if TLS_EXT_ECH not in hello.extensions:
-            return
+        """What one readable ClientHello offered. `on_a_list` is the
+        decision already taken, not matched again."""
         with self._lock:
-            self.ech_seen += 1
-            if not on_a_list:
+            for name in dict.fromkeys(hello.alpn):
+                self.alpn_offered.add(name)
+            if TLS_EXT_ECH in hello.extensions and not on_a_list:
                 self.ech_alarm += 1
+
+    def record_note(self, kind: str) -> None:
+        """One note line. A kind not in NOTE_KINDS gets a key of its own,
+        which is a bug in the listener made visible."""
+        with self._lock:
+            self.notes[kind] = self.notes.get(kind, 0) + 1
 
     def record_splice(self) -> None:
         with self._lock:
@@ -148,7 +157,10 @@ class Counters:
             return {
                 "dispositions": dict(self.dispositions),
                 "drop_reasons": reasons,
-                "ech": {"seen": self.ech_seen, "alarm": self.ech_alarm},
+                "ech": {"seen": self.notes[NOTE_ECH],
+                        "alarm": self.ech_alarm},
+                "notes": dict(self.notes),
+                "alpn_offered": self.alpn_offered.snapshot(),
                 "bumped": self.bumped,
                 "record_failures": self.record_failures,
                 "caller_unresolved": self.caller_unresolved,

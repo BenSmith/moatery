@@ -1,10 +1,10 @@
 """
 Reading a server name out of a TLS ClientHello, and no more.
 
-Enough of RFC 8446 §4.1.2 to read the server name and see which extensions are
-present. It is not a TLS implementation and must not become one: every field
-it does not need is skipped by its length, so an extension shape it has never
-seen costs it nothing.
+Enough of RFC 8446 §4.1.2 to read the server name and the ALPN offer, and see
+which extensions are present. It is not a TLS implementation and must not
+become one: every field it does not need is skipped by its length, so an
+extension shape it has never seen costs it nothing.
 
 The hello is PEEKED, never consumed. A terminated connection's hello must
 still be on the socket for ssl's wrap_socket, and a spliced one is relayed
@@ -36,6 +36,11 @@ TLS_HANDSHAKE = 0x16
 TLS_CLIENT_HELLO = 0x01
 TLS_EXT_SERVER_NAME = 0x0000
 TLS_SNI_HOST_NAME = 0x00
+TLS_EXT_ALPN = 0x0010
+
+# How many of the protocols an ALPN offer names are kept. A client offers
+# two or three; the rest of a longer list is the guest's to fill.
+ALPN_KEPT = 8
 
 # RFC 9460 encrypted_client_hello, read by the ECH figures and the splice
 # refusal; the parser skips it by its length like any other extension.
@@ -53,11 +58,13 @@ class HelloUnreadable(Exception):
 class ClientHello(NamedTuple):
     """What the peek extracts. `server_name` is None for a hello with no
     SNI. `extensions` is every extension type in wire order, for the ECH
-    tripwire.
+    figures. `alpn` is the protocols offered, in the client's order, for the
+    journal and the figures: nothing is decided by it.
     """
 
     server_name: str
     extensions: tuple
+    alpn: tuple = ()
 
 
 class _Reader:
@@ -124,6 +131,22 @@ def _parse_server_name(data: bytes):
     return None
 
 
+def _parse_alpn(data: bytes) -> tuple:
+    """The first ALPN_KEPT protocol names an RFC 7301 offer carries.
+
+    Kept as text with anything outside ASCII escaped. The journal quotes
+    them, since they are the guest's bytes.
+    """
+    r = _Reader(data)
+    entries = _Reader(r.take(r.u16()))
+    names = []
+    while entries.remaining():
+        value = entries.take(entries.u8())
+        if len(names) < ALPN_KEPT:
+            names.append(value.decode("ascii", "backslashreplace"))
+    return tuple(names)
+
+
 def parse_client_hello(msg: bytes) -> ClientHello:
     """Parse a ClientHello handshake body (the 4-byte header already stripped).
 
@@ -142,6 +165,7 @@ def parse_client_hello(msg: bytes) -> ClientHello:
         return ClientHello(None, ())
     exts = _Reader(r.take(r.u16()))
     name = None
+    alpn = None
     seen = []
     while exts.remaining():
         etype = exts.u16()
@@ -149,7 +173,9 @@ def parse_client_hello(msg: bytes) -> ClientHello:
         seen.append(etype)
         if etype == TLS_EXT_SERVER_NAME and name is None:
             name = _parse_server_name(data)
-    return ClientHello(name, tuple(seen))
+        elif etype == TLS_EXT_ALPN and alpn is None:
+            alpn = _parse_alpn(data)
+    return ClientHello(name, tuple(seen), alpn or ())
 
 
 def read_client_hello(conn, max_bytes=CLIENTHELLO_MAX):

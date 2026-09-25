@@ -96,7 +96,12 @@ are steps 4 and 5 of shape 1 in [DESIGN.md](../docs/DESIGN.md).
   first twenty such names.
 - The journal (`journalctl --user -u customs-inspect -u customs-broker
   -u customs-resolve`): a line per connection and per decision, with the
-  reason for every refusal and every 502, and a line per query.
+  reason for every refusal and every 502, and a line per query. A
+  connection's line carries the protocols its client offered (`alpn=`),
+  and a `note` line reports what refuses nothing by itself: a hello
+  carrying ECH, and a client offering h2 alone. The status file counts
+  notes by kind under `notes`, and offered protocols under
+  `alpn_offered`.
 
 ## Rotation
 

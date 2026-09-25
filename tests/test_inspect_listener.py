@@ -34,7 +34,9 @@ from egress_plane import CLEARTEXT, TLS, plane_for_port
 from tests.policy_document import policy_document
 from inspect_policy import Policy, load_policy
 from sd_listen import NotSocketActivated
-from tls_hello import HelloUnreadable, TLS_EXT_ECH, read_client_hello
+from tls_hello import (
+    ALPN_KEPT, HelloUnreadable, TLS_EXT_ECH, read_client_hello,
+)
 from http_target import (
     host_from_authority, normalise_path, normalise_target)
 from http_framing import (
@@ -72,6 +74,8 @@ from egress_record import (
     DROP_UNCLASSIFIED,
     DROP_UNVERIFIED,
     LOG_ID_FIELD,
+    NOTE_ECH,
+    NOTE_KINDS,
     PER_HOST_REASONS,
     Where,
     format_endpoint,
@@ -576,8 +580,50 @@ def _grease_extension(value=0x0a0a):
     return value.to_bytes(2, "big") + b"\x00\x00"
 
 
+def _alpn_extension(*names):
+    """An ALPN extension (RFC 7301) offering `names`, in order."""
+    body = b"".join(len(n).to_bytes(1, "big") + n for n in names)
+    body = len(body).to_bytes(2, "big") + body
+    return b"\x00\x10" + len(body).to_bytes(2, "big") + body
+
+
 class TestClientHelloParser(unittest.TestCase):
-    """Enough of RFC 8446 §4.1.2 to read a name, and nothing more."""
+    """Enough of RFC 8446 §4.1.2 to read a name and an offer, and nothing
+    more."""
+
+    def test_the_alpn_offer_is_read_in_the_clients_order(self):
+        raw = _hello_bytes(_alpn_extension(b"h2", b"http/1.1"))
+        hello = read_client_hello(_FakeSocket([raw]))
+        self.assertEqual(hello.alpn, ("h2", "http/1.1"))
+
+    def test_a_hello_with_no_alpn_offers_nothing(self):
+        hello = read_client_hello(_FakeSocket([_hello_bytes()]))
+        self.assertEqual(hello.alpn, ())
+
+    def test_a_long_offer_is_kept_to_its_first_names(self):
+        """The list is the guest's to fill, and it goes into journal lines."""
+        names = [f"p{i}".encode() for i in range(ALPN_KEPT + 5)]
+        raw = _hello_bytes(_alpn_extension(*names))
+        hello = read_client_hello(_FakeSocket([raw]))
+        self.assertEqual(hello.alpn, tuple(f"p{i}" for i in range(ALPN_KEPT)))
+
+    def test_a_name_outside_ascii_is_kept_escaped(self):
+        raw = _hello_bytes(_alpn_extension(b"h\xff2"))
+        hello = read_client_hello(_FakeSocket([raw]))
+        self.assertEqual(hello.alpn, ("h\\xff2",))
+
+    def test_an_alpn_name_longer_than_its_list_is_refused(self):
+        bad = b"\x00\x10\x00\x03\x00\x01\x09"
+        with self.assertRaises(HelloUnreadable):
+            read_client_hello(_FakeSocket([_hello_bytes(bad)], timeout=0.2))
+
+    def test_the_captured_ech_hello_shows_no_offer(self):
+        """This capture's offer went inside the encryption with its name, so
+        an ECH hello's `alpn=` field may be absent while the client offered
+        h2 all the same."""
+        raw = (ROOT / "tests" / "fixtures" / "ech-clienthello.bin").read_bytes()
+        hello = read_client_hello(_FakeSocket([raw]))
+        self.assertEqual(hello.alpn, ())
 
     def test_a_plain_hello_yields_its_server_name(self):
         raw = _hello_bytes()
@@ -3576,23 +3622,20 @@ class TestEchTripwire(unittest.TestCase):
         mod, listener, _ = self._listener(["allowed.example"])
         self._serve(listener, _hello_bytes(
             _ech_extension(), server_name="allowed.example"))
-        self.assertEqual(listener.inspection.counters.ech_seen, 1)
-        self.assertEqual(listener.inspection.counters.ech_alarm, 0)
+        self.assertEqual(listener.status()["ech"], {"seen": 1, "alarm": 0})
 
     def test_an_unlisted_ech_hello_moves_both(self):
         mod, listener, _ = self._listener(["allowed.example"])
         self._serve(listener, _hello_bytes(
             _ech_extension(), server_name="denied.example"))
-        self.assertEqual(listener.inspection.counters.ech_seen, 1)
-        self.assertEqual(listener.inspection.counters.ech_alarm, 1)
+        self.assertEqual(listener.status()["ech"], {"seen": 1, "alarm": 1})
 
     def test_an_ech_hello_with_no_sni_counts_toward_the_alarm(self):
         """The stronger form of the signal, not a weaker one: the extension
         was there and the name matched nothing at all."""
         _, listener, _ = self._listener(["allowed.example"])
         self._serve(listener, _hello_bytes(_ech_extension(), server_name=None))
-        self.assertEqual(listener.inspection.counters.ech_seen, 1)
-        self.assertEqual(listener.inspection.counters.ech_alarm, 1)
+        self.assertEqual(listener.status()["ech"], {"seen": 1, "alarm": 1})
 
     def test_a_hello_without_the_extension_moves_neither(self):
         """Including one that is refused. The tripwire is about ECH, not about
@@ -3600,8 +3643,7 @@ class TestEchTripwire(unittest.TestCase):
         allowlist rather than the guest's TLS stack."""
         _, listener, _ = self._listener(["allowed.example"])
         self._serve(listener, _hello_bytes(server_name="denied.example"))
-        self.assertEqual(listener.inspection.counters.ech_seen, 0)
-        self.assertEqual(listener.inspection.counters.ech_alarm, 0)
+        self.assertEqual(listener.status()["ech"], {"seen": 0, "alarm": 0})
 
     def test_ordinary_grease_extensions_do_not_count_as_ech(self):
         """RFC 8701 GREASE on other codepoints is not ECH. Counting it would
@@ -3610,7 +3652,7 @@ class TestEchTripwire(unittest.TestCase):
         self._serve(listener, _hello_bytes(
             _grease_extension() + _grease_extension(0x1a1a),
             server_name="allowed.example"))
-        self.assertEqual(listener.inspection.counters.ech_seen, 0)
+        self.assertEqual(listener.status()["ech"]["seen"], 0)
 
     def test_an_unreadable_hello_moves_no_ech_figure(self):
         """The extension list comes from the parse. Bytes that did not parse
@@ -3618,16 +3660,80 @@ class TestEchTripwire(unittest.TestCase):
         the capability count and make the alarm's denominator a fiction."""
         _, listener, _ = self._listener(["allowed.example"])
         self._serve(listener, b"GET / HTTP/1.1\r\n\r\n")
-        self.assertEqual(listener.inspection.counters.ech_seen, 0)
-        self.assertEqual(listener.inspection.counters.ech_alarm, 0)
+        self.assertEqual(listener.status()["ech"], {"seen": 0, "alarm": 0})
 
     def test_the_fixture_lights_the_alarm_when_its_name_is_unlisted(self):
         """End to end on the real capture rather than a hand-built hello."""
         _, listener, _ = self._listener(["allowed.example"])
         raw = (ROOT / "tests" / "fixtures" / "ech-clienthello.bin").read_bytes()
         self._serve(listener, raw)
-        self.assertEqual(listener.inspection.counters.ech_seen, 1)
-        self.assertEqual(listener.inspection.counters.ech_alarm, 1)
+        self.assertEqual(listener.status()["ech"], {"seen": 1, "alarm": 1})
+
+    def test_each_ech_hello_is_a_note_line(self):
+        """Known about, not an alarm: the line names the host and says what
+        a terminated and a spliced connection make of it."""
+        _, listener, out = self._listener(["allowed.example"])
+        self._serve(listener, _hello_bytes(
+            _ech_extension(), server_name="allowed.example"))
+        notes = [line for line in out.getvalue().splitlines()
+                 if line.startswith("note ")]
+        self.assertEqual(len(notes), 1, out.getvalue())
+        self.assertIn("host=allowed.example", notes[0])
+        self.assertIn('reason="ECH: ', notes[0])
+        self.assertEqual(listener.status()["notes"][NOTE_ECH], 1)
+
+    def test_a_nameless_ech_hello_is_noted_without_a_host(self):
+        _, listener, out = self._listener(["allowed.example"])
+        self._serve(listener, _hello_bytes(_ech_extension(), server_name=None))
+        note, = [line for line in out.getvalue().splitlines()
+                 if line.startswith("note ")]
+        self.assertNotIn("host=", note)
+
+
+class TestTheOfferIsReported(unittest.TestCase):
+    """What a hello offered, on the connection's own line and in the
+    status file. Nothing is decided by it."""
+
+    def _splice(self, payload):
+        out = io.StringIO()
+        listener = Listener([], out, policy=Policy(
+            tls="splice", hosts=("a.example",)))
+        guest, ours = socket.socketpair()
+        self.addCleanup(guest.close)
+        self.addCleanup(ours.close)
+        guest.sendall(payload)
+        guest.shutdown(socket.SHUT_WR)
+        ours.settimeout(2.0)
+        upstream, far = socket.socketpair()
+        self.addCleanup(upstream.close)
+        self.addCleanup(far.close)
+        with unittest.mock.patch.object(
+                socket, "create_connection", return_value=upstream):
+            serve_tls(listener.inspection, ours, _where("tls"))
+        return listener, out.getvalue()
+
+    def test_the_splice_line_carries_the_offer(self):
+        _, log = self._splice(_hello_bytes(
+            _alpn_extension(b"h2", b"http/1.1"), server_name="a.example"))
+        line, = [line for line in log.splitlines()
+                 if line.startswith("splice ")]
+        self.assertTrue(line.endswith(' alpn="h2,http/1.1"'), line)
+
+    def test_no_offer_adds_no_field(self):
+        _, log = self._splice(_hello_bytes(server_name="a.example"))
+        self.assertNotIn("alpn=", log)
+
+    def test_an_offer_is_quoted_as_the_guests_bytes(self):
+        _, log = self._splice(_hello_bytes(
+            _alpn_extension(b'h2" x=1'), server_name="a.example"))
+        self.assertIn('alpn="h2\\" x=1"', log)
+
+    def test_each_protocol_is_counted_once_per_hello(self):
+        listener, _ = self._splice(_hello_bytes(
+            _alpn_extension(b"h2", b"http/1.1", b"h2"),
+            server_name="a.example"))
+        self.assertEqual(listener.status()["alpn_offered"],
+                         {"h2": 1, "http/1.1": 1})
 
 
 class TestEchIsNeverSpliced(unittest.TestCase):
@@ -3796,6 +3902,23 @@ class TestCounters(unittest.TestCase):
         _, listener, _ = self._listener()
         self.assertEqual(set(listener.status()["drop_reasons"]),
                          set(DROP_REASONS))
+
+    def test_the_note_pre_seed_is_exactly_the_named_kinds(self):
+        _, listener, _ = self._listener()
+        self.assertEqual(listener.status()["notes"],
+                         dict.fromkeys(NOTE_KINDS, 0))
+
+    def test_the_note_kinds_and_the_call_sites_are_the_same_set(self):
+        """As for the reasons: a kind no call site notes reads zero forever,
+        and a call site naming a kind the tuple lacks is never pre-seeded."""
+        import re
+        source = "\n".join(
+            re.sub(r"from egress_record import \([^)]*\)", "", f.read_text())
+            for f in (TLS_LIB, HTTP_LIB))
+        named = set(re.findall(r"\.note\(\s*[^,()]+,\s*(\w+)", source))
+        self.assertTrue(all(n.startswith("NOTE_") for n in named), named)
+        self.assertEqual({getattr(egress_record, n) for n in named},
+                         set(NOTE_KINDS))
 
     def test_the_reasons_and_the_call_sites_are_the_same_set(self):
         """Drift is possible in both directions and neither is visible at

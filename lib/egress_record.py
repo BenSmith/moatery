@@ -111,6 +111,23 @@ PER_HOST_REASONS = (
 # only when non-zero. Its presence is a bug in the listener.
 DROP_UNCLASSIFIED = "(unclassified)"
 
+# What a `note` line reports: something the operator asked to hear about,
+# which refuses nothing by itself. The line's reason begins with the kind,
+# and the status file counts each.
+#
+# A hello carrying encrypted_client_hello. GREASE dominates it, and a
+# terminated connection takes it; a spliced one is refused
+# (DROP_ECH_SPLICED).
+NOTE_ECH = "ECH"
+# A terminated connection whose client offered h2 and not http/1.1, so its
+# handshake selects no protocol: a gRPC client, most likely, that fails.
+NOTE_H2_ONLY = "h2 only"
+
+NOTE_KINDS = (
+    NOTE_ECH,
+    NOTE_H2_ONLY,
+)
+
 
 # The record's field names. `credential` is the name of the credential a
 # request was brokered with, never the material; it is what explains why

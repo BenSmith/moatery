@@ -84,6 +84,15 @@ class Inspection:
         self.log(f"{verb} {where}{named} reason={quoted(text)}")
 
 
+    def note(self, where, kind, detail, *, host=None):
+        """One thing the operator asked to hear about, deciding nothing:
+        counted by its kind and logged. The reason begins with the kind, as
+        a drop's begins with its reason."""
+        self.counters.record_note(kind)
+        named = "" if host is None else f" host={host}"
+        self.log(f"note {where}{named} reason={quoted(f'{kind}: {detail}')}")
+
+
 def quoted(text):
     """`text` as one journal field: double-quoted, with the quote, the
     backslash and every control character escaped.

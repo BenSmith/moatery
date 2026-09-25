@@ -24,7 +24,7 @@ from egress_plane import TLS
 from egress_record import (
     DROP_ECH_SPLICED, DROP_MINT_FAILED, DROP_NOT_ALLOWLISTED, DROP_NOT_HTTP,
     DROP_NOT_HTTP_POLICY, DROP_NO_NAME, DROP_RELAY_FAILED, DROP_THROTTLED,
-    Record,
+    NOTE_ECH, NOTE_H2_ONLY, Record,
 )
 from egress_relay import relay
 import egress_relay
@@ -34,6 +34,7 @@ from http_framing import (
 )
 from http_target import SCHEME_HTTPS
 import inspect_http
+from inspect_scope import quoted
 from tls_hello import TLS_EXT_ECH, HelloUnreadable, read_client_hello
 
 
@@ -51,6 +52,14 @@ def serve_tls(insp, conn, where):
     except HelloUnreadable as exc:
         insp.drop(where, DROP_NO_NAME, exc, mode="terminate")
         return
+    if TLS_EXT_ECH in hello.extensions:
+        insp.note(where, NOTE_ECH,
+                  "the ClientHello carries encrypted_client_hello, real or a "
+                  "client's GREASE, which look alike. A terminated "
+                  "connection hides nothing either way; a spliced one is "
+                  "refused",
+                  host=normalise_hostname(hello.server_name)
+                  if hello.server_name else None)
     if not hello.server_name:
         # Before the drop: a hello that withholds SNI and carries ECH is the
         # tripwire's strongest signal.
@@ -65,7 +74,7 @@ def serve_tls(insp, conn, where):
     # The allowlist first: a `splice` pattern can cover names no list
     # admits, and those are refused like any other denial, by a bump.
     if inspect and not (allowed and insp.policy.splices(host)):
-        _serve_tls_inspect(insp, conn, where, host, allowed)
+        _serve_tls_inspect(insp, conn, where, host, allowed, hello)
         return
     if not allowed:
         insp.drop(where, DROP_NOT_ALLOWLISTED, host=host, mode="splice")
@@ -98,7 +107,7 @@ def serve_tls(insp, conn, where):
         # the origin completes its handshake with the guest's own bytes.
         insp.counters.record_splice()
         insp.log(f"splice {where} host={host}"
-                            f"{' per-host' if inspect else ''}")
+                 f"{' per-host' if inspect else ''}{_offer(hello)}")
         rec = Record(insp.record, where, "splice", host=host)
         rec.dialled(upstream)
         rec.set(decision="forward")
@@ -110,12 +119,28 @@ def serve_tls(insp, conn, where):
         upstream.close()
 
 
-def _serve_tls_inspect(insp, conn, where, host, allowed):
+def _offer(hello):
+    """The hello's ALPN offer as a journal field, or nothing."""
+    if not hello.alpn:
+        return ""
+    return f" alpn={quoted(','.join(hello.alpn))}"
+
+
+def _serve_tls_inspect(insp, conn, where, host, allowed, hello):
     """Terminate one connection: decide, dial, mint, handshake, serve.
 
     The origin is dialled before the guest's handshake, so a host that
     cannot be reached costs a leaf only to carry the refusal.
     """
+    if "h2" in hello.alpn and "http/1.1" not in hello.alpn:
+        insp.note(where, NOTE_H2_ONLY,
+                  f"the client offered {','.join(hello.alpn)} and not "
+                  f"http/1.1, and {host} is served HTTP/1.1 alone, so the "
+                  f"handshake selects no protocol and the client will "
+                  f"likely fail. A gRPC client, most likely: splice {host}, "
+                  f"where its h2 runs end to end and the host is checked by "
+                  f"name alone, or use the client's REST transport",
+                  host=host)
     upstream = None
     refusal = None            # (drop reason, status, phrase, journal text)
     # A brokered host's requests go to the broker, per request, so the
@@ -204,7 +229,7 @@ def _serve_tls_inspect(insp, conn, where, host, allowed):
             _bump_answer(tls_conn, status, phrase)
             return
         insp.counters.record_termination()
-        insp.log(f"terminate {where} host={host}")
+        insp.log(f"terminate {where} host={host}{_offer(hello)}")
         serve_terminated(insp, tls_conn, where, host, upstream)
     finally:
         try:

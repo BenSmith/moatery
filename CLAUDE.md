@@ -110,7 +110,7 @@ workloadctl's is mirrored.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 789)
+just test     # all unit tests (unittest discover; 784)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user
