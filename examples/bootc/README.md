@@ -13,7 +13,7 @@ sudo podman build -t localhost/customs-bootc examples/bootc
 ```
 
 `BASE` is the base image, `quay.io/fedora/fedora-bootc:44` unless given
-with `--build-arg`. It is a tag, not a digest.
+with `--build-arg`.
 
 A disk for a VM, with `config.toml`'s `USER` and `KEY` replaced by a
 login and its SSH public key:
