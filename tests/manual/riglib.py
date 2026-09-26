@@ -19,6 +19,13 @@ HERE = Path(__file__).resolve().parent
 CHECKOUT = HERE.parent.parent
 sys.path.insert(0, str(CHECKOUT / "lib"))
 
+# The programs under test: the checkout's, or the installed copy
+# CUSTOMS_LIBEXEC names (the RPM's /usr/libexec/customs), whose modules
+# sit beside its programs and so are found without PYTHONPATH.
+INSTALLED = os.environ.get("CUSTOMS_LIBEXEC")
+LIBEXEC = Path(INSTALLED) if INSTALLED else CHECKOUT / "libexec"
+PROGRAM_ENV = {} if INSTALLED else {"PYTHONPATH": str(CHECKOUT / "lib")}
+
 
 NAME = "rig"
 # stub_provider.py's server_version, which a brokered response must carry.
@@ -163,11 +170,10 @@ def preflight(tools, ports):
 def mint_ca(state):
     """The per-workload CA, once, kept across runs like an SSH host key.
     The operator's job in shape 1, done the operator's way: by running
-    customs-mint-ca from the checkout. The sidecar entrypoint's in shape
-    1b."""
-    done = run([sys.executable, str(CHECKOUT / "libexec" / "customs-mint-ca"),
+    customs-mint-ca. The sidecar entrypoint's in shape 1b."""
+    done = run([sys.executable, str(LIBEXEC / "customs-mint-ca"),
                 "--name", NAME, "--state-dir", str(state)],
-               env={**os.environ, "PYTHONPATH": str(CHECKOUT / "lib")})
+               env={**os.environ, **PROGRAM_ENV})
     say(f"  {done.stderr.strip()}")
 
 

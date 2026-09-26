@@ -101,9 +101,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import riglib  # noqa
 from riglib import (  # noqa
-    CA_BUNDLE_IN_CONTAINER, CHECKOUT, CREDENTIAL, IMAGE, INSPECT_CLEARTEXT,
-    INSPECT_TLS, LOOPBACK_MAP, NAME, PLACEHOLDER, PROVIDER, RESOLVE_PORT,
-    RIG, STUB_CERT, UNLISTED, row, run, say,
+    CA_BUNDLE_IN_CONTAINER, CREDENTIAL, IMAGE, INSPECT_CLEARTEXT,
+    INSPECT_TLS, LIBEXEC, LOOPBACK_MAP, NAME, PLACEHOLDER, PROGRAM_ENV,
+    PROVIDER, RESOLVE_PORT, RIG, STUB_CERT, UNLISTED, row, run, say,
 )
 from egress_ca import ca_cert_path  # noqa
 from egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
@@ -139,21 +139,21 @@ def seal_credential(secret):
 
 def write_units(over_tcp):
     """Hand-written, which is the point: no generator between the operator
-    and the two ExecStart= lines. PYTHONPATH because the checkout is not
-    installed; a package would put lib/ beside the entrypoints instead.
+    and the two ExecStart= lines. PYTHONPATH when the programs are the
+    checkout's; installed, lib/ sits beside the entrypoints.
     SSL_CERT_FILE hands both units the stub's certificate and REPLACES
     their trust store, which is fine only because neither dials anything
     but the stub here -- it is a rig fact, not a recipe."""
     UNITS.mkdir(parents=True, exist_ok=True)
     py = sys.executable
-    env = (f"Environment=PYTHONPATH={CHECKOUT / 'lib'}\n"
-           f"Environment=SSL_CERT_FILE={STUB_CERT}\n")
+    path = "".join(f"Environment={k}={v}\n" for k, v in PROGRAM_ENV.items())
+    env = path + f"Environment=SSL_CERT_FILE={STUB_CERT}\n"
     endpoint = (f"{BROKER_ADDR}:{BROKER_PORT}" if over_tcp
                 else f"unix:%t/{UNIT}/broker.sock")
     (UNITS / f"{UNIT}-broker.service").write_text(
         "# written by tests/manual/shape1_rig.py — removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={py} {CHECKOUT / 'libexec' / 'customs-broker'}"
+        f"ExecStart={py} {LIBEXEC / 'customs-broker'}"
         f" --name {NAME} --listen {endpoint}"
         f" --caller-uid {os.getuid()}"
         f" --host {PROVIDER}={CREDENTIAL}"
@@ -172,7 +172,7 @@ def write_units(over_tcp):
     (UNITS / f"{UNIT}-inspect.service").write_text(
         "# written by tests/manual/shape1_rig.py — removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={py} {CHECKOUT / 'libexec' / 'customs-inspect'}"
+        f"ExecStart={py} {LIBEXEC / 'customs-inspect'}"
         f" --name {NAME} --policy {POLICY} --state-dir {STATE}"
         f" --status {STATUS} --record {RECORD}"
         f" --broker {endpoint}\n"
@@ -185,10 +185,10 @@ def write_units(over_tcp):
     (UNITS / f"{UNIT}-resolve.service").write_text(
         "# written by tests/manual/shape1_rig.py — removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={py} {CHECKOUT / 'libexec' / 'customs-resolve'}"
+        f"ExecStart={py} {LIBEXEC / 'customs-resolve'}"
         f" --name {NAME} --address {LOOPBACK_MAP} --policy {POLICY}"
         f" --status {RESOLVE_STATUS}\n"
-        f"Environment=PYTHONPATH={CHECKOUT / 'lib'}\n")
+        + path)
     run(["systemctl", "--user", "daemon-reload"])
 
 
@@ -400,7 +400,7 @@ def chain_counter(pid, comment):
 
 
 def probe(pid, dns, secret, over_tcp):
-    say("premise")
+    say(f"premise (programs: {LIBEXEC})")
     caps = int(next(ln.split()[1] for ln in
                     Path(f"/proc/{pid}/status").read_text().splitlines()
                     if ln.startswith("CapBnd:")), 16)

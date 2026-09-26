@@ -81,9 +81,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import riglib  # noqa
 from riglib import (  # noqa
-    CA_BUNDLE_IN_CONTAINER, CHECKOUT, CREDENTIAL, IMAGE, INSPECT_CLEARTEXT,
-    INSPECT_TLS, NAME, PLACEHOLDER, PROVIDER, RESOLVE_PORT, RIG, STUB_CERT,
-    UNLISTED, row, run, say,
+    CA_BUNDLE_IN_CONTAINER, CREDENTIAL, IMAGE, INSPECT_CLEARTEXT,
+    INSPECT_TLS, LIBEXEC, NAME, PLACEHOLDER, PROGRAM_ENV, PROVIDER,
+    RESOLVE_PORT, RIG, STUB_CERT, UNLISTED, row, run, say,
 )
 from egress_ca import ca_cert_path  # noqa
 from egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
@@ -105,10 +105,10 @@ RECORD = RIG / "egress-1n.jsonl"
 BUNDLE = RIG / "bundle-1n.pem"
 CRED = RIG / f"{CREDENTIAL}-1n.cred"
 
-# PYTHONPATH because the checkout is not installed. SSL_CERT_FILE hands both
+# PYTHONPATH when the programs are the checkout's. SSL_CERT_FILE hands both
 # programs the stub's certificate and replaces their trust store, which is
 # fine only because neither dials anything but the stub here.
-ENV = {"PYTHONPATH": str(CHECKOUT / "lib"), "SSL_CERT_FILE": str(STUB_CERT)}
+ENV = {**PROGRAM_ENV, "SSL_CERT_FILE": str(STUB_CERT)}
 
 
 # --- the host side -----------------------------------------------------------
@@ -126,7 +126,7 @@ def start_broker():
     (UNITS / f"{UNIT}-broker.service").write_text(
         "# written by tests/manual/shape1n_rig.py — removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={sys.executable} {CHECKOUT / 'libexec' / 'customs-broker'}"
+        f"ExecStart={sys.executable} {LIBEXEC / 'customs-broker'}"
         f" --name {NAME} --listen unix:%t/{UNIT}/broker.sock"
         f" --caller-uid {os.getuid()}"
         f" --host {PROVIDER}={CREDENTIAL}"
@@ -178,9 +178,9 @@ def start_inspector(pid, netns_pid, notify):
     run(["systemd-run", "--user", "--quiet", "--unit", f"{UNIT}-inspect",
          *unit_type(notify),
          *(f"--setenv={k}={v}" for k, v in ENV.items()),
-         sys.executable, str(CHECKOUT / "libexec" / "customs-netns-listen"),
+         sys.executable, str(LIBEXEC / "customs-netns-listen"),
          "--pid", str(pid), "--",
-         sys.executable, str(CHECKOUT / "libexec" / "customs-inspect"),
+         sys.executable, str(LIBEXEC / "customs-inspect"),
          "--name", NAME, "--policy", str(POLICY), "--state-dir", str(STATE),
          "--status", str(STATUS), "--record", str(RECORD),
          "--broker", f"unix:{BROKER_SOCKET}", *extra])
@@ -199,10 +199,10 @@ def start_responder(pid, notify):
     container's namespace, and every name answered with its loopback."""
     run(["systemd-run", "--user", "--quiet", "--unit", f"{UNIT}-resolve",
          *unit_type(notify),
-         f"--setenv=PYTHONPATH={ENV['PYTHONPATH']}",
-         sys.executable, str(CHECKOUT / "libexec" / "customs-netns-listen"),
+         *(f"--setenv={k}={v}" for k, v in PROGRAM_ENV.items()),
+         sys.executable, str(LIBEXEC / "customs-netns-listen"),
          "--pid", str(pid), "--resolver", "--",
-         sys.executable, str(CHECKOUT / "libexec" / "customs-resolve"),
+         sys.executable, str(LIBEXEC / "customs-resolve"),
          "--name", NAME, "--address", "127.0.0.1", "--policy", str(POLICY),
          "--status", str(RESOLVE_STATUS)])
     READY["responder"] = [listening(pid, proto, RESOLVE_PORT)
@@ -396,7 +396,7 @@ def rows_for(inodes, tables):
 
 
 def probe(pid, dns, secret):
-    say("premise")
+    say(f"premise (programs: {LIBEXEC})")
     caps = int(next(ln.split()[1] for ln in
                     Path(f"/proc/{pid}/status").read_text().splitlines()
                     if ln.startswith("CapBnd:")), 16)

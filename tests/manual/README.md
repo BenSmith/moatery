@@ -4,6 +4,10 @@ Checks that need a real host and cannot run under `just test`. Each is
 invoked by hand, as an ordinary user, from a checkout on the proving host.
 Nothing here is a unit gate; these are the gate the unit suites cannot be.
 
+The shape-1 and 1n rigs run the checkout's programs, or with
+`CUSTOMS_LIBEXEC=/usr/libexec/customs` the installed RPM's, with no
+`PYTHONPATH`; the premise line names which.
+
 ## Writing a row here
 
 Every real defect the pair has had was correct code nothing connected to,
