@@ -141,6 +141,8 @@ a document workloadctl writes.
 ```bash
 just test     # all unit tests (unittest discover; 808)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
+just rpm      # the RPM, into rpmbuild/RPMS
+just rpm-image  # the RPM tested and built in a container (podman)
 python3 -m unittest tests.test_closure -v   # one module
 python3 tests/manual/shape1_rig.py          # on the proving host, as the user
 python3 tests/manual/shape1n_rig.py         # same; listeners in the netns

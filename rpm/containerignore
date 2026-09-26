@@ -1,0 +1,9 @@
+.git
+**/__pycache__
+rpmbuild
+.claude
+.codegraph
+.ruff_cache
+.idea
+.reference
+examples/bootc/customs.rpm

@@ -26,5 +26,11 @@ rpm:
         rpm/customs.spec
     find rpmbuild/RPMS -name "customs-*${serial}*.rpm"
 
+# the RPM as an image, localhost/customs-rpm:VERSION, built and tested in
+# a container from this checkout
+rpm-image:
+    podman build --ignorefile rpm/containerignore -f rpm/Containerfile \
+        -t "localhost/customs-rpm:$(cat VERSION)" .
+
 rpm-clean:
     rm -rf rpmbuild

@@ -1,0 +1,92 @@
+# The RPM as an image, REGISTRY/customs-rpm:VERSION, for the hypervisor
+# image to COPY --from. REGISTRY is the Actions variable naming the
+# local registry. A tag vVERSION builds, tests, signs and pushes it; a
+# manual run builds and tests only. A version is pushed once: a second
+# build of it is refused, not written over the first.
+#
+# Signed at push with the runner's sealed credentials, as the hypervisor
+# repo's images are; rpm/cosign.pub is that key's public half.
+
+name: rpm-image
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: rpm-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ${{ vars.REGISTRY }}
+  IMAGE_NAME: customs-rpm
+
+jobs:
+  build:
+    runs-on: native
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve the version
+        id: v
+        run: |
+          if [ -z "${REGISTRY}" ]; then
+            echo "::error::set the Actions variable REGISTRY"
+            exit 1
+          fi
+          VERSION=$(cat VERSION)
+          if [ "${GITHUB_REF_TYPE}" = tag ] \
+              && [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} is not v${VERSION} (VERSION)"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: |
+          sudo podman build --pull=newer \
+            --ignorefile rpm/containerignore -f rpm/Containerfile \
+            -t "localhost/${IMAGE_NAME}:build" .
+
+      - name: Sign and push
+        if: github.ref_type == 'tag'
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          if sudo skopeo inspect --raw "docker://${IMAGE}:${VERSION}" \
+              >/dev/null 2>&1; then
+            echo "::error::${IMAGE}:${VERSION} exists; bump VERSION"
+            exit 1
+          fi
+          CREDS=/run/credentials/forgejo-runner.service
+          if ! sudo test -s "${CREDS}/cosign-key"; then
+            echo "::error::no signing credential at ${CREDS}/cosign-key"
+            exit 1
+          fi
+          sudo podman tag "localhost/${IMAGE_NAME}:build" "${IMAGE}:${VERSION}"
+          sudo podman push \
+            --sign-by-sigstore-private-key "${CREDS}/cosign-key" \
+            --sign-passphrase-file "${CREDS}/cosign-pass" \
+            --digestfile /tmp/customs-rpm.digest "${IMAGE}:${VERSION}"
+          DIGEST=$(cat /tmp/customs-rpm.digest)
+          printf '{"default":[{"type":"reject"}],"transports":{"docker":{"%s":[{"type":"sigstoreSigned","keyPath":"%s","signedIdentity":{"type":"matchRepository"}}]}}}' \
+            "${IMAGE}" "$(pwd)/rpm/cosign.pub" > /tmp/customs-rpm-policy.json
+          sudo podman pull -q \
+            --signature-policy=/tmp/customs-rpm-policy.json \
+            "${IMAGE}:${VERSION}" >/dev/null
+          echo "pushed and verified: ${IMAGE}:${VERSION} (${DIGEST})" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup
+        if: always()
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          sudo podman untag "localhost/${IMAGE_NAME}:build" 2>/dev/null || true
+          sudo podman untag "${IMAGE}:${VERSION}" 2>/dev/null || true
+          sudo podman image prune -f || true

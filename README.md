@@ -88,7 +88,11 @@ container shapes.
 
 Building the RPM takes `just` and `rpmbuild` (rpm-build): `just rpm`
 builds from the checkout into `rpmbuild/RPMS/`, with the programs and
-their modules in `/usr/libexec/customs/`.
+their modules in `/usr/libexec/customs/`. `just rpm-image` builds and
+tests it in a container, into `localhost/customs-rpm:VERSION`, an image
+holding `/customs.rpm` alone, for another image's build to copy; a tag
+`vVERSION` on the forge pushes it, signed, to the local registry
+(`.forgejo/workflows/rpm-image.yml`).
 
 ## Status
 

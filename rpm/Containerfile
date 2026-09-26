@@ -1,0 +1,22 @@
+# The RPM as an image: FROM scratch, /customs.rpm and nothing else, for
+# another image's build to take with COPY --from. Build from the
+# checkout root with this directory's ignore file (`just rpm-image`):
+#
+#   podman build --ignorefile rpm/containerignore -f rpm/Containerfile .
+#
+# The unit suite runs first, as a user: run as root, the tests that
+# expect a permission to be refused would find it granted.
+
+ARG FEDORA_VERSION=44
+FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION} AS build
+RUN dnf -y install python3 openssl rpm-build just && dnf clean all \
+    && useradd -m build
+COPY --chown=build:build . /src
+USER build
+WORKDIR /src
+RUN just test && just rpm \
+    && set -- rpmbuild/RPMS/noarch/customs-*.rpm && test $# -eq 1 \
+    && mv "$1" /home/build/customs.rpm
+
+FROM scratch
+COPY --from=build /home/build/customs.rpm /customs.rpm
