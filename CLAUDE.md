@@ -138,7 +138,7 @@ a document workloadctl writes.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 808)
+just test     # all unit tests (unittest discover; 852)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 just rpm      # the RPM, into rpmbuild/RPMS
 just rpm-image  # the RPM tested and built in a container (podman)
