@@ -188,6 +188,11 @@ What remains:
 - Everything the workload dials resolves to the inspector's address, so
   a port other than 443 and 80 meets the egress drop, by name as by
   address. Nothing but those two ports leaves in any shape here.
+- A name in `--static` is the exception, for a caller whose own filter
+  lets a destination past the inspector: it is answered with the
+  addresses the map gives, and none for a family the map lacks, since
+  the synthesised address does not serve that destination's port. Such
+  a name counts as listed.
 - The programs' own lookups are not the responder's. In shapes 1 and 1n
   they are the host's; in 1b they go to pasta's forwarder, and the
   egress chain accepts port 53 for the programs' mark alone.

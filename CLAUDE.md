@@ -24,8 +24,8 @@ copy (2026-09-24) of workloadctl's:
   libexec/workload-inspect-listener   # → customs-inspect
   libexec/workload-vm-resolve         # → customs-resolve
   lib/                                # the 24-module closure
-  lib/dns_wire.py                     # → resolve_wire.py  } less the
-  lib/resolve_server.py               # → resolve_serve.py } static map
+  lib/dns_wire.py                     # → resolve_wire.py
+  lib/resolve_server.py               # → resolve_serve.py
   tests/test_vm_resolve.py            # → tests/test_resolve.py
   tests/test_broker_closure.py        # holds the broker closure
   tests/test_inspector_closure.py     # holds the inspector closure
@@ -78,11 +78,11 @@ other half and reaches workloadctl with the dependency.
 It is customs-only and has no workloadctl counterpart.
 
 `libexec/customs-resolve` is workloadctl's VM responder made a program
-of its own: every name answered with `--address`, counted against the
-inspector's policy, never forwarded. `customs/resolve_policy.py` is
-customs'; `resolve_wire` and `resolve_serve` are workloadctl's
-`dns_wire` and `resolve_server` less the static map, named apart so
-that neither is mistaken for the other. A fix to the wire parser or the serve loop that applies to
+of its own: every name answered with `--address`, or from the
+`--static` map, counted against the inspector's policy, never
+forwarded. `customs/resolve_policy.py` is customs'; `resolve_wire` and
+`resolve_serve` are workloadctl's `dns_wire` and `resolve_server`,
+named apart so that neither is mistaken for the other. A fix to the wire parser or the serve loop that applies to
 workloadctl's is mirrored.
 
 ## Until the first release
@@ -102,11 +102,10 @@ dependency. What the switch costs, all in the hypervisor repo:
   relays no HTTP/2 and refuses an `http2` list that names a host. Its
   `h2_unrecorded` figure retired with it.
 
-Nothing changes in customs. workloadctl's own responder,
-`workload-vm-resolve`, is not part of the switch: `customs-resolve` was
-taken from it without the static map workloadctl's VMs use to name
-non-HTTP destinations, and takes its answers as flags rather than from
-a document workloadctl writes.
+workloadctl's own responder, `workload-vm-resolve`, was not part of the
+switch. `customs-resolve` has its static map now (`--static`, 0.3.0),
+so the VMs can run it: workloadctl writes the map as its own file and
+passes the rest as flags.
 
 ## Conventions carried over from workloadctl
 

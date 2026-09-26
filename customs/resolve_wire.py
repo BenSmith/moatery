@@ -13,6 +13,7 @@ from .inspect_document import hostname_control_character, normalise_hostname
 
 FLAG_QR = 0x8000
 FLAG_AA = 0x0400
+FLAG_TC = 0x0200
 FLAG_RD = 0x0100
 FLAG_RA = 0x0080
 OPCODE_MASK = 0x7800
@@ -31,8 +32,10 @@ CLASS_IN = 1
 HEADER = struct.Struct("!HHHHHH")
 HEADER_LEN = HEADER.size
 
-# The classic UDP message size. An answer here is at most one record, well
-# inside it; a datagram is read into four times as much.
+# The classic UDP message size. A synthesised answer is one record, well
+# inside it; a static name with many addresses is not, and what does not
+# fit is dropped with the truncate bit set, which sends the client to TCP.
+# A datagram is read into four times as much.
 UDP_BUDGET = 512
 
 # Bound on one TCP message, which carries its own 16-bit length prefix. A
@@ -104,9 +107,10 @@ def pack_address(text):
     return socket.inet_pton(socket.AF_INET, text)
 
 
-def build_answer(query, policy, counters=None):
+def build_answer(query, policy, budget=None, counters=None):
     """The response to one query, as the full message.
 
+    `budget` bounds the message, for UDP; None is unbounded, for TCP.
     `counters` is optional, and a response is never shaped by whether
     anyone is counting.
     """
@@ -146,20 +150,31 @@ def build_answer(query, policy, counters=None):
             counters.record_nodata()
         return HEADER.pack(ident, base | RCODE_NOERROR, 1, 0, 0, 0) + question
 
-    addresses = policy.answers(qtype)
+    addresses, source = policy.answers(name, qtype)
     records = bytearray()
+    count = 0
+    truncated = False
     for text in addresses:
         rdata = pack_address(text)
         # 0xC00C: the answer's name as a pointer to the question's, which is
         # at offset 12 in every message built here.
-        records += struct.pack("!HHHIH", 0xC00C, qtype, CLASS_IN,
-                               policy.ttl, len(rdata)) + rdata
+        record = struct.pack("!HHHIH", 0xC00C, qtype, CLASS_IN,
+                             policy.ttl, len(rdata)) + rdata
+        if budget is not None and \
+                HEADER_LEN + len(question) + len(records) + len(record) \
+                > budget:
+            truncated = True
+            break
+        records += record
+        count += 1
 
     if counters is not None:
-        counters.record_answer(name, len(addresses), policy.on_a_list(name))
+        counters.record_answer(name, source, count, policy.on_a_list(name))
     log(f"  {name or '.'} {'AAAA' if qtype == TYPE_AAAA else 'A'} -> "
-        f"{len(addresses)} record(s)")
-    return (HEADER.pack(ident, base | RCODE_NOERROR, 1, len(addresses), 0, 0)
+        f"{source}: {count} record(s)"
+        + (" (truncated; retry over TCP)" if truncated else ""))
+    flags_out = base | RCODE_NOERROR | (FLAG_TC if truncated else 0)
+    return (HEADER.pack(ident, flags_out, 1, count, 0, 0)
             + question + bytes(records))
 
 

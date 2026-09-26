@@ -62,6 +62,7 @@ class Counters:
         # half-applied observation has figures that do not add up.
         self._lock = threading.Lock()
         self.synthesised = 0
+        self.static = 0
         self.nodata = 0
         self.unlisted = 0
         self.malformed = 0
@@ -69,9 +70,12 @@ class Counters:
         # map a name-encoding workload is trying to fill.
         self.unlisted_names = BoundedCounts(top_n)
 
-    def record_answer(self, name: str, count: int, on_a_list: bool) -> None:
+    def record_answer(self, name: str, source: str, count: int,
+                      on_a_list: bool) -> None:
         with self._lock:
-            if count:
+            if source == "static":
+                self.static += 1
+            elif count:
                 self.synthesised += 1
             else:
                 self.nodata += 1
@@ -98,6 +102,7 @@ class Counters:
             return {
                 "queries": {
                     "synthesised": self.synthesised,
+                    "static": self.static,
                     "nodata": self.nodata,
                     "malformed": self.malformed,
                 },
@@ -113,7 +118,8 @@ def serve_datagram(sock, policy, counters=None):
         log(f"  WARNING: recvfrom failed: {exc}")
         return
     try:
-        reply = build_answer(query, policy, counters=counters)
+        reply = build_answer(query, policy, budget=UDP_BUDGET,
+                             counters=counters)
     except Malformed as exc:
         if counters is not None:
             counters.record_malformed()
@@ -228,6 +234,8 @@ def handle_stream(conn, policy, counters=None, deadline=None):
                 if not _arm(conn, deadline):
                     return
                 try:
+                    # No budget: TCP is where a truncated UDP answer is
+                    # asked again.
                     reply = build_answer(query, policy, counters=counters)
                 except Malformed as exc:
                     if counters is not None:

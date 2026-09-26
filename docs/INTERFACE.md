@@ -2,10 +2,10 @@
 
 What customs keeps stable for a program that imports its modules or
 reads its status file. workloadctl is that program: it requires the
-customs RPM, runs `customs-broker` and `customs-inspect`, imports the
-names below and reads the inspector's status file into its metrics and
-`workloadctl doctor`. `tests/test_interface.py` holds both lists to
-the code.
+customs RPM, runs `customs-broker`, `customs-inspect` and
+`customs-resolve`, imports the names below and reads the inspector's
+and the responder's status files into its metrics and `workloadctl
+doctor`. `tests/test_interface.py` holds the three lists to the code.
 
 ## Imported names
 
@@ -81,10 +81,29 @@ mint.denials
 A key may be added; one of these is not renamed or removed without a
 release that says so.
 
+## The responder's status file
+
+`customs-resolve --status PATH` replaces the file every thirty seconds
+and on the way out, under the same promise:
+
+```
+queries.synthesised         A/AAAA answered with --address/--address6
+queries.static              A/AAAA for a --static name
+queries.nodata              every other type, and an AAAA with no v6
+queries.malformed           queries that were not answerable DNS
+unlisted                    A/AAAA for a name on no list and not static
+unlisted_names              {name: count}, bounded
+written_at                  when the file was written
+```
+
+`--static PATH` is a JSON object of name to a list of address strings,
+read once at start, and refused whole, at start, over anything else.
+
 ## Module names
 
 Within the package the module names are workloadctl's, except the
 responder's two: `resolve_wire` and `resolve_serve` are workloadctl's
-`dns_wire` and `resolve_server` less its static map. `resolve_policy`
-has workloadctl's name and not its contents: it takes its answers from
-flags, where workloadctl's reads a document workloadctl writes.
+`dns_wire` and `resolve_server`. `resolve_policy` has workloadctl's
+name and not its contents: it takes its answers from flags and the
+`--static` file, where workloadctl's reads a document workloadctl
+writes.

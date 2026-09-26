@@ -21,9 +21,16 @@ sends a stub through its whole retry schedule. No OPT record is sent; a
 stub reads its absence as no EDNS0 and downgrades once. No SOA either, so
 a stub cannot cache an empty answer, and a repeated one is asked again.
 
+A name in the --static map is answered from it instead, with the
+addresses given there and nothing synthesised for a family it lacks: a
+destination the workload reaches past the inspector, on a port the
+inspector does not serve, would otherwise hang at --address. An answer
+too long for UDP is cut with the truncate bit set, which sends the
+client to TCP, where it is whole.
+
 The policy is the inspector's, read to count and never to answer: a query
-for a name no list admits is counted as `unlisted`, the signature of
-something encoding data into names.
+for a name no list admits, and no static entry names, is counted as
+`unlisted`, the signature of something encoding data into names.
 
 It never binds. The socket unit binds and hands the sockets in, UDP and
 TCP; a missing activation environment is a failure, never a fallback
@@ -41,7 +48,7 @@ import sys
 sys.dont_write_bytecode = True
 
 from customs.inspect_policy import load_policy
-from customs.resolve_policy import Policy
+from customs.resolve_policy import Policy, load_static
 from customs.resolve_serve import Counters, serve
 from customs.resolve_wire import log
 from customs.sd_listen import NotSocketActivated
@@ -87,6 +94,10 @@ def parse_args(argv):
     parser.add_argument("--policy", required=True,
                         help="the inspector's policy document, read once at "
                              "start to count unlisted names")
+    parser.add_argument("--static", default=None,
+                        help="a JSON object of name to address list, read "
+                             "once at start; those names are answered with "
+                             "those addresses")
     parser.add_argument("--status", required=True,
                         help="where the counters are written")
     return parser.parse_args(argv[1:])
@@ -104,6 +115,11 @@ def main(argv=None):
         print(f"error: could not read {args.policy}: {exc}", file=sys.stderr)
         return 1
     try:
+        static = load_static(args.static) if args.static else None
+    except (OSError, ValueError) as exc:
+        print(f"error: could not read {args.static}: {exc}", file=sys.stderr)
+        return 1
+    try:
         sockets = inherited_listening_sockets()
     except NotSocketActivated as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -111,10 +127,11 @@ def main(argv=None):
     if not sockets:
         print("error: LISTEN_FDS=0: no sockets were passed", file=sys.stderr)
         return 1
-    policy = Policy(args.address, args.address6, admits=lists.admits)
+    policy = Policy(args.address, args.address6, admits=lists.admits,
+                    static=static)
     log(f"  responder for {args.name}: {len(sockets)} socket(s), "
         f"A {args.address}, AAAA {args.address6 or 'none'}, "
-        f"ttl {policy.ttl}s")
+        f"{len(policy.static)} static name(s), ttl {policy.ttl}s")
     stopping = []
     signal.signal(signal.SIGTERM, lambda *_args: stopping.append(True))
     serve(sockets, policy, Counters(), args.status,

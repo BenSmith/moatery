@@ -97,7 +97,7 @@ it, signed, to the local registry (`.forgejo/workflows/rpm-image.yml`).
 
 ## Status
 
-Version 0.2.0. Both programs have run end to end on a real host in
+Version 0.3.0. Both programs have run end to end on a real host in
 three shapes: a rootless container (`tests/manual/shape1_rig.py`), the
 same with the listeners in the container (`tests/manual/shape1n_rig.py`),
 and a sidecar in a pod (`tests/manual/shape1b_rig.py`). The VM and cosy

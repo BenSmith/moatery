@@ -12,8 +12,7 @@ The property: the responder has no upstream socket at all. That is what
 closes DNS rather than filtering it, and it is a property of the source
 text, so it is checked as one.
 
-Ported with the responder from workloadctl's tests/test_vm_resolve.py; the
-static map and the UDP truncation it needed did not come across.
+Ported with the responder from workloadctl's tests/test_vm_resolve.py.
 """
 
 import ast
@@ -34,7 +33,7 @@ from unittest import mock
 from customs import resolve_serve
 from customs import resolve_wire
 from customs.inspect_policy import load_policy
-from customs.resolve_policy import RESOLVE_TTL, Policy
+from customs.resolve_policy import RESOLVE_TTL, Policy, load_static
 from customs.sd_listen import NotSocketActivated
 from tests import REPO_ROOT, load_script
 from tests.test_closure import RESOLVER, _closure, _lib_modules
@@ -136,8 +135,9 @@ def _admits(*patterns):
     return lambda name: hostname_match(name, patterns)
 
 
-def _policy(address6=ADDRESS6, admits=None):
-    return Policy(ADDRESS, address6, admits=admits or _admits())
+def _policy(address6=ADDRESS6, admits=None, static=None):
+    return Policy(ADDRESS, address6, admits=admits or _admits(),
+                  static=static)
 
 
 def _answer(policy, *args, **kwargs):
@@ -256,6 +256,170 @@ class TestNodata(unittest.TestCase):
                                  qclass=CLASS_CH).ancount, 0)
 
 
+class TestStaticMap(unittest.TestCase):
+    """A name in --static is answered from it, never synthesised."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.logged = _silenced_log()
+        cls.policy = _policy(static={
+            "git.local": ["192.0.2.9"],
+            "dual.local": ["192.0.2.10", "2001:db8::10"],
+        })
+
+    def test_a_static_name_wins_over_synthesis(self):
+        """A destination past the inspector, on a port it does not serve,
+        hangs at the synthesised address instead of being refused."""
+        self.assertEqual(_answer(self.policy, "git.local", TYPE_A).addresses(),
+                         ["192.0.2.9"])
+
+    def test_a_name_not_in_the_map_is_still_synthesised(self):
+        self.assertEqual(
+            _answer(self.policy, "elsewhere.example", TYPE_A).addresses(),
+            [ADDRESS])
+
+    def test_the_map_wins_completely_for_a_family_it_lacks(self):
+        """git.local has no v6 address, so AAAA is NODATA, not the
+        synthesised address: that would send a dual-stack client to the
+        listener that does not serve its port."""
+        reply = _answer(self.policy, "git.local", TYPE_AAAA)
+        self.assertEqual(reply.rcode, 0)
+        self.assertEqual(reply.ancount, 0)
+
+    def test_a_name_with_no_addresses_is_nodata_in_both_families(self):
+        """Listed with nothing to answer, it is still not synthesised."""
+        policy = _policy(static={"gone.local": []})
+        for qtype in (TYPE_A, TYPE_AAAA):
+            reply = _answer(policy, "gone.local", qtype)
+            self.assertEqual((reply.rcode, reply.ancount), (0, 0))
+
+    def test_a_dual_stack_name_answers_each_family_from_the_map(self):
+        self.assertEqual(
+            _answer(self.policy, "dual.local", TYPE_A).addresses(),
+            ["192.0.2.10"])
+        self.assertEqual(
+            _answer(self.policy, "dual.local", TYPE_AAAA).addresses(),
+            ["2001:db8::10"])
+
+    def test_the_lookup_is_case_insensitive(self):
+        """Some resolvers randomise the case of a query (0x20), so a
+        case-sensitive lookup misses for exactly those, intermittently."""
+        for spelling in ("GIT.local", "Git.Local", "git.LOCAL"):
+            self.assertEqual(
+                _answer(self.policy, spelling, TYPE_A).addresses(),
+                ["192.0.2.9"], spelling)
+
+    def test_a_map_key_is_normalised(self):
+        policy = _policy(static={"GIT.Local.": ["192.0.2.9"]})
+        self.assertEqual(_answer(policy, "git.local", TYPE_A).addresses(),
+                         ["192.0.2.9"])
+
+    def test_a_static_name_is_on_a_list(self):
+        """The workload's filter admits it, so a query for it is not the
+        signature `unlisted` counts, though no inspector list names it."""
+        counters = resolve_serve.Counters()
+        resolve_wire.build_answer(query("git.local", TYPE_A), self.policy,
+                                  counters=counters)
+        snap = counters.snapshot()
+        self.assertEqual(snap["unlisted"], 0)
+        self.assertEqual(snap["queries"]["static"], 1)
+        self.assertEqual(snap["queries"]["synthesised"], 0)
+
+    def test_a_static_answer_with_no_record_is_counted_static(self):
+        counters = resolve_serve.Counters()
+        resolve_wire.build_answer(query("git.local", TYPE_AAAA), self.policy,
+                                  counters=counters)
+        self.assertEqual(counters.snapshot()["queries"]["static"], 1)
+        self.assertEqual(counters.snapshot()["queries"]["nodata"], 0)
+
+    def test_the_source_is_logged(self):
+        self.logged.clear()
+        _answer(self.policy, "git.local", TYPE_A)
+        self.assertEqual(self.logged,
+                         ["  git.local A -> static: 1 record(s)"])
+
+
+class TestLoadStatic(unittest.TestCase):
+    """The file --static names is refused whole at start, so a bad entry
+    stops the responder rather than SERVFAILing its name on every query."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.path = os.path.join(self.dir, "static.json")
+
+    def load(self, document):
+        Path(self.path).write_text(json.dumps(document))
+        return load_static(self.path)
+
+    def test_a_map_loads_with_canonical_addresses(self):
+        self.assertEqual(
+            self.load({"git.local": ["192.0.2.9", "2001:DB8:0::9"]}),
+            {"git.local": ["192.0.2.9", "2001:db8::9"]})
+
+    def test_an_empty_map_loads(self):
+        self.assertEqual(self.load({}), {})
+
+    def test_what_is_refused(self):
+        for document in (["git.local"],
+                         {"git.local": "192.0.2.9"},
+                         {"git.local": ["not-an-ip"]},
+                         {"git.local": [5]},
+                         {"git.local": [None]}):
+            with self.subTest(document=document):
+                with self.assertRaises(ValueError):
+                    self.load(document)
+
+    def test_the_refusal_names_the_entry(self):
+        with self.assertRaisesRegex(ValueError, "git.local"):
+            self.load({"git.local": ["not-an-ip"]})
+
+
+class TestUdpBudget(unittest.TestCase):
+    """The one answer that sets the truncate bit, and the retry it
+    invites."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.logged = _silenced_log()
+        # More v4 addresses than fit in 512 bytes at 16 bytes a record.
+        cls.policy = _policy(static={
+            "many.local": [f"192.0.2.{n}" for n in range(1, 60)]})
+
+    def test_a_synthesised_answer_never_truncates(self):
+        reply = Reply(resolve_wire.build_answer(
+            query("example.com", TYPE_A), self.policy,
+            budget=resolve_wire.UDP_BUDGET))
+        self.assertFalse(reply.tc)
+
+    def test_an_oversized_answer_truncates_rather_than_being_clipped(self):
+        """What does not fit is dropped with the bit set, which sends the
+        client to TCP. Dropped quietly, the answer is partial and the
+        client cannot know it."""
+        reply = Reply(resolve_wire.build_answer(
+            query("many.local", TYPE_A), self.policy,
+            budget=resolve_wire.UDP_BUDGET))
+        self.assertTrue(reply.tc)
+        self.assertLess(reply.ancount, 59)
+        self.assertEqual(len(reply.addresses()), reply.ancount)
+        self.assertLessEqual(len(reply.raw), resolve_wire.UDP_BUDGET)
+
+    def test_tcp_carries_the_whole_answer(self):
+        reply = Reply(resolve_wire.build_answer(query("many.local", TYPE_A),
+                                                self.policy))
+        self.assertFalse(reply.tc)
+        self.assertEqual(reply.ancount, 59)
+
+    def test_the_udp_path_passes_the_budget(self):
+        """The bound lives in build_answer, and only the datagram path
+        can apply it; without it the kernel sends what it likes."""
+        sock = _OneDatagram(query("many.local", TYPE_A))
+        resolve_serve.serve_datagram(sock, self.policy)
+        reply = Reply(sock.sent)
+        self.assertTrue(reply.tc)
+        self.assertLessEqual(len(reply.raw), resolve_wire.UDP_BUDGET)
+
+
 class TestEdns(unittest.TestCase):
     """A query carrying OPT gets a well-formed answer without an OPT."""
 
@@ -364,7 +528,7 @@ class TestLogInjectionViaLabel(unittest.TestCase):
     malformed: FORMERR and the malformed counter.
     """
 
-    _forged = "evil\n  allowed.example A -> 1 record(s)"
+    _forged = "evil\n  allowed.example A -> synthesised: 1 record(s)"
 
     def setUp(self):
         self.logged = _silenced_log()
@@ -687,7 +851,7 @@ class TestTcpDoesNotHoldTheLoop(unittest.TestCase):
         def hammer():
             try:
                 for _ in range(2000):
-                    counters.record_answer("a.example", 1, False)
+                    counters.record_answer("a.example", "synthesised", 1, False)
                     counters.record_malformed()
                     counters.snapshot()
             except Exception as exc:  # noqa: BLE001
@@ -720,11 +884,16 @@ class TestFuzz(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.logged = _silenced_log()
-        cls.policy = _policy()
+        # More addresses than fit a UDP answer, in both families, so the
+        # packing and the budget are on the fuzz's path and not skipped by
+        # a one-record answer.
+        cls.policy = _policy(static={
+            "git.local": [f"192.0.2.{n}" for n in range(1, 60)]
+                         + [f"2001:db8::{n}" for n in range(1, 40)]})
 
     @staticmethod
     def _corpus():
-        names = ("example.com", "", "a" * 63 + ".com",
+        names = ("git.local", "example.com", "", "a" * 63 + ".com",
                  ".".join("ab" for _ in range(120)))
         corpus = []
         for name in names:
@@ -755,10 +924,12 @@ class TestFuzz(unittest.TestCase):
     def test_no_input_escapes_as_an_unexpected_exception(self):
         rng = random.Random(0)
         corpus = self._corpus()
-        for _ in range(self.ITERATIONS):
+        for i in range(self.ITERATIONS):
             data = self._mutate(rng, corpus)
+            budget = resolve_wire.UDP_BUDGET if i % 2 else None
             try:
-                reply = resolve_wire.build_answer(data, self.policy)
+                reply = resolve_wire.build_answer(data, self.policy,
+                                                  budget=budget)
             except (resolve_wire.Malformed, resolve_wire.NotAQuery):
                 continue
             except Exception as exc:  # noqa: BLE001
@@ -767,8 +938,8 @@ class TestFuzz(unittest.TestCase):
             self.assertTrue(struct.unpack("!H", reply[2:4])[0] & 0x8000,
                             data.hex())
             self.assertEqual(reply[:2], data[:2], data.hex())
-            self.assertLessEqual(len(reply), resolve_wire.UDP_BUDGET,
-                                 data.hex())
+            if budget is not None:
+                self.assertLessEqual(len(reply), budget, data.hex())
 
 
 class TestCounters(unittest.TestCase):
@@ -823,8 +994,8 @@ class TestCounters(unittest.TestCase):
         resolve_wire.build_answer(query("allowed.example", TYPE_AAAA), policy,
                               counters=self.counters)
         snap = self.counters.snapshot()
-        self.assertEqual(snap["queries"], {"synthesised": 0, "nodata": 1,
-                                           "malformed": 0})
+        self.assertEqual(snap["queries"], {"synthesised": 0, "static": 0,
+                                           "nodata": 1, "malformed": 0})
 
     def test_the_unlisted_name_map_is_bounded(self):
         for i in range(200):
@@ -842,8 +1013,9 @@ class TestCounters(unittest.TestCase):
         self.answer("allowed.example", TYPE_A)
         self.answer("elsewhere.example", TYPE_AAAA)
         self.assertEqual(self.logged,
-                         ["  allowed.example A -> 1 record(s)",
-                          "  elsewhere.example AAAA -> 1 record(s)"])
+                         ["  allowed.example A -> synthesised: 1 record(s)",
+                          "  elsewhere.example AAAA -> synthesised: "
+                          "1 record(s)"])
 
 
 class TestStatusFile(unittest.TestCase):
@@ -856,7 +1028,7 @@ class TestStatusFile(unittest.TestCase):
 
     def test_it_writes_the_counters(self):
         counters = resolve_serve.Counters()
-        counters.record_answer("a.example", 1, True)
+        counters.record_answer("a.example", "synthesised", 1, True)
         resolve_serve.emit_status(self.path, counters)
         doc = json.loads(Path(self.path).read_text())
         self.assertEqual(doc["queries"]["synthesised"], 1)
@@ -934,6 +1106,51 @@ class TestEntrypoint(unittest.TestCase):
         status = json.loads(Path(self.status).read_text())
         self.assertEqual(status["queries"]["synthesised"], 2)
         self.assertEqual(status["unlisted_names"], {"exfil.example": 1})
+
+    def test_a_static_name_is_answered_from_the_file(self):
+        static = os.path.join(self.dir, "static.json")
+        Path(static).write_text(json.dumps({"git.local": ["192.0.2.9"]}))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.addCleanup(sock.close)
+        sock.bind(("127.0.0.1", 0))
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.addCleanup(client.close)
+        client.settimeout(5)
+        seen = []
+
+        def poke():
+            client.sendto(query("git.local", TYPE_A), sock.getsockname())
+            seen.append(Reply(client.recv(512)))
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        saved = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, saved)
+        with mock.patch.object(self.mod, "inherited_listening_sockets",
+                               return_value=[sock]):
+            threading.Thread(target=poke, daemon=True).start()
+            rc = self.mod.main(self.argv("--static", static))
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen[0].addresses(), ["192.0.2.9"])
+        status = json.loads(Path(self.status).read_text())
+        self.assertEqual(status["queries"]["static"], 1)
+        self.assertEqual(status["unlisted"], 0)
+
+    def test_a_bad_static_file_is_refused_at_start(self):
+        static = os.path.join(self.dir, "static.json")
+        for text in ("{", '{"git.local": ["not-an-ip"]}'):
+            Path(static).write_text(text)
+            with self.subTest(text=text), mock.patch("sys.stderr") as err, \
+                    mock.patch.object(self.mod, "inherited_listening_sockets",
+                                      return_value=[object()]):
+                self.assertEqual(self.mod.main(self.argv("--static", static)),
+                                 1)
+            written = "".join(c.args[0] for c in err.write.call_args_list)
+            self.assertIn(static, written)
+
+    def test_a_missing_static_file_is_refused_at_start(self):
+        with mock.patch("sys.stderr"):
+            self.assertEqual(self.mod.main(self.argv(
+                "--static", os.path.join(self.dir, "absent.json"))), 1)
 
     def test_the_policy_is_the_inspectors_reader(self):
         """Read by inspect_policy.load_policy, so a document the inspector

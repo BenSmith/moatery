@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """What docs/INTERFACE.md publishes is what the code provides.
 
-Two lists: the names workloadctl imports, each defined in its module, and
-the status file's paths, each present in a file the inspector wrote. A
+Three lists: the names workloadctl imports, each defined in its module,
+and the two status files' paths, each present in a file the inspector or
+the responder wrote. A
 name or a key renamed without the list following would pass every other
 test and break workloadctl at the switch: an import error for a name, a
 figure that silently reads zero for a key.
@@ -13,6 +14,7 @@ import io
 import json
 import re
 import shutil
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +23,8 @@ from customs.egress_mint import mint_ca
 from customs.inspect_document import VmPolicyEntry
 from customs.inspect_listener import Listener, build_minter
 from customs.inspect_policy import Policy
+from customs.resolve_policy import Policy as ResolvePolicy
+from customs.resolve_serve import Counters, emit_status
 from tests import REPO_ROOT
 
 INTERFACE = Path(REPO_ROOT) / "docs" / "INTERFACE.md"
@@ -45,10 +49,10 @@ def published():
     return names
 
 
-def status_paths():
-    """Each path, as a tuple of keys, from the status file's block."""
+def status_paths(heading="The inspector's status file"):
+    """Each path, as a tuple of keys, from a status file's block."""
     return [tuple(line.split()[0].split("."))
-            for line in _block("The inspector's status file")
+            for line in _block(heading)
             if line.strip()]
 
 
@@ -100,14 +104,51 @@ class TestPublishedStatusPaths(unittest.TestCase):
         self.assertGreater(len(paths), 25)
 
     def test_every_published_path_is_in_the_file(self):
-        doc = self._written()
-        for path in status_paths():
-            with self.subTest(path=".".join(path)):
-                cur = doc
-                for key in path:
-                    self.assertIsInstance(cur, dict)
-                    self.assertIn(key, cur)
-                    cur = cur[key]
+        _assert_paths(self, self._written(), status_paths())
+
+
+
+def _assert_paths(case, doc, paths):
+    for path in paths:
+        with case.subTest(path=".".join(path)):
+            cur = doc
+            for key in path:
+                case.assertIsInstance(cur, dict)
+                case.assertIn(key, cur)
+                cur = cur[key]
+
+
+class TestPublishedResolverStatusPaths(unittest.TestCase):
+    """The file the responder writes, after one answer of each source."""
+
+    HEADING = "The responder's status file"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+
+    def test_the_list_is_read(self):
+        paths = status_paths(self.HEADING)
+        self.assertIn(("queries", "static"), paths)
+        self.assertIn(("unlisted_names",), paths)
+
+    def test_every_published_path_is_in_the_file(self):
+        from customs import resolve_wire
+        resolve_wire.log = lambda _line: None
+        counters = Counters()
+        policy = ResolvePolicy("192.0.2.1",
+                               static={"a.example": ["192.0.2.9"]})
+        for label in (b"a", b"b"):
+            # One A query for <label>.example, id 1, RD set.
+            question = (struct.pack("!HHHHHH", 1, 0x0100, 1, 0, 0, 0)
+                        + b"\x01" + label + b"\x07example\x00"
+                        + struct.pack("!HH", 1, 1))
+            resolve_wire.build_answer(question, policy, counters=counters)
+        status = self.tmp / "status.json"
+        emit_status(str(status), counters)
+        doc = json.loads(status.read_text())
+        self.assertEqual(doc["queries"]["static"], 1)
+        _assert_paths(self, doc, status_paths(self.HEADING))
 
 
 if __name__ == "__main__":

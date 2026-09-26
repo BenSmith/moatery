@@ -44,7 +44,8 @@ INSPECTOR_FLAGS = frozenset({
     "--caller-uid", "--netns-pid",
 })
 RESOLVER_FLAGS = frozenset({
-    "--name", "--address", "--address6", "--policy", "--status",
+    "--name", "--address", "--address6", "--policy", "--static",
+    "--status",
 })
 
 # Functions whose presence would mean a program derives a value it is meant
