@@ -3,7 +3,9 @@
 ## What this is
 
 `customs` is the egress inspector + credential broker pair for sandboxed
-workloads, to be lifted out of workloadctl into its own project. Read
+workloads, lifted out of workloadctl into its own project. workloadctl
+now requires the customs RPM and runs its programs; there is no second
+copy. Read
 `README.md`, then `docs/DESIGN.md` (how the pair applies to a rootless
 container, a pod sidecar, a VM, and cosy), `docs/POLICY.md` (the policy
 document) and `docs/INTERFACE.md` (the names workloadctl imports and
@@ -14,9 +16,10 @@ host.
 
 ## Where the code came from
 
-`customs/`, `libexec/` and the tests are a copy (2026-09-22) of these, in
-the hypervisor repo checked out beside this one, and the responder a
-copy (2026-09-24) of workloadctl's:
+`customs/`, `libexec/` and the tests began as a copy (2026-09-22) of
+these, in the hypervisor repo checked out beside this one, and the
+responder as a copy (2026-09-24) of workloadctl's. All of them are
+deleted there now; the list is for reading its history:
 
 ```
 ../hypervisor/workloadctl/
@@ -31,7 +34,7 @@ copy (2026-09-24) of workloadctl's:
   tests/test_inspector_closure.py     # holds the inspector closure
 ```
 
-Design, threat model and operating instructions for the pair as it exists:
+Design, threat model and operating instructions, still there:
 
 ```
 ../hypervisor/workloadctl/
@@ -41,13 +44,11 @@ Design, threat model and operating instructions for the pair as it exists:
   tests/manual/README.md   # "Writing a row here" preamble, before any rig
 ```
 
-workloadctl will require customs and run its entrypoints: a
-dependency, not two copies, because under copies every shared fix is a
-merge someone must remember, and the fixes flow one way (the shapes here
-reach code paths workloadctl's layouts never do). Until customs has a
-first release there is nothing to require, so workloadctl keeps its copy
-and a fix that matters to both goes to both ("Until the first release",
-below).
+workloadctl requires customs and runs its programs: a dependency, not
+two copies, because under copies every shared fix is a merge someone
+must remember, and the fixes flow one way (the shapes here reach code
+paths workloadctl's layouts never do). A fix is made here and reaches
+workloadctl with a release ("Releasing for workloadctl", below).
 
 The prose is renamed: nothing under `customs/` or `libexec/` says
 "workloadctl", cites its docs, uses its vocabulary (renderer,
@@ -62,8 +63,6 @@ the shape-1b and 1n flags: the broker's `--listen unix:PATH`
 `--caller-uid` and `--netns-pid` (`listed_in`, `netns_tables`,
 `namespace_uids`, the lookup's tables and the served uid ranges as
 parameters), and the record naming a unix upstream.
-Fixes are mirrored to workloadctl on a branch; the flags reach it with
-the dependency, not by mirror.
 
 `libexec/customs-netns-listen` is customs-only too: it binds the
 inspector's planes in a rootless container's network namespace and execs
@@ -82,30 +81,31 @@ It is customs-only and has no workloadctl counterpart.
 of its own: every name answered with `--address`, or from the
 `--static` map, counted against the inspector's policy, never
 forwarded. `customs/resolve_policy.py` is customs'; `resolve_wire` and
-`resolve_serve` are workloadctl's `dns_wire` and `resolve_server`,
-named apart so that neither is mistaken for the other. A fix to the wire parser or the serve loop that applies to
-workloadctl's is mirrored.
+`resolve_serve` began as workloadctl's `dns_wire` and
+`resolve_server`.
 
-## Until the first release
+## Releasing for workloadctl
 
-Delete this section at the switch. At the first release (a tag and the
-RPM from `just rpm`) the workloadctl copy is deleted, not maintained;
-whatever of `customs-mirror` is unmerged is superseded by the
-dependency. What the switch costs, all in the hypervisor repo:
+workloadctl's spec has `Requires: customs >= X.Y.Z`, and its
+`hypervisor.Containerfile` pins `ARG CUSTOMS_RPM=<registry>/customs-rpm:X.Y.Z`,
+verified against this repo's signing key. A flag, a name or a status key
+workloadctl comes to use is therefore a release here first:
 
-- `Requires: customs` in its spec.
-- Its units naming the two entrypoints here (or two symlinks under its
-  own libexec).
-- Its test modules that import partially from the closure importing
-  from the installed package.
-- Its two closure tests retired in favour of `test_closure.py` here.
-- Its `[[vm.network.http2]]` hosts rendered as `splice` entries: customs
-  relays no HTTP/2 and refuses an `http2` list that names a host. Its
-  `h2_unrecorded` figure retired with it.
+- Bump `VERSION`, and push the tag `vX.Y.Z`. Only a tag push publishes
+  the signed RPM image (`.forgejo/workflows/rpm-image.yml`); a manual
+  run of that workflow builds and tests, and pushes nothing.
+- Then, in the hypervisor repo, raise the spec's floor and the image pin
+  together.
+- `docs/INTERFACE.md` changes when workloadctl's imports or status reads
+  do; `tests/test_interface.py` holds it to the code, and workloadctl's
+  `tests/test_customs_seam.py` holds its side: the flags its units hand
+  each program, the names it imports, the keys it reads.
 
-workloadctl's own responder, `workload-vm-resolve`, followed in 0.3.0,
-once `customs-resolve` took a static map (`--static`): workloadctl
-writes the map as its own file and passes the rest as flags.
+What workloadctl does differently because of customs: it refuses
+`[[vm.network.http2]]` and `[[network.http2]]` by name (customs relays
+no HTTP/2 and refuses an `http2` list naming a host), writes the
+responder's `--static` map as a file of its own, and mints each
+workload's CA with `customs-mint-ca`.
 
 ## Conventions carried over from workloadctl
 
@@ -128,11 +128,8 @@ writes the map as its own file and passes the rest as flags.
   repo may be published.
 - **Never push, publish, or open a PR without being asked.** Commit
   freely and often; no unsolicited git-logistics commentary.
-- **A fix that goes to both trees is mirrored.** The workloadctl side
-  is committed on the working branch `customs-mirror` in the hypervisor
-  repo (cut from its `main` if it is gone), never on `main`, with the
-  same change and the same message; merging it there is a separate
-  decision.
+- **A fix goes here once.** workloadctl has no copy to mirror it into;
+  it takes the fix with a release (above).
 
 ## Commands
 
@@ -152,6 +149,6 @@ import `customs.<module>` and the modules import each other relatively.
 `tests/__init__.py` puts the checkout root on `sys.path`; test modules
 import as `tests.<name>`, and `load_script()` imports the extension-less
 entrypoints. `tests/test_closure.py` holds the package to be exactly the
-programs' closures, with no TOML, no passwd lookup and no derived value — it
-replaces workloadctl's two closure tests, whose other half (the generator
-handing every value across) has no counterpart here.
+programs' closures, with no TOML, no passwd lookup and no derived value.
+The other half, the generator handing every value across, is
+workloadctl's `tests/test_customs_seam.py`.
