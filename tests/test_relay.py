@@ -101,6 +101,14 @@ class _Peer:
                     pass
 
 
+def _send_until_closed(sock, data):
+    """A write the far side never takes, ended by the test closing it."""
+    try:
+        sock.sendall(data)
+    except OSError:
+        pass
+
+
 def _relay_in_thread(client, upstream, **kw):
     outcome = {}
 
@@ -196,7 +204,7 @@ class TestBothDirectionsAtOnce(unittest.TestCase):
             _guest, relay_client, relay_upstream, origin = self._pairs()
             thread, outcome = _relay_in_thread(relay_client, relay_upstream)
             writer = threading.Thread(
-                target=lambda: origin.sendall(_pattern(SIZE, 4)),
+                target=_send_until_closed, args=(origin, _pattern(SIZE, 4)),
                 daemon=True)
             writer.start()
             thread.join(10)
