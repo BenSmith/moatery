@@ -1,0 +1,18 @@
+# A bootc image with customs and what it recommends. The build context
+# is this directory, with the RPM from `just rpm` copied in as
+# customs.rpm:
+#
+#   podman build -t customs-bootc examples/bootc
+#
+# The lint is the build's gate: without --fatal-warnings it exits 0 on
+# a warning. It is run with no --skip, so nothing the dnf layer leaves
+# under /var or /run may survive it.
+
+ARG BASE=quay.io/fedora/fedora-bootc:44
+FROM $BASE
+COPY customs.rpm /tmp/customs.rpm
+RUN dnf -y install --setopt=install_weak_deps=True /tmp/customs.rpm \
+        podman passt nftables \
+    && dnf clean all && rm -f /tmp/customs.rpm \
+    && rm -rf /var/log/* /var/cache/* /var/lib/dnf/* /run/dnf
+RUN bootc container lint --fatal-warnings
