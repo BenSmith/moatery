@@ -14,7 +14,7 @@ host.
 
 ## Where the code came from
 
-`lib/`, `libexec/` and the tests are a copy (2026-09-22) of these, in
+`customs/`, `libexec/` and the tests are a copy (2026-09-22) of these, in
 the hypervisor repo checked out beside this one, and the responder a
 copy (2026-09-24) of workloadctl's:
 
@@ -49,7 +49,7 @@ first release there is nothing to require, so workloadctl keeps its copy
 and a fix that matters to both goes to both ("Until the first release",
 below).
 
-The prose is renamed: nothing under `lib/` or `libexec/` says
+The prose is renamed: nothing under `customs/` or `libexec/` says
 "workloadctl", cites its docs, uses its vocabulary (renderer,
 `validate`, substrate, SELinux labelling) or narrates history. Module
 names, but the responder's two, and every identifier workloadctl imports
@@ -79,11 +79,10 @@ It is customs-only and has no workloadctl counterpart.
 
 `libexec/customs-resolve` is workloadctl's VM responder made a program
 of its own: every name answered with `--address`, counted against the
-inspector's policy, never forwarded. `lib/resolve_policy.py` is
+inspector's policy, never forwarded. `customs/resolve_policy.py` is
 customs'; `resolve_wire` and `resolve_serve` are workloadctl's
-`dns_wire` and `resolve_server` less the static map, named apart because
-workloadctl keeps its pair and, after the switch, has both directories
-on its path. A fix to the wire parser or the serve loop that applies to
+`dns_wire` and `resolve_server` less the static map, named apart so
+that neither is mistaken for the other. A fix to the wire parser or the serve loop that applies to
 workloadctl's is mirrored.
 
 ## Until the first release
@@ -149,9 +148,11 @@ python3 tests/manual/shape1n_rig.py         # same; listeners in the netns
 python3 tests/manual/shape1b_rig.py         # same; builds container/ first
 ```
 
-`tests/__init__.py` puts `lib/` on `sys.path`; test modules import as
-`tests.<name>`, and `load_script()` imports the extension-less
-entrypoints. `tests/test_closure.py` holds lib/ to be exactly the
+`customs/` is the package, installed to site-packages; the programs
+import `customs.<module>` and the modules import each other relatively.
+`tests/__init__.py` puts the checkout root on `sys.path`; test modules
+import as `tests.<name>`, and `load_script()` imports the extension-less
+entrypoints. `tests/test_closure.py` holds the package to be exactly the
 programs' closures, with no TOML, no passwd lookup and no derived value — it
 replaces workloadctl's two closure tests, whose other half (the generator
 handing every value across) has no counterpart here.

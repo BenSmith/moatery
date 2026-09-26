@@ -123,9 +123,9 @@ the shape-1 recipe as `DESIGN.md` had it, which is now corrected:
   "each container gets its own inspector port" is not something the
   program supports today: one inspected container per host loopback.
 
-And two facts for the packaging step: the entrypoints find `lib/` by
-`sys.path` only, so a checkout needs `PYTHONPATH` in the unit (an install
-puts them side by side); and nothing minted the CA, so the operator had
+And two facts for the packaging step: the entrypoints find their modules
+by `sys.path` only, so a checkout needs `PYTHONPATH` in the unit (an
+install puts the package where Python looks); and nothing minted the CA, so the operator had
 to, before the socket was first activated. `customs-mint-ca` is that
 step now.
 

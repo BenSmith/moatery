@@ -9,27 +9,32 @@ the code.
 
 ## Imported names
 
-The modules are installed together in `/usr/libexec/customs/`. These
-are the names workloadctl's shipped code imports:
+customs is a package, `customs`, installed where Python finds it; the
+programs are in `/usr/libexec/customs/`. These are the names
+workloadctl's shipped code imports:
 
 ```
-broker_profiles   BROKER_DEFAULT_AUTH_FORMAT BROKER_DEFAULT_AUTH_HEADER
-egress_ca         CA_DIR_NAME DENIAL_DIR_NAME LEAF_DIR_NAME
-                  ca_cert_path ca_dir ca_key_path ca_openssl_argv
-                  denial_dir leaf_dir
-egress_mint       pem_fingerprint
-egress_plane      CLEARTEXT PLANES TLS
-egress_record     DROP_BROKER_UNREACHABLE DROP_MISDIRECTED
-                  DROP_MISDIRECTED_LISTED DROP_NOT_HTTP
-                  DROP_NOT_HTTP_POLICY DROP_REASONS LOG_ID_FIELD
-                  LOG_REQ_FIELD RECORD_DECISIONS RECORD_MODES
-egress_status     BoundedCounts OTHER_KEY STATUS_TOP_N clear_status
-                  write_status
-inspect_document  INSPECT_DIGEST_KEY TLS_DEFAULT TLS_MODES
-                  VmPolicyEntry hostname_control_character
-                  hostname_match inspect_policy_digest
-                  normalise_hostname patterns_overlap policy_governs
-sd_listen         NotSocketActivated inherited_listening_sockets
+customs.broker_profiles   BROKER_DEFAULT_AUTH_FORMAT
+                          BROKER_DEFAULT_AUTH_HEADER
+customs.egress_ca         CA_DIR_NAME DENIAL_DIR_NAME LEAF_DIR_NAME
+                          ca_cert_path ca_dir ca_key_path
+                          ca_openssl_argv denial_dir leaf_dir
+customs.egress_mint       pem_fingerprint
+customs.egress_plane      CLEARTEXT PLANES TLS
+customs.egress_record     DROP_BROKER_UNREACHABLE DROP_MISDIRECTED
+                          DROP_MISDIRECTED_LISTED DROP_NOT_HTTP
+                          DROP_NOT_HTTP_POLICY DROP_REASONS
+                          LOG_ID_FIELD LOG_REQ_FIELD
+                          RECORD_DECISIONS RECORD_MODES
+customs.egress_status     BoundedCounts OTHER_KEY STATUS_TOP_N
+                          clear_status write_status
+customs.inspect_document  INSPECT_DIGEST_KEY TLS_DEFAULT TLS_MODES
+                          VmPolicyEntry hostname_control_character
+                          hostname_match inspect_policy_digest
+                          normalise_hostname patterns_overlap
+                          policy_governs
+customs.sd_listen         NotSocketActivated
+                          inherited_listening_sockets
 ```
 
 Some of these are unused inside customs (`clear_status`, `leaf_dir`,
@@ -78,9 +83,8 @@ release that says so.
 
 ## Module names
 
-Module names are workloadctl's, except the responder's two:
-`resolve_wire` and `resolve_serve` are workloadctl's `dns_wire` and
-`resolve_server` less its static map. workloadctl keeps its pair for
-its own responder, which imports `inspect_document` from customs, so
-both directories are on that program's path and a shared name would
-load whichever came first.
+Within the package the module names are workloadctl's, except the
+responder's two: `resolve_wire` and `resolve_serve` are workloadctl's
+`dns_wire` and `resolve_server` less its static map. `resolve_policy`
+has workloadctl's name and not its contents: it takes its answers from
+flags, where workloadctl's reads a document workloadctl writes.

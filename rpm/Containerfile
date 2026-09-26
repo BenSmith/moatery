@@ -9,7 +9,8 @@
 
 ARG FEDORA_VERSION=44
 FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION} AS build
-RUN dnf -y install python3 openssl rpm-build just && dnf clean all \
+RUN dnf -y install python3 python3-rpm-macros openssl rpm-build just \
+        && dnf clean all \
     && useradd -m build
 COPY --chown=build:build . /src
 USER build

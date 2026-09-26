@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""lib/ is exactly the programs' import closures, and nothing in it knows
-what a workload is.
+"""The customs package is exactly the programs' import closures, and
+nothing in it knows what a workload is.
 
-There is no other side here to hold a line against: every module in lib/
-must be reachable from customs-broker, customs-inspect,
+There is no other side here to hold a line against: every module in the
+package must be reachable from customs-broker, customs-inspect,
 customs-resolve or customs-netns-listen, and no closure may reach anything
-but lib/ and the standard library. The
+but the package and the standard library. The
 workload-side property survives as absences -- no TOML reader, no passwd
 lookup, no address or path derivation -- because a copy of one of those
 functions would not show up as an import.
@@ -27,7 +27,7 @@ from pathlib import Path
 
 from tests import REPO_ROOT
 
-LIB = Path(REPO_ROOT) / "lib"
+LIB = Path(REPO_ROOT) / "customs"
 BROKER = Path(REPO_ROOT) / "libexec" / "customs-broker"
 INSPECTOR = Path(REPO_ROOT) / "libexec" / "customs-inspect"
 MINT_CA = Path(REPO_ROOT) / "libexec" / "customs-mint-ca"
@@ -59,17 +59,34 @@ DERIVATIONS = (
 
 
 def _lib_modules():
-    return {p.stem: p for p in LIB.glob("*.py")}
+    return {p.stem: p for p in LIB.glob("*.py") if p.stem != "__init__"}
+
+
+def _package_module(node):
+    """The customs modules one import statement names, bare."""
+    if isinstance(node, ast.ImportFrom):
+        if node.level == 0 and node.module == "customs" or (
+                node.level == 1 and not node.module):
+            return {alias.name for alias in node.names}
+        if node.level == 0 and node.module.startswith("customs."):
+            return {node.module.split(".")[1]}
+        if node.level == 1:
+            return {node.module.split(".")[0]}
+    return set()
 
 
 def _imports(path):
-    """(lib modules, other top-level modules) a file imports, at any depth
-    of nesting. Nested imports count: a deferred import resolves at call
-    time and is invisible to a fresh-interpreter import test."""
+    """The modules a file imports, at any depth of nesting: customs'
+    bare, anything else by its top-level name. Nested imports count: a
+    deferred import resolves at call time and is invisible to a
+    fresh-interpreter import test."""
     tree = ast.parse(path.read_text())
     found = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
+        own = _package_module(node)
+        if own:
+            found |= own
+        elif isinstance(node, ast.ImportFrom):
             if node.level == 0 and node.module:
                 found.add(node.module.split(".")[0])
         elif isinstance(node, ast.Import):
@@ -91,7 +108,7 @@ def _closure(entrypoint, mods):
 
 
 def _foreign(files, mods):
-    """Imports that are neither lib/ nor the standard library."""
+    """Imports that are neither customs nor the standard library."""
     stdlib = set(sys.stdlib_module_names)
     out = set()
     for f in files:
@@ -115,14 +132,15 @@ class TestTheScannerSeesTheTree(unittest.TestCase):
         self.assertGreaterEqual(len(_closure(INSPECTOR, mods)), 20)
 
     def test_the_walk_sees_a_nested_import(self):
-        src = "def f():\n    import egress_ca\n"
+        src = ("def f():\n    from customs import egress_ca\n"
+               "def g():\n    from .egress_plane import TLS\n")
         path = Path(self.enterContext(
             __import__("tempfile").TemporaryDirectory())) / "m.py"
         path.write_text(src)
-        self.assertIn("egress_ca", _imports(path))
+        self.assertLessEqual({"egress_ca", "egress_plane"}, _imports(path))
 
 
-class TestLibIsTheClosure(unittest.TestCase):
+class TestThePackageIsTheClosure(unittest.TestCase):
 
     def test_every_module_is_reachable_from_an_entrypoint(self):
         """A module nothing imports is either dead or a program with no
@@ -132,7 +150,7 @@ class TestLibIsTheClosure(unittest.TestCase):
                      | _closure(RESOLVER, mods) | _closure(NETNS_LISTEN, mods))
         self.assertEqual(sorted(set(mods) - reachable), [])
 
-    def test_the_closures_reach_only_lib_and_the_stdlib(self):
+    def test_the_closures_reach_only_customs_and_the_stdlib(self):
         mods = _lib_modules()
         files = ([BROKER, INSPECTOR, MINT_CA, NETNS_LISTEN, RESOLVER]
                  + [mods[m] for m in mods])
@@ -140,7 +158,7 @@ class TestLibIsTheClosure(unittest.TestCase):
 
     def test_the_ca_minter_is_inside_the_inspector_closure(self):
         """customs-mint-ca is the inspector's first-start step run on its
-        own, and brings no module of its own into lib/."""
+        own, and brings no module of its own into the package."""
         mods = _lib_modules()
         minter = _closure(MINT_CA, mods)
         self.assertIn("egress_mint", minter)
@@ -258,19 +276,15 @@ class TestTheFlagsAreTheContract(unittest.TestCase):
 
 
 class TestNoProgramWritesBytecode(unittest.TestCase):
-    """Every program turns bytecode off before its first lib import. The
+    """Every program turns bytecode off before its first customs import. The
     install directory is not the process's to write, and under a
     confining policy every start would log the attempt. The broker had
     no such line while the inspector did."""
 
     @staticmethod
     def _first_lib_import(tree):
-        mods = set(_lib_modules())
         for i, node in enumerate(tree.body):
-            if isinstance(node, ast.ImportFrom) and node.module in mods:
-                return i
-            if isinstance(node, ast.Import) and any(
-                    a.name in mods for a in node.names):
+            if _package_module(node):
                 return i
         return None
 

@@ -13,9 +13,9 @@ are reduced the same way to the one name policy is matched against.
 import ipaddress
 from typing import NamedTuple
 
-from inspect_document import hostname_bad_character, normalise_hostname
-from egress_plane import CLEARTEXT, TLS
-from http_framing import RequestUnreadable
+from .inspect_document import hostname_bad_character, normalise_hostname
+from .egress_plane import CLEARTEXT, TLS
+from .http_framing import RequestUnreadable
 
 class Scheme(NamedTuple):
     """Which plane a request is read on: the absolute-form scheme it

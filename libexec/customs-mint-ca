@@ -23,8 +23,8 @@ import sys
 # Before the lib imports, for the reason customs-inspect gives.
 sys.dont_write_bytecode = True
 
-from egress_ca import ca_cert_path
-from egress_mint import MintFailed, mint_ca
+from customs.egress_ca import ca_cert_path
+from customs.egress_mint import MintFailed, mint_ca
 
 
 def parse_args(argv):

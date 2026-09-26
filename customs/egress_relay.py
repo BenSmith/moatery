@@ -16,7 +16,7 @@ import selectors
 import ssl
 import time
 
-from http_framing import RELAY_CHUNK
+from .http_framing import RELAY_CHUNK
 
 
 # The timeout up to and including a decision, in seconds.

@@ -17,25 +17,25 @@ journal.
 import socket
 import ssl
 
-from inspect_document import normalise_hostname
-from egress_ca import LeafRefused
-from egress_mint import MintFailed, MintThrottled
-from egress_plane import TLS
-from egress_record import (
+from .inspect_document import normalise_hostname
+from .egress_ca import LeafRefused
+from .egress_mint import MintFailed, MintThrottled
+from .egress_plane import TLS
+from .egress_record import (
     DROP_ECH_SPLICED, DROP_MINT_FAILED, DROP_NOT_ALLOWLISTED, DROP_NOT_HTTP,
     DROP_NOT_HTTP_POLICY, DROP_NO_NAME, DROP_RELAY_FAILED, DROP_THROTTLED,
     NOTE_ECH, NOTE_H2_ONLY, Record,
 )
-from egress_relay import relay
-import egress_relay
-from egress_upstream import UPSTREAM_ALPN, dial_failure_reason, tls_failure
-from http_framing import (
+from .egress_relay import relay
+from . import egress_relay
+from .egress_upstream import UPSTREAM_ALPN, dial_failure_reason, tls_failure
+from .http_framing import (
     RequestUnreadable, _Stream, is_http_request_start, send_response,
 )
-from http_target import SCHEME_HTTPS
-import inspect_http
-from inspect_scope import quoted
-from tls_hello import TLS_EXT_ECH, HelloUnreadable, read_client_hello
+from .http_target import SCHEME_HTTPS
+from . import inspect_http
+from .inspect_scope import quoted
+from .tls_hello import TLS_EXT_ECH, HelloUnreadable, read_client_hello
 
 
 def serve_tls(insp, conn, where):

@@ -23,9 +23,11 @@ import sys
 import threading
 import time
 
-from broker_profiles import normalise_host
-from broker_request import forwarded_headers, request_framing, response_framing
-from peer_identity import local_endpoints, peer_uid, peer_uid_unix
+from .broker_profiles import normalise_host
+from .broker_request import (
+    forwarded_headers, request_framing, response_framing,
+)
+from .peer_identity import local_endpoints, peer_uid, peer_uid_unix
 
 # At most this much request body buffered over every connection at once.
 # MAX_REQUEST_BYTES bounds one request; without this, MAX_CONCURRENT legal

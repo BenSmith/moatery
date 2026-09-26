@@ -39,12 +39,12 @@ import sys
 # write.
 sys.dont_write_bytecode = True
 
-from inspect_policy import load_policy
-from inspect_listener import Listener, build_minter
-from peer_identity import (
+from customs.inspect_policy import load_policy
+from customs.inspect_listener import Listener, build_minter
+from customs.peer_identity import (
     PROC_NET_TCP, listed_in, namespace_uids, netns_tables, unmappable_uids)
-from sd_listen import NotSocketActivated
-from sd_listen import (
+from customs.sd_listen import NotSocketActivated
+from customs.sd_listen import (
     inherited_listening_sockets as sd_inherited_listening_sockets)
 
 

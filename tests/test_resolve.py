@@ -31,11 +31,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import resolve_serve
-import resolve_wire
-from inspect_policy import load_policy
-from resolve_policy import RESOLVE_TTL, Policy
-from sd_listen import NotSocketActivated
+from customs import resolve_serve
+from customs import resolve_wire
+from customs.inspect_policy import load_policy
+from customs.resolve_policy import RESOLVE_TTL, Policy
+from customs.sd_listen import NotSocketActivated
 from tests import REPO_ROOT, load_script
 from tests.test_closure import RESOLVER, _closure, _lib_modules
 
@@ -132,7 +132,7 @@ def _silenced_log():
 
 def _admits(*patterns):
     """An inspector policy's `admits`, over `hosts` alone."""
-    from inspect_document import hostname_match
+    from customs.inspect_document import hostname_match
     return lambda name: hostname_match(name, patterns)
 
 
@@ -538,7 +538,7 @@ class TestNoUpstream(unittest.TestCase):
         Without it the call would create a socket; it is the one module
         of the closure the test above leaves to this one."""
         found = self._socket_constructions(
-            Path(REPO_ROOT) / "lib" / "sd_listen.py")
+            Path(REPO_ROOT) / "customs" / "sd_listen.py")
         self.assertEqual(len(found), 1, [ast.unparse(c) for c in found])
         self.assertEqual([kw.arg for kw in found[0].keywords], ["fileno"])
         self.assertEqual(found[0].args, [])

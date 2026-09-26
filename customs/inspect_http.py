@@ -11,23 +11,23 @@ planes apply the policy through the same loop.
 
 import ssl
 
-from egress_record import (
+from .egress_record import (
     DROP_BROKER_UNREACHABLE, DROP_CLIENT_CERT, DROP_MISDIRECTED,
     DROP_MISDIRECTED_LISTED, DROP_NOT_ALLOWLISTED, DROP_NOT_PERMITTED,
     DROP_RELAY_FAILED, DROP_TIMED_OUT, DROP_UNREADABLE_REQUEST, Record,
 )
-from egress_relay import relay
-import egress_relay
-from egress_upstream import (
+from .egress_relay import relay
+from . import egress_relay
+from .egress_upstream import (
     BROKER_UPSTREAM_KEY, dial_failure_reason, tls_failure,
 )
-from http_framing import (
+from .http_framing import (
     ReadTimedOut, RequestUnreadable, _Stream, _get_all, _is_count,
     _split_response_head, copy_body, drain, response_framing, send_response,
 )
-from http_request import parse_request, rebuild_request
-from http_target import SCHEME_HTTP, redirect_target
-from inspect_scope import quoted
+from .http_request import parse_request, rebuild_request
+from .http_target import SCHEME_HTTP, redirect_target
+from .inspect_scope import quoted
 
 
 # How many 1xx interim responses one request may collect. A real exchange

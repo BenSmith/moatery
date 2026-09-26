@@ -21,14 +21,14 @@ from unittest import mock
 
 import shutil
 
-import egress_ca
-import egress_mint
+from customs import egress_ca
+from customs import egress_mint
 from tests import REPO_ROOT
 
 
 def _rmtree(path):
     shutil.rmtree(path, ignore_errors=True)
-from egress_ca import (LeafRefused, ca_openssl_argv, leaf_openssl_argv,
+from customs.egress_ca import (LeafRefused, ca_openssl_argv, leaf_openssl_argv,
                        leaf_san)
 
 
@@ -465,7 +465,7 @@ class TestMinting(_MinterCase):
         puts it. Prose in this module spells
         counter names in backticks, so a comment does not satisfy it.
         """
-        source = (REPO_ROOT / "lib" / "egress_mint.py").read_text()
+        source = (REPO_ROOT / "customs" / "egress_mint.py").read_text()
         head, _, rest = source.partition("self.stats = {")
         declaration, _, tail = rest.partition("}")
         elsewhere = head + tail
@@ -649,7 +649,7 @@ class TestTheMinterKnowsNothingAboutTheGuest(unittest.TestCase):
         source (`clock=time.monotonic`) or the paragraph that says why the
         minter does not ask about the guest. No outcome, no counter, no
         keyword."""
-        source = (REPO_ROOT / "lib" / "egress_mint.py").read_text()
+        source = (REPO_ROOT / "customs" / "egress_mint.py").read_text()
         for token in ("clock_check", "CLOCK_", "REMEDY_", "_remedy",
                       "remedy_acted", "remedy_unavailable", "remedy_failed",
                       "clock_resync", "clock_unavailable", "clock_failed"):

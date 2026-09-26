@@ -12,8 +12,8 @@ import struct
 import threading
 import time
 
-from egress_status import STATUS_TOP_N, BoundedCounts, write_status
-from resolve_wire import (
+from .egress_status import STATUS_TOP_N, BoundedCounts, write_status
+from .resolve_wire import (
     RCODE_FORMERR,
     RCODE_SERVFAIL,
     TCP_MAX,

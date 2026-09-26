@@ -9,7 +9,7 @@ whatever writes the document; this module imports no writer.
 import json
 from typing import NamedTuple
 
-from inspect_document import (
+from .inspect_document import (
     TLS_DEFAULT,
     TLS_MODES,
     hostname_match,

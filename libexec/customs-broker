@@ -35,14 +35,16 @@ from pathlib import Path
 # Before the lib imports, for the reason customs-inspect gives.
 sys.dont_write_bytecode = True
 
-from broker_profiles import (
+from customs.broker_profiles import (
     BrokerConfigError, build_profiles, listen_endpoint,
 )
-from broker_server import (
+from customs.broker_server import (
     CONNECT_TIMEOUT, READ_TIMEOUT, Handler, listening_url, log, make_server,
     upstream_tls_context,
 )
-from peer_identity import overflow_uid, unmappable_uids, userns_maps_everything
+from customs.peer_identity import (
+    overflow_uid, unmappable_uids, userns_maps_everything,
+)
 
 
 def parse_args(argv):

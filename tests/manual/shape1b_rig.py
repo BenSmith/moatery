@@ -108,7 +108,7 @@ from riglib import (  # noqa
     INSPECT_TLS, LOOPBACK_MAP, NAME, PLACEHOLDER, PROVIDER, RESOLVE_PORT,
     RIG, STUB_CERT, UNLISTED, row, run, say,
 )
-from egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
+from customs.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
 
 POD = "customs-rig-pod"
 SIDECAR = "customs-rig-sidecar"

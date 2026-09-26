@@ -6,7 +6,7 @@ no list admits is the signature of something encoding data into names,
 and it is answered exactly like any other.
 """
 
-from resolve_wire import TYPE_AAAA
+from .resolve_wire import TYPE_AAAA
 
 # The answer for a name never changes while the responder runs, so a long
 # TTL costs nothing and spares the workload a query per connection.

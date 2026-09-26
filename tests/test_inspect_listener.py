@@ -24,42 +24,42 @@ import unittest.mock
 from pathlib import Path
 
 from tests import assert_bare_refusal, load_script
-from inspect_document import (
+from customs.inspect_document import (
     TLS_DEFAULT,
     hostname_match,
     normalise_hostname,
     VmPolicyEntry,
 )
-from egress_plane import CLEARTEXT, TLS, plane_for_port
+from customs.egress_plane import CLEARTEXT, TLS, plane_for_port
 from tests.policy_document import policy_document
-from inspect_policy import Policy, load_policy
-from sd_listen import NotSocketActivated
-from tls_hello import (
+from customs.inspect_policy import Policy, load_policy
+from customs.sd_listen import NotSocketActivated
+from customs.tls_hello import (
     ALPN_KEPT, HelloUnreadable, TLS_EXT_ECH, read_client_hello,
 )
-from http_target import (
+from customs.http_target import (
     host_from_authority, normalise_path, normalise_target)
-from http_framing import (
+from customs.http_framing import (
     DRAIN_MAX, MAX_TRAILER_LINES, RELAY_CHUNK, RequestUnreadable, _Stream,
     copy_body,
 )
-import egress_mint
-import egress_record
-import egress_relay
-import egress_upstream
-import inspect_http
-import inspect_listener
-import inspect_tls
-import peer_identity
-from inspect_tls import serve_tls, serve_terminated
-from inspect_http import INTERIM_MAX, serve_cleartext
-from inspect_listener import Ceiling, Listener, build_minter
-import sd_listen
-from egress_upstream import (
+from customs import egress_mint
+from customs import egress_record
+from customs import egress_relay
+from customs import egress_upstream
+from customs import inspect_http
+from customs import inspect_listener
+from customs import inspect_tls
+from customs import peer_identity
+from customs.inspect_tls import serve_tls, serve_terminated
+from customs.inspect_http import INTERIM_MAX, serve_cleartext
+from customs.inspect_listener import Ceiling, Listener, build_minter
+from customs import sd_listen
+from customs.egress_upstream import (
     BROKER_UPSTREAM_KEY, UPSTREAM_ALPN, UPSTREAMS_MAX,
     dial_failure_reason,
 )
-from egress_record import (
+from customs.egress_record import (
     DROP_CEILING,
     DROP_CLIENT_CERT,
     DROP_CALLER_CLOSED,
@@ -83,9 +83,9 @@ from egress_record import (
 
 ROOT = Path(__file__).resolve().parent.parent
 LISTENER_FILE = ROOT / "libexec" / "customs-inspect"
-LISTENER_LIB = ROOT / "lib" / "inspect_listener.py"
-TLS_LIB = ROOT / "lib" / "inspect_tls.py"
-HTTP_LIB = ROOT / "lib" / "inspect_http.py"
+LISTENER_LIB = ROOT / "customs" / "inspect_listener.py"
+TLS_LIB = ROOT / "customs" / "inspect_tls.py"
+HTTP_LIB = ROOT / "customs" / "inspect_http.py"
 
 
 _MOD = None
@@ -536,7 +536,7 @@ class TestALogLineIsOneWrite(unittest.TestCase):
 class TestListenerSource(unittest.TestCase):
 
     def test_the_listener_source_has_no_literal_listener_ports(self):
-        """The plane comes from the lib/ constants, never a hardcoded 8080 or
+        """The plane comes from the package constants, never a hardcoded 8080 or
         8443: a literal would let the port drift from the constant the redirect
         and the socket unit both key on."""
         for f in (LISTENER_FILE, LISTENER_LIB, TLS_LIB, HTTP_LIB):
@@ -2926,7 +2926,7 @@ class TestCleartextPerRequest(unittest.TestCase):
 
         with unittest.mock.patch.object(inspect_tls, "_is_http",
                                         lambda *a, **k: True), \
-             unittest.mock.patch("inspect_http.serve_one_request",
+             unittest.mock.patch("customs.inspect_http.serve_one_request",
                                  one_request):
             serve_terminated(listener.inspection, object(), where, "a.example", None)
         self.assertEqual(seen["upstreams"], {},
@@ -2937,7 +2937,7 @@ class TestCleartextPerRequest(unittest.TestCase):
         origin, far = self._pair()
         with unittest.mock.patch.object(inspect_tls, "_is_http",
                                         lambda *a, **k: True), \
-             unittest.mock.patch("inspect_http.serve_one_request",
+             unittest.mock.patch("customs.inspect_http.serve_one_request",
                                  one_request):
             serve_terminated(listener.inspection, object(), where, "a.example",
                                        _Stream(origin))
@@ -3964,7 +3964,7 @@ class TestCounters(unittest.TestCase):
         and a call site naming a kind the tuple lacks is never pre-seeded."""
         import re
         source = "\n".join(
-            re.sub(r"from egress_record import \([^)]*\)", "", f.read_text())
+            re.sub(r"from \.egress_record import \([^)]*\)", "", f.read_text())
             for f in (TLS_LIB, HTTP_LIB))
         named = set(re.findall(r"\.note\(\s*[^,()]+,\s*(\w+)", source))
         self.assertTrue(all(n.startswith("NOTE_") for n in named), named)
@@ -3985,10 +3985,10 @@ class TestCounters(unittest.TestCase):
         # leg names its own where it decides them (egress_upstream), and the
         # listener names the two taken before a plane is entered.
         source = "\n".join(
-            re.sub(r"from egress_record import \([^)]*\)", "", f.read_text())
+            re.sub(r"from \.egress_record import \([^)]*\)", "", f.read_text())
             for f in (LISTENER_LIB, TLS_LIB, HTTP_LIB,
-                      ROOT / "lib" / "egress_upstream.py"))
-        self.assertNotIn("from egress_record import (", source)
+                      ROOT / "customs" / "egress_upstream.py"))
+        self.assertNotIn("from .egress_record import (", source)
         named = {arg.strip() for arg in re.findall(_DROP_CALL, source)
                  if arg.strip().startswith("DROP_")}
         named |= set(re.findall(r"return (DROP_\w+)", source))
@@ -4463,7 +4463,7 @@ class TestCallerIdentity(unittest.TestCase):
     into the workload's egress records, so the records described traffic the
     workload never sent.
 
-    The identification is `lib/peer_identity.py` (shared with the broker),
+    The identification is `customs/peer_identity.py` (shared with the broker),
     which reads /proc/net rather than using SO_PEERCRED -- that is AF_UNIX-only
     and yields nothing on a listener bound to an address.
     """

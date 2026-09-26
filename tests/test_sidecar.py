@@ -23,7 +23,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from egress_plane import CLEARTEXT, TLS
+from customs.egress_plane import CLEARTEXT, TLS
 from tests import REPO_ROOT, load_script, script_env
 
 FAKE_INSPECT = pwd.struct_passwd(("inspect", "x", 200, 200, "", "/", ""))
@@ -85,7 +85,7 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
         self.assertEqual(args.listen, f"unix:{mod.SOCKET}")
         self.assertEqual(args.caller_uid, 200)
         self.assertEqual(args.host, ["api.example=main"])
-        import broker_profiles
+        from customs import broker_profiles
         self.assertEqual(broker_profiles.listen_endpoint(args.listen),
                          mod.SOCKET)
 
@@ -114,7 +114,7 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
     def test_the_responders_sockets_are_its_port_over_both_transports(self):
         import socket as socket_mod
         mod = _mod()
-        from egress_plane import RESOLVE_PORT
+        from customs.egress_plane import RESOLVE_PORT
         self.assertEqual(sorted(mod.RESOLVER_SOCKETS), sorted([
             (socket_mod.SOCK_DGRAM, RESOLVE_PORT),
             (socket_mod.SOCK_STREAM, RESOLVE_PORT)]))

@@ -17,7 +17,7 @@ import socket
 import time
 from typing import NamedTuple
 
-from inspect_document import (
+from .inspect_document import (
     hostname_bad_character, hostname_control_character, normalise_hostname,
 )
 

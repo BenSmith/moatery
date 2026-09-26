@@ -2,15 +2,8 @@
 
 Units for a rootless podman container inspected by the pair running as
 the user on the host ([DESIGN.md](../docs/DESIGN.md), shape 1). They
-assume the programs are installed at `/usr/libexec/customs/`, with the
-modules under `lib/` in the same directory:
-
-```
-sudo install -d /usr/libexec/customs
-sudo install -m 0644 lib/*.py /usr/libexec/customs/
-sudo install -m 0755 libexec/customs-broker libexec/customs-inspect \
-    libexec/customs-mint-ca libexec/customs-resolve /usr/libexec/customs/
-```
+assume the RPM is installed (`just rpm`): the programs in
+`/usr/libexec/customs/`, the `customs` package where Python finds it.
 
 The workload's name in these files is `example`, and the brokered
 provider is `api.example.com` under the credential id `example`.

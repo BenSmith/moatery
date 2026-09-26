@@ -11,12 +11,12 @@ import select
 import socket
 import ssl
 
-from egress_plane import CLEARTEXT, TLS
-from egress_record import (
+from .egress_plane import CLEARTEXT, TLS
+from .egress_record import (
     DROP_CLIENT_CERT, DROP_INTERNAL, DROP_UNREACHABLE, DROP_UNVERIFIED,
 )
-import egress_relay
-from http_framing import RELAY_CHUNK, _Stream
+from . import egress_relay
+from .http_framing import RELAY_CHUNK, _Stream
 
 
 # How many upstream connections one guest connection may hold. The pool is

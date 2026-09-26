@@ -1,4 +1,4 @@
-"""lib/egress_status.py: the bound on every guest-keyed counter, and the status
+"""customs/egress_status.py: the bound on every guest-keyed counter, and the status
 file both producers replace.
 
 The bound is the test nobody writes and the one that protects the HOST rather
@@ -17,8 +17,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import egress_status
-from egress_status import (
+from customs import egress_status
+from customs.egress_status import (
     OTHER_KEY, STATUS_TOP_N, BoundedCounts, write_status,
 )
 

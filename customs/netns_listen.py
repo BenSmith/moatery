@@ -16,7 +16,7 @@ import os
 import signal
 import socket
 
-from egress_plane import PLANES, RESOLVE_PORT
+from .egress_plane import PLANES, RESOLVE_PORT
 
 # Where the listeners are bound in the target namespace. The redirect
 # there lands 443, 80 and 53 on it.

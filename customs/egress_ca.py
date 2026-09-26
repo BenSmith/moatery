@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The per-workload egress CA, the leaves it signs, and where all of it lives.
 
-Paths and openssl argv only; lib/egress_mint.py runs them. The directory
+Paths and openssl argv only; customs/egress_mint.py runs them. The directory
 names are here because whatever manages the state directory from outside
 has to name the same ones the minter creates.
 """
@@ -10,7 +10,7 @@ import ipaddress
 import time
 from pathlib import Path
 
-from inspect_document import normalise_hostname
+from .inspect_document import normalise_hostname
 
 
 # --- The per-workload egress CA ---

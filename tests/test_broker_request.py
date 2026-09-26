@@ -25,9 +25,9 @@ import unittest
 from email.message import Message
 from unittest import mock
 
-import broker_profiles
-import broker_request
-import broker_server
+from customs import broker_profiles
+from customs import broker_request
+from customs import broker_server
 
 
 def headers(**pairs):

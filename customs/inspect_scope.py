@@ -3,16 +3,16 @@ inspect_scope: what every connection decision is made against.
 
 A workload's policy, counters, record, upstream pool and minter, bundled so
 the planes are functions with one dependency. The accept loop, the ceiling
-and the status file belong to the process (lib/inspect_listener.py).
+and the status file belong to the process (customs/inspect_listener.py).
 """
 
 import json
 import sys
 
-from egress_record import Record, RequestLog
-from egress_upstream import Upstream
-from inspect_counters import Counters
-from inspect_policy import Policy
+from .egress_record import Record, RequestLog
+from .egress_upstream import Upstream
+from .inspect_counters import Counters
+from .inspect_policy import Policy
 
 
 class Inspection:

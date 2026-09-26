@@ -9,11 +9,11 @@ the name we authorised, never the guest's head forwarded verbatim.
 
 from typing import NamedTuple
 
-from http_framing import (
+from .http_framing import (
     _TOKEN_CHARS, Framing, RequestUnreadable, _get_all, _split_head,
     request_framing,
 )
-from http_target import SCHEME_HTTP, host_from_authority, normalise_target
+from .http_target import SCHEME_HTTP, host_from_authority, normalise_target
 
 class Request(NamedTuple):
     """One request head, parsed and normalised to the form we will emit."""

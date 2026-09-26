@@ -27,7 +27,7 @@ import sys
 # write.
 sys.dont_write_bytecode = True
 
-from netns_listen import (
+from customs.netns_listen import (
     PLANE_LISTENERS, RESOLVER_LISTENERS, BindFailed, hand_over,
     listeners_in, notify_ready)
 

@@ -9,8 +9,11 @@ License:        MIT
 BuildArch:      noarch
 
 BuildRequires:  python3 >= 3.14
+BuildRequires:  python3-rpm-macros
 BuildRequires:  openssl
 Requires:       python3 >= 3.14
+# The package is in this Python's site-packages and no other's.
+Requires:       python(abi) = %{python3_version}
 # The command line: the CA and every per-host certificate are openssl
 # invocations.
 Requires:       openssl >= 3.5
@@ -33,12 +36,13 @@ the listeners inside a rootless container's network namespace.
 # Built from a checkout: _sourcedir is the repository root.
 
 %install
-# The programs and their modules in one directory, so each finds the
-# modules through its own sys.path[0].
-install -dm 0755 %{buildroot}%{_libexecdir}/customs
-for f in %{_sourcedir}/lib/*.py; do
-    install -pm 0644 "$f" %{buildroot}%{_libexecdir}/customs/
+# The package where Python looks, so the programs and anything else may
+# import it; the programs in their own directory.
+install -dm 0755 %{buildroot}%{python3_sitelib}/customs
+for f in %{_sourcedir}/customs/*.py; do
+    install -pm 0644 "$f" %{buildroot}%{python3_sitelib}/customs/
 done
+install -dm 0755 %{buildroot}%{_libexecdir}/customs
 for f in customs-broker customs-inspect customs-mint-ca \
         customs-netns-listen customs-resolve; do
     install -pm 0755 %{_sourcedir}/libexec/$f \
@@ -52,16 +56,17 @@ install -Dpm 0644 %{_sourcedir}/LICENSE \
     %{buildroot}%{_datadir}/licenses/customs/LICENSE
 
 %check
-# Every program imports its closure from the installed directory.
+# Every program imports its closure from the installed package.
 for f in customs-broker customs-inspect customs-mint-ca \
         customs-netns-listen customs-resolve; do
-    %{buildroot}%{_libexecdir}/customs/$f --help >/dev/null
+    PYTHONPATH=%{buildroot}%{python3_sitelib} \
+        %{buildroot}%{_libexecdir}/customs/$f --help >/dev/null
 done
 
 %files
 %license %{_datadir}/licenses/customs/LICENSE
+%{python3_sitelib}/customs/
 %dir %{_libexecdir}/customs
-%{_libexecdir}/customs/*.py
 %{_libexecdir}/customs/customs-broker
 %{_libexecdir}/customs/customs-inspect
 %{_libexecdir}/customs/customs-mint-ca

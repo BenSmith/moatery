@@ -15,8 +15,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-import broker_profiles
-import broker_server
+from customs import broker_profiles
+from customs import broker_server
 from tests import load_script
 
 

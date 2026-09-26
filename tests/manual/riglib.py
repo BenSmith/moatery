@@ -17,14 +17,14 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CHECKOUT = HERE.parent.parent
-sys.path.insert(0, str(CHECKOUT / "lib"))
+sys.path.insert(0, str(CHECKOUT))
 
 # The programs under test: the checkout's, or the installed copy
-# CUSTOMS_LIBEXEC names (the RPM's /usr/libexec/customs), whose modules
-# sit beside its programs and so are found without PYTHONPATH.
+# CUSTOMS_LIBEXEC names (the RPM's /usr/libexec/customs), whose package
+# is installed and so is found without PYTHONPATH.
 INSTALLED = os.environ.get("CUSTOMS_LIBEXEC")
 LIBEXEC = Path(INSTALLED) if INSTALLED else CHECKOUT / "libexec"
-PROGRAM_ENV = {} if INSTALLED else {"PYTHONPATH": str(CHECKOUT / "lib")}
+PROGRAM_ENV = {} if INSTALLED else {"PYTHONPATH": str(CHECKOUT)}
 
 
 NAME = "rig"

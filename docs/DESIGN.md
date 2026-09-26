@@ -81,7 +81,7 @@ off (`--no-map-gw`) and so has to be asked for:
   names, and learns the one address it gives everyone, and its questions
   are counted with the workload's.
 - The inspector recognises exactly 8080 and 8443 as its planes
-  (`lib/egress_plane.py`), so this is one inspected container per host
+  (`customs/egress_plane.py`), so this is one inspected container per host
   loopback. A second needs the planes to become a flag, or a second
   loopback address the socket unit binds and pasta maps.
 - The workload's port 53, UDP and TCP, whatever the address, is DNATed

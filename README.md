@@ -86,22 +86,22 @@ the CA and the per-host certificates); systemd 256 or later for
 `LoadCredentialEncrypted=` in a user unit; podman with pasta for the
 container shapes.
 
-Building the RPM takes `just` and `rpmbuild` (rpm-build): `just rpm`
-builds from the checkout into `rpmbuild/RPMS/`, with the programs and
-their modules in `/usr/libexec/customs/`. `just rpm-image` builds and
-tests it in a container, into `localhost/customs-rpm:VERSION`, an image
-holding `/customs.rpm` alone, for another image's build to copy; a tag
-`vVERSION` on the forge pushes it, signed, to the local registry
-(`.forgejo/workflows/rpm-image.yml`).
+Building the RPM takes `just`, `rpmbuild` (rpm-build) and
+python3-rpm-macros: `just rpm` builds from the checkout into
+`rpmbuild/RPMS/`, with the programs in `/usr/libexec/customs/` and the
+`customs` package in site-packages.
+`just rpm-image` builds and tests it in a container, into
+`localhost/customs-rpm:VERSION`, an image holding `/customs.rpm` alone,
+for another image's build to copy; a tag `vVERSION` on the forge pushes
+it, signed, to the local registry (`.forgejo/workflows/rpm-image.yml`).
 
 ## Status
 
-Version 0.1.0, not yet released. Both programs have run end to end on a
-real host in three shapes: a rootless container
-(`tests/manual/shape1_rig.py`), the same with the listeners in the
-container (`tests/manual/shape1n_rig.py`), and a sidecar in a pod
-(`tests/manual/shape1b_rig.py`). The VM and cosy shapes
-are designed, not proved. The workload's DNS is answered by
+Version 0.2.0. Both programs have run end to end on a real host in
+three shapes: a rootless container (`tests/manual/shape1_rig.py`), the
+same with the listeners in the container (`tests/manual/shape1n_rig.py`),
+and a sidecar in a pod (`tests/manual/shape1b_rig.py`). The VM and cosy
+shapes are designed, not proved. The workload's DNS is answered by
 customs-resolve and forwarded nowhere ([DESIGN.md](docs/DESIGN.md),
 "DNS").
 `just test` runs the unit tests; `just lint` runs ruff.

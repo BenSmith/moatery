@@ -23,20 +23,20 @@ import unittest.mock
 
 from tests import REPO_ROOT
 
-import netns_listen
-from egress_plane import CLEARTEXT, RESOLVE_PORT, TLS
+from customs import netns_listen
+from customs.egress_plane import CLEARTEXT, RESOLVE_PORT, TLS
 
 LAUNCHER = REPO_ROOT / "libexec" / "customs-netns-listen"
 INSPECTOR = REPO_ROOT / "libexec" / "customs-inspect"
 RESOLVER = REPO_ROOT / "libexec" / "customs-resolve"
-ENV = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "lib")}
+ENV = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
 
 # What the handed-over program sees: the activation variables and, for
 # each descriptor, its address and whether its row is in the target's
 # table and in this namespace's own.
 PROBE = """
 import json, os, socket, sys
-from peer_identity import listed_in, netns_tables
+from customs.peer_identity import listed_in, netns_tables
 pid = int(sys.argv[1])
 socks = [socket.socket(fileno=fd)
          for fd in range(3, 3 + int(os.environ["LISTEN_FDS"]))]
@@ -111,8 +111,8 @@ class TestHandOver(unittest.TestCase):
     def test_the_listeners_arrive_as_fds_3_and_4(self):
         script = f"""
 import os, socket, sys
-sys.path.insert(0, {str(REPO_ROOT / 'lib')!r})
-from netns_listen import hand_over
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from customs.netns_listen import hand_over
 # Something already on 3 and 4, and a listener that would be overwritten
 # by a naive dup2 onto 3.
 held = [os.open("/dev/null", os.O_RDONLY) for _ in range(2)]

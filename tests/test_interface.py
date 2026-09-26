@@ -17,10 +17,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from egress_mint import mint_ca
-from inspect_document import VmPolicyEntry
-from inspect_listener import Listener, build_minter
-from inspect_policy import Policy
+from customs.egress_mint import mint_ca
+from customs.inspect_document import VmPolicyEntry
+from customs.inspect_listener import Listener, build_minter
+from customs.inspect_policy import Policy
 from tests import REPO_ROOT
 
 INTERFACE = Path(REPO_ROOT) / "docs" / "INTERFACE.md"
@@ -57,8 +57,8 @@ class TestPublishedInterface(unittest.TestCase):
     def test_the_list_is_read(self):
         """A parser that found nothing would pass the check below."""
         names = published()
-        self.assertIn("egress_ca", names)
-        self.assertIn("patterns_overlap", names["inspect_document"])
+        self.assertIn("customs.egress_ca", names)
+        self.assertIn("patterns_overlap", names["customs.inspect_document"])
         self.assertGreater(sum(map(len, names.values())), 40)
 
     def test_every_published_name_is_defined(self):

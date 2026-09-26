@@ -1,5 +1,5 @@
-# The sidecar image: the programs, lib/ beside them, and customs-sidecar
-# as the entrypoint. Build from the checkout root:
+# The sidecar image: the programs, the customs package beside them, and
+# customs-sidecar as the entrypoint. Build from the checkout root:
 #
 #   podman build -t customs-sidecar -f container/Containerfile .
 #
@@ -22,7 +22,8 @@ RUN dnf -y --setopt=install_weak_deps=False install \
         -s /usr/sbin/nologin broker \
     && mkdir -p /etc/customs /var/lib/customs
 
-COPY lib/ libexec/ container/customs-sidecar /usr/libexec/customs/
+COPY libexec/ container/customs-sidecar /usr/libexec/customs/
+COPY customs/ /usr/libexec/customs/customs/
 
 VOLUME /var/lib/customs
 ENTRYPOINT ["/usr/libexec/customs/customs-sidecar"]

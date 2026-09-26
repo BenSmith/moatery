@@ -3,14 +3,13 @@
 Test modules are imported as ``tests.<name>``, so this runs before any of them
 and is the one place that knows the checkout layout.
 
-Shipped code in ``lib/`` is a flat set of top-level modules. Installed,
-the entrypoints sit beside them and find them via their own
-``sys.path[0]``; from a checkout that job is ours. ``tests/`` itself goes
-on the path too, so sibling helpers (e.g. ``covhelper``) import by bare
-name. The entrypoints under ``libexec/`` have no ``.py`` extension and so
-cannot be imported by name -- use :func:`load_script`. Subprocess launches
-of those scripts need the same lib path handed down in the child env --
-use :func:`script_env`.
+Shipped code is the ``customs`` package. Installed, it is in
+site-packages; from a checkout the checkout root goes on the path.
+``tests/`` itself goes on the path too, so sibling helpers (e.g.
+``covhelper``) import by bare name. The entrypoints under ``libexec/``
+have no ``.py`` extension and so cannot be imported by name -- use
+:func:`load_script`. Subprocess launches of those scripts need the same
+path handed down in the child env -- use :func:`script_env`.
 """
 
 import importlib.machinery
@@ -22,7 +21,7 @@ from pathlib import Path
 # Keep the suite safe however it is launched, `just test` or a bare
 # `python3 -m unittest`. The justfile's test recipe passes -B AND exports
 # PYTHONDONTWRITEBYTECODE, but only the export reaches the subprocesses, which
-# is the half that matters: this suite mutation-tests lib/ deliberately
+# is the half that matters: this suite mutation-tests customs/ deliberately
 # (perturb a file, run, restore it inside the same second), and a child that
 # writes a .pyc during a perturbation window records the original mtime, which
 # a later import then trusts and executes as stale bytecode -- a false failure
@@ -37,9 +36,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
 
 # str, not Path: it is spelled straight into os.path.join() and env["PYTHONPATH"].
-LIB_DIR = str(REPO_ROOT / "lib")
+PACKAGE_ROOT = str(REPO_ROOT)
 
-for _dir in (LIB_DIR, str(TESTS_DIR)):
+for _dir in (PACKAGE_ROOT, str(TESTS_DIR)):
     if _dir not in sys.path:
         sys.path.insert(0, _dir)
 
@@ -84,7 +83,7 @@ def script_env(**overrides):
     test that genuinely wants to see colour.
     """
     env = os.environ.copy()
-    env["PYTHONPATH"] = LIB_DIR
+    env["PYTHONPATH"] = PACKAGE_ROOT
     env["NO_COLOR"] = "1"
     env.update({key: str(value) for key, value in overrides.items()})
     return env

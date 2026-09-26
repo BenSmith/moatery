@@ -40,12 +40,12 @@ import sys
 # write.
 sys.dont_write_bytecode = True
 
-from inspect_policy import load_policy
-from resolve_policy import Policy
-from resolve_serve import Counters, serve
-from resolve_wire import log
-from sd_listen import NotSocketActivated
-from sd_listen import (
+from customs.inspect_policy import load_policy
+from customs.resolve_policy import Policy
+from customs.resolve_serve import Counters, serve
+from customs.resolve_wire import log
+from customs.sd_listen import NotSocketActivated
+from customs.sd_listen import (
     inherited_listening_sockets as sd_inherited_listening_sockets)
 
 

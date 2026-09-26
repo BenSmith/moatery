@@ -85,9 +85,9 @@ from riglib import (  # noqa
     INSPECT_TLS, LIBEXEC, NAME, PLACEHOLDER, PROGRAM_ENV, PROVIDER,
     RESOLVE_PORT, RIG, STUB_CERT, UNLISTED, row, run, say,
 )
-from egress_ca import ca_cert_path  # noqa
-from egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
-from peer_identity import PROC_NET_TCP, netns_tables  # noqa
+from customs.egress_ca import ca_cert_path  # noqa
+from customs.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
+from customs.peer_identity import PROC_NET_TCP, netns_tables  # noqa
 
 CONTAINER = "customs-rig-1n"
 UNIT = "customs-rig-1n"

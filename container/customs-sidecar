@@ -68,8 +68,8 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-import egress_mint
-from egress_plane import CLEARTEXT, RESOLVE_PORT, TLS
+from customs import egress_mint
+from customs.egress_plane import CLEARTEXT, RESOLVE_PORT, TLS
 
 HERE = Path(__file__).resolve().parent
 BROKER = HERE / "customs-broker"

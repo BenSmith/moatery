@@ -20,21 +20,21 @@ import selectors
 import threading
 import time
 
-from egress_plane import TLS, plane_for_port
-from inspect_document import INSPECT_DIGEST_KEY
-from egress_ca import ca_cert_path, ca_key_path
-from http_framing import RequestUnreadable
-from egress_mint import Minter
-from egress_record import (
+from .egress_plane import TLS, plane_for_port
+from .inspect_document import INSPECT_DIGEST_KEY
+from .egress_ca import ca_cert_path, ca_key_path
+from .http_framing import RequestUnreadable
+from .egress_mint import Minter
+from .egress_record import (
     DROP_CALLER_CLOSED, DROP_CEILING, DROP_FOREIGN_CALLER, LOG_ID_FIELD, Where,
     format_endpoint,
 )
-import egress_relay
-from egress_status import write_status
-import inspect_http
-import inspect_tls
-from inspect_scope import Inspection
-from peer_identity import (
+from . import egress_relay
+from .egress_status import write_status
+from . import inspect_http
+from . import inspect_tls
+from .inspect_scope import Inspection
+from .peer_identity import (
     PROC_NET_TCP, in_ranges, local_endpoints, peer_caller, peer_closed,
 )
 

@@ -6,13 +6,13 @@ The writer of the `--status` file, which is exactly `Counters.snapshot()`.
 
 import threading
 
-from inspect_document import TLS_DEFAULT
-from egress_record import (
+from .inspect_document import TLS_DEFAULT
+from .egress_record import (
     DROP_INTERNAL, DROP_REASONS, DROP_UNCLASSIFIED, NOTE_ECH, NOTE_KINDS,
     PER_HOST_REASONS,
 )
-from egress_status import STATUS_TOP_N, BoundedCounts
-from tls_hello import TLS_EXT_ECH
+from .egress_status import STATUS_TOP_N, BoundedCounts
+from .tls_hello import TLS_EXT_ECH
 
 class Counters:
     """What the listener reports, and the only place any of it is defined.

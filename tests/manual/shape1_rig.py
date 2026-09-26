@@ -85,7 +85,7 @@ recipe here is what worked:
     `--dns-forward`), not the gateway, followed by the host's own
     nameservers. The redirect catches port 53 whatever the address.
   - the inspector recognises exactly the ports 8080 and 8443 as its planes
-    (lib/egress_plane.py). "Each container gets its own inspector port" is
+    (customs/egress_plane.py). "Each container gets its own inspector port" is
     not something the program supports; one container per host loopback.
 """
 
@@ -105,8 +105,8 @@ from riglib import (  # noqa
     INSPECT_TLS, LIBEXEC, LOOPBACK_MAP, NAME, PLACEHOLDER, PROGRAM_ENV,
     PROVIDER, RESOLVE_PORT, RIG, STUB_CERT, UNLISTED, row, run, say,
 )
-from egress_ca import ca_cert_path  # noqa
-from egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
+from customs.egress_ca import ca_cert_path  # noqa
+from customs.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
 
 BROKER_ADDR = "127.129.0.1"
 BROKER_PORT = 8081
@@ -140,7 +140,7 @@ def seal_credential(secret):
 def write_units(over_tcp):
     """Hand-written, which is the point: no generator between the operator
     and the two ExecStart= lines. PYTHONPATH when the programs are the
-    checkout's; installed, lib/ sits beside the entrypoints.
+    checkout's; installed, the package is in site-packages.
     SSL_CERT_FILE hands both units the stub's certificate and REPLACES
     their trust store, which is fine only because neither dials anything
     but the stub here -- it is a rig fact, not a recipe."""
