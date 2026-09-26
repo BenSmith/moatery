@@ -2,10 +2,10 @@
 
 What customs keeps stable for a program that imports its modules or
 reads its status file. workloadctl is that program: it requires the
-customs RPM, runs `customs-broker`, `customs-inspect` and
-`customs-resolve`, imports the names below and reads the inspector's
-and the responder's status files into its metrics and `workloadctl
-doctor`. `tests/test_interface.py` holds the three lists to the code.
+customs RPM, runs `customs-broker`, `customs-inspect`,
+`customs-mint-ca` and `customs-resolve`, imports the names below and
+reads the inspector's and the responder's status files into its
+metrics and `workloadctl doctor`. `tests/test_interface.py` holds the three lists to the code.
 
 ## Imported names
 

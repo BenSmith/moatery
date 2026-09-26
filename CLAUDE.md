@@ -70,8 +70,9 @@ inspector's planes in a rootless container's network namespace and execs
 the inspector with them (shape 1n). The inspector's `--netns-pid` is its
 other half and reaches workloadctl with the dependency.
 
-`libexec/customs-mint-ca` is customs-only too: the one CA mint
-(`egress_mint.mint_ca`), which the sidecar's first start also calls.
+`libexec/customs-mint-ca` is the one CA mint (`egress_mint.mint_ca`):
+the sidecar's first start calls it, and so does workloadctl's
+`workload-ensure-user`, before it builds the seed that carries the CA.
 
 `container/` is the shape-1b sidecar image: `Containerfile` and
 `customs-sidecar`, the entrypoint that is the unit file as a process.
@@ -102,10 +103,9 @@ dependency. What the switch costs, all in the hypervisor repo:
   relays no HTTP/2 and refuses an `http2` list that names a host. Its
   `h2_unrecorded` figure retired with it.
 
-workloadctl's own responder, `workload-vm-resolve`, was not part of the
-switch. `customs-resolve` has its static map now (`--static`, 0.3.0),
-so the VMs can run it: workloadctl writes the map as its own file and
-passes the rest as flags.
+workloadctl's own responder, `workload-vm-resolve`, followed in 0.3.0,
+once `customs-resolve` took a static map (`--static`): workloadctl
+writes the map as its own file and passes the rest as flags.
 
 ## Conventions carried over from workloadctl
 
