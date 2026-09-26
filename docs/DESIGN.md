@@ -423,7 +423,9 @@ neighbour discovery shape 1 needs for the map. IPv6 is as in shape 1:
 the listeners and the redirect are v4, and a v6 dial falls to the
 egress drop.
 
-`tests/manual/shape1n_rig.py` is this recipe as a rig.
+`tests/manual/shape1n_rig.py` is this recipe as a rig, and
+[examples/quadlet/](../examples/quadlet/) as a quadlet pod, which holds
+the namespace across restarts of the workload.
 
 ## Shape 1b: a sidecar in a pod
 

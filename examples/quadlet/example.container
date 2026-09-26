@@ -1,0 +1,23 @@
+# The workload. It starts once both listeners are bound. The bundle is
+# mounted over the image's system trust store, so everything in the
+# container trusts the egress CA, sudo and root included. Under the init
+# the pod's stop is a SIGTERM the workload exits on, status 143.
+
+[Unit]
+Requires=customs-inspect-example.service customs-resolve-example.service
+After=customs-inspect-example.service customs-resolve-example.service
+
+[Container]
+ContainerName=example
+Pod=example.pod
+Image=registry.fedoraproject.org/fedora:44
+Exec=sleep infinity
+RunInit=true
+Volume=%E/customs/bundle.pem:/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:ro,Z
+Environment=EXAMPLE_API_KEY=sk-placeholder
+
+[Service]
+SuccessExitStatus=143
+
+[Install]
+WantedBy=default.target

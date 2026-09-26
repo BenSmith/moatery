@@ -75,6 +75,7 @@ flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
   `customs-resolve --help`: the flags.
 - [container/](container/): the sidecar image, the programs in one
   container of a pod.
+- [examples/quadlet/](examples/quadlet/): shape 1n as a quadlet pod.
 - [examples/bootc/](examples/bootc/): a bootc image with customs and
   what it recommends installed.
 

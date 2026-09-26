@@ -116,3 +116,9 @@ The units carry no sandboxing directives. In a user unit most of them
 (`ProtectSystem=`, `PrivateTmp=` and the like) imply `PrivateUsers=`,
 and the broker refuses to start in a user namespace that cannot map its
 caller's uid.
+
+## Elsewhere here
+
+- [quadlet/](quadlet/): shape 1n as a quadlet pod, the listeners in the
+  pod's namespace.
+- [bootc/](bootc/): a bootc image with customs and what it recommends.

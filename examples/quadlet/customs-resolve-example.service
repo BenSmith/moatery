@@ -1,0 +1,19 @@
+# The nameserver for pod example, its port bound in the pod's namespace.
+# Every name is answered with the namespace's loopback, where the
+# redirect lands 443 and 80 anyway.
+
+[Unit]
+Description=customs DNS responder, port in pod example
+BindsTo=example-pod.service
+After=example-pod.service
+
+[Service]
+Type=notify
+ExecStart=/bin/sh -c 'pid=$$(%h/.local/bin/customs-pod-netns pid example) \
+    && exec /usr/libexec/customs/customs-netns-listen --pid "$$pid" \
+    --resolver -- \
+    /usr/libexec/customs/customs-resolve --name example \
+    --address 127.0.0.1 \
+    --policy %E/customs/policy.json \
+    --status %S/customs/resolve-status.json'
+StateDirectory=customs

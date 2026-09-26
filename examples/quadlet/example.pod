@@ -1,0 +1,19 @@
+# The pod holds the network namespace: its infra container creates it,
+# and it outlives any restart of the workload. The rules are loaded
+# before the unit is started, so the listener units, ordered after it,
+# bind into a namespace whose traffic is already redirected.
+#
+# keep-id maps this user to the same uid inside; every uid the pod's
+# user namespace maps is served by the inspector.
+
+[Unit]
+Wants=customs-inspect-example.service customs-resolve-example.service
+
+[Pod]
+PodName=example
+Network=pasta
+UserNS=keep-id
+ExitPolicy=continue
+
+[Service]
+ExecStartPost=%h/.local/bin/customs-pod-netns rules example

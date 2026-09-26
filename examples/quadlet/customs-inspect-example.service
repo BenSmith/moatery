@@ -1,0 +1,24 @@
+# The inspector for pod example, its listeners bound in the pod's
+# namespace. Bound to the pod: a new start of the pod is a new
+# namespace, and the pod's unit starts this again with it.
+
+[Unit]
+Description=customs egress inspector, listeners in pod example
+BindsTo=example-pod.service
+After=example-pod.service
+Wants=customs-broker.service
+After=customs-broker.service
+
+[Service]
+Type=notify
+ExecStart=/bin/sh -c 'pid=$$(%h/.local/bin/customs-pod-netns pid example) \
+    && exec /usr/libexec/customs/customs-netns-listen --pid "$$pid" -- \
+    /usr/libexec/customs/customs-inspect --name example \
+    --policy %E/customs/policy.json \
+    --state-dir %S/customs \
+    --status %S/customs/status.json \
+    --record %L/customs/requests.log \
+    --broker unix:%t/customs/broker.sock \
+    --netns-pid "$$pid"'
+StateDirectory=customs
+LogsDirectory=customs
