@@ -7,3 +7,4 @@ examples/bootc/customs.rpm
 .coverage.*
 coverage.xml
 htmlcov/
+.devcontainer/rtk-*.rpm
