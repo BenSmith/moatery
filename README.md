@@ -6,7 +6,7 @@ being inspected and never holds the key it appears to be using.
 
 At a border, *customs* inspects what leaves, and a *customs broker* is the
 agent who clears your goods across on your behalf, carrying papers you
-never handle yourself. Same two jobs here. 🛃
+never handle yourself. Same two jobs here.
 
 ---
 
