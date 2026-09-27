@@ -21,7 +21,7 @@ import time
 import unittest
 import unittest.mock
 
-from tests import REPO_ROOT
+from tests import REPO_ROOT, suppress_fork_warning
 
 from customs import netns_listen
 from customs.egress_plane import CLEARTEXT, RESOLVE_PORT, TLS
@@ -162,7 +162,7 @@ class TestTheLauncherRefuses(unittest.TestCase):
 
     def test_a_child_that_fails_reports_why(self):
         """The child's exception is the message, not a bare exit status."""
-        with unittest.mock.patch.object(
+        with suppress_fork_warning(), unittest.mock.patch.object(
                 netns_listen.os, "setns",
                 side_effect=PermissionError(1, "Operation not permitted")), \
                 self.assertRaises(netns_listen.BindFailed) as caught:

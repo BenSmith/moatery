@@ -12,10 +12,12 @@ have no ``.py`` extension and so cannot be imported by name -- use
 path handed down in the child env -- use :func:`script_env`.
 """
 
+import contextlib
 import importlib.machinery
 import importlib.util
 import os
 import sys
+import warnings
 from pathlib import Path
 
 # Keep the suite safe however it is launched, `just test` or a bare
@@ -108,3 +110,21 @@ def assert_bare_refusal(case, response, status, phrase):
     case.assertIn(b"date", names)
     case.assertNotIn(b"server", names)
     case.assertEqual(body, f"{phrase}\n".encode())
+
+
+@contextlib.contextmanager
+def suppress_fork_warning():
+    """Run a fork whose `os.fork()` multi-threaded warning is not ours.
+
+    The suite runs every module in one interpreter, so by the time a
+    module forks, daemon threads left by earlier modules are still alive
+    and `os.fork()` warns. The forking module starts no thread of its
+    own, and its child only does what the one test needs -- a pipe write,
+    a mocked call -- then exits, so it cannot wait on a lock those
+    threads hold. The warning is true of the interpreter and false of the
+    program.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=DeprecationWarning,
+                                message=r".*multi-threaded.*fork.*")
+        yield

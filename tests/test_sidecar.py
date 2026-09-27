@@ -24,7 +24,7 @@ from pathlib import Path
 from unittest import mock
 
 from customs.egress_plane import CLEARTEXT, TLS
-from tests import REPO_ROOT, load_script, script_env
+from tests import REPO_ROOT, load_script, script_env, suppress_fork_warning
 
 FAKE_INSPECT = pwd.struct_passwd(("inspect", "x", 200, 200, "", "/", ""))
 
@@ -155,7 +155,8 @@ class TestTheSidecarMintsTheOneWay(unittest.TestCase):
                 mock.patch.object(mod.os, "chown",
                                   side_effect=AssertionError("chown")):
             try:
-                result = mod.mint_ca("wl", FAKE_INSPECT, self.GROUP)
+                with suppress_fork_warning():
+                    result = mod.mint_ca("wl", FAKE_INSPECT, self.GROUP)
             finally:
                 os.close(w)
         return mod, result, os.read(r, 4096).decode()
