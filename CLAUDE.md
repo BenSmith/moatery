@@ -117,7 +117,9 @@ workload's CA with `customs-mint-ca`.
   recovery, exit status).
 - **No history in shipped source.** Comments state the present constraint
   and why it holds — no "used to be", no incident narrative, no dates or
-  bug IDs. History goes in commit messages and test docstrings.
+  bug IDs. History goes in commit messages and test docstrings. Nothing
+  under `tests/` ships in the RPM, so the manual rigs' findings are test
+  evidence and keep their dates.
 - **Unit gates don't see the seam.** Every real defect the pair has had
   was correct code that nothing connected to, or a packet that never
   arrived. Anything with more than one part gets one pass asking "what
