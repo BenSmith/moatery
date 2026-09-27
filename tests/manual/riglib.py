@@ -216,7 +216,7 @@ def write_policy(path):
     path.write_text(json.dumps({
         "tls": "inspect",
         "hosts": [PROVIDER],
-        "internal": [],
+        "internal_expected": [],
         "splice": [],
         "policy": [{"host": PROVIDER, "methods": None, "paths": None,
                     "credential": CREDENTIAL}],

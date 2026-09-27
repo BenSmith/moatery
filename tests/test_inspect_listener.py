@@ -836,7 +836,7 @@ class TestPolicyLoading(unittest.TestCase):
             "hosts": ["nas.example.com"], "tls": "splice",
             "internal": [{"host": "nas.example.com"}]})))
         policy = load_policy(path)
-        self.assertEqual(policy.internal, ("nas.example.com",))
+        self.assertEqual(policy.internal_expected, ("nas.example.com",))
 
     def test_the_document_carries_the_policy_entries_through(self):
         """Both halves against each other, not against a literal: a listener
@@ -1045,7 +1045,7 @@ class TestPolicyRefusals(unittest.TestCase):
         self.assertEqual(self._load({"hosts": []}).tls, TLS_DEFAULT)
 
     def test_a_name_list_holding_a_non_string_is_refused(self):
-        for key in ("hosts", "internal", "splice", "http2"):
+        for key in ("hosts", "internal_expected", "splice", "http2"):
             for bad in (443, None, "", "  ", ["a.example"]):
                 with self.subTest(key=key, bad=bad):
                     self._refused({"tls": "splice", key: [bad]},
@@ -1053,10 +1053,28 @@ class TestPolicyRefusals(unittest.TestCase):
 
     def test_a_list_key_of_the_wrong_type_is_refused_even_when_falsy(self):
         """`{}`, `""`, `0` and `false` were read as an empty list."""
-        for key in ("hosts", "internal", "splice", "http2", "policy"):
+        for key in ("hosts", "internal_expected", "splice", "http2",
+                    "policy"):
             for bad in ({}, "", 0, False):
                 with self.subTest(key=key, bad=bad):
                     self._refused({"tls": "inspect", key: bad}, repr(key))
+
+    def test_the_old_internal_key_is_refused_by_name(self):
+        """`internal` named the private-address list; it is
+        `internal_expected`. Silently read as empty, every
+        private-address refusal files as a host that is down and the
+        counter that names it never moves. The refusal says which key to
+        write instead."""
+        self._refused(
+            {"tls": "inspect", "internal": ["nas.example"]},
+            "internal", "internal_expected")
+
+    def test_an_empty_old_internal_key_is_accepted(self):
+        """A writer that always emits the key sends `[]`, which says
+        nothing and is not worth failing a start over."""
+        self.assertEqual(
+            self._load({"tls": "inspect", "internal": []})
+            .internal_expected, ())
 
     def test_an_absent_or_null_list_is_empty(self):
         policy = self._load({"hosts": None, "policy": None})
@@ -3871,7 +3889,7 @@ class TestCounters(unittest.TestCase):
         out = io.StringIO()
         return mod, Listener([], out, policy=Policy(
             tls="splice", hosts=tuple(hosts),
-            internal=tuple(internal), splice=tuple(splice),
+            internal_expected=tuple(internal), splice=tuple(splice),
             policy=tuple(VmPolicyEntry(host=h, methods=m, paths=p)
                          for h, m, p in policy))), out
 
@@ -4012,7 +4030,7 @@ class TestCounters(unittest.TestCase):
                                         internal=["nas.internal"])
         lists = listener.status()["lists"]
         self.assertEqual(lists["hosts"], ["a.example", "b.example"])
-        self.assertEqual(lists["internal"], ["nas.internal"])
+        self.assertEqual(lists["internal_expected"], ["nas.internal"])
         self.assertEqual(lists["tls"], "splice")
 
     def test_every_list_that_decides_something_is_reported(self):
@@ -4180,7 +4198,7 @@ class TestInternalAttribution(unittest.TestCase):
 
     def _internal(self, internal=()):
         return Policy(tls="splice", hosts=("host.example",),
-                      internal=tuple(internal)).internal
+                      internal_expected=tuple(internal)).internal_expected
 
     def test_a_name_resolving_into_private_space_is_an_internal_refusal(self):
         internal = self._internal()

@@ -99,7 +99,8 @@ def serve_tls(insp, conn, where):
         upstream = socket.create_connection(
             (host, TLS.guest_port), timeout=egress_relay.CONNECTION_TIMEOUT)
     except OSError as exc:
-        insp.drop(where, dial_failure_reason(host, insp.policy.internal), exc,
+        insp.drop(where, dial_failure_reason(
+            host, insp.policy.internal_expected), exc,
                   host=host, mode="splice")
         return
     try:
@@ -160,7 +161,8 @@ def _serve_tls_inspect(insp, conn, where, host, allowed, hello):
             reason, text = tls_failure(host, exc)
             refusal = (reason, 502, "Bad Gateway", text)
         except OSError as exc:
-            reason = dial_failure_reason(host, insp.policy.internal)
+            reason = dial_failure_reason(
+                host, insp.policy.internal_expected)
             refusal = (reason, 502, "Bad Gateway",
                        f"{host} could not be reached: {exc}")
     leaf = None

@@ -25,14 +25,16 @@ class Policy(NamedTuple):
     """One workload's inspection lists, as read at start. Tuples, since
     nothing may edit them after load.
 
-    `internal` admits nothing. It names the hosts the host's own
-    private-address rule excepts, so a failed dial into private space can be
-    reported as a missing exception rather than a host that is down.
+    `internal_expected` admits nothing. It names the hosts the host's
+    own private-address rule excepts, so a failed dial into private space
+    can be reported as a missing exception rather than a host that is
+    down. The name says what the entries are -- hosts expected to sit in
+    private space -- rather than reading as a list that admits.
     """
 
     tls: str
     hosts: tuple
-    internal: tuple = ()
+    internal_expected: tuple = ()
     splice: tuple = ()
     policy: tuple = ()
     # The digest of the text parsed, echoed into the status file so a reader
@@ -43,7 +45,8 @@ class Policy(NamedTuple):
     @property
     def summary(self) -> str:
         return (f"tls={self.tls} hosts={len(self.hosts)} "
-                f"internal={len(self.internal)} splice={len(self.splice)} "
+                f"internal_expected={len(self.internal_expected)} "
+                f"splice={len(self.splice)} "
                 f"policy={len(self.policy)}")
 
     def admits(self, host: str) -> bool:
@@ -121,9 +124,10 @@ def load_policy(path):
             f"{path}: 'tls' is {tls!r}; it is one of "
             + ", ".join(repr(m) for m in TLS_MODES))
     hosts = _names(doc, "hosts", path)
-    internal = _names(doc, "internal", path)
+    internal_expected = _names(doc, "internal_expected", path)
     splice = _names(doc, "splice", path)
     _refuse_http2(doc, path)
+    _refuse_renamed_internal(doc, path)
     entries = doc.get("policy")
     if entries is None:
         entries = []
@@ -169,7 +173,8 @@ def load_policy(path):
             credential=credential))
     _refuse_inert_entries(path, tls, policy, splice)
     return Policy(tls=tls, hosts=tuple(hosts),
-                  internal=tuple(normalise_hostname(h) for h in internal),
+                  internal_expected=tuple(
+                      normalise_hostname(h) for h in internal_expected),
                   splice=tuple(splice), policy=tuple(policy), digest=digest)
 
 
@@ -207,6 +212,24 @@ def _refuse_http2(doc, path):
             f"alone. A host whose client speaks only h2 (gRPC) goes in "
             f"'splice', where its h2 runs end to end and the host is checked "
             f"by name alone")
+
+
+def _refuse_renamed_internal(doc, path):
+    """Refuse the old name of the private-address list rather than read it
+    as empty.
+
+    The list was `internal`; it is `internal_expected`, so the key says what
+    the entries are rather than reading as a list that admits. A writer
+    still sending a non-empty `internal` is told, not silently ignored:
+    ignored, every private-address refusal files as a host that is down and
+    the counter that names it never moves. An empty one says nothing and is
+    accepted, as a writer that always emits the key sends.
+    """
+    if _names(doc, "internal", path):
+        raise ValueError(
+            f"{path}: 'internal' is now 'internal_expected'; rename the key. "
+            f"It names the hosts the operator has given a private address, "
+            f"and admits nothing")
 
 
 def _refuse_inert_entries(path, tls, entries, splice):

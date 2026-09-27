@@ -13,7 +13,7 @@ fallback to an empty policy.
 {
   "tls": "inspect",
   "hosts": ["pypi.org", "files.pythonhosted.org", "*.github.com"],
-  "internal": ["git.corp.example"],
+  "internal_expected": ["git.corp.example"],
   "splice": ["updates.example.net"],
   "policy": [
     {"host": "api.anthropic.com", "methods": ["POST"],
@@ -32,7 +32,7 @@ document that admits nothing.
 |---|---|---|
 | `tls` | `"inspect"` or `"splice"` | the mode for every TLS connection. Default `"inspect"`. Anything else fails the start. |
 | `hosts` | list of patterns | hosts the workload may reach, with any method and any path |
-| `internal` | list of names | hosts the operator has deliberately given a private address; changes how a failed dial is reported, and opens nothing |
+| `internal_expected` | list of names | hosts the operator has deliberately given a private address; changes how a failed dial is reported, and opens nothing |
 | `splice` | list of patterns | hosts whose TLS is passed through undecrypted |
 | `policy` | list of entries | per-host method and path rules, and brokered credentials |
 
@@ -45,8 +45,8 @@ separately.
 ## Which hosts get through
 
 A host is admitted if it matches `hosts` or any `policy` entry's `host`.
-Nothing else admits one: a name in `splice` or `internal` must also be
-admitted by one of those two.
+Nothing else admits one: a name in `splice` or `internal_expected` must
+also be admitted by one of those two.
 
 An unadmitted host under `"inspect"` is not a dropped connection. The
 inspector completes the handshake with a certificate for the refused name
@@ -191,13 +191,14 @@ what flows on the connection is relayed without being read, so an entry's
 `methods` and `paths` bound the upgrade request and nothing after it. An
 upgrade to `h2c` is never forwarded.
 
-## `internal`
+## `internal_expected`
 
 customs does not block private, loopback or link-local destinations
-(see [DESIGN.md](DESIGN.md), "Private addresses"), and `internal` does
-not open anything. It matters only on a host that has a rule blocking
-them, with an exception for each name deliberately given a private
-address. `internal` lists those names. When a dial fails:
+(see [DESIGN.md](DESIGN.md), "Private addresses"), and
+`internal_expected` does not open anything. It matters only on a host that
+has a rule blocking them, with an exception for each name deliberately
+given a private address. `internal_expected` lists those names -- hosts
+*expected* to sit in private space. When a dial fails:
 
 - to a name that resolves to a private address and is **not** listed,
   it is reported as `internal destination`: the rule refused it, and the

@@ -167,7 +167,7 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
                     f"is the endpoint this inspector's --broker names.")
         else:
             reason = dial_failure_reason(
-                req.host, insp.policy.internal)
+                req.host, insp.policy.internal_expected)
             text = f"{req.host} could not be reached: {exc}"
         insp.drop(where, reason, text, host=req.host, rec=rec, answered=502)
         return _refuse(client, conn, req, 502, "Bad Gateway")

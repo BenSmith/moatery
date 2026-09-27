@@ -7,7 +7,8 @@ has. The listener's tests still need a writer to test the reader against
 authorises nothing -- so this is one, taking the same shape of input the
 tests were written for: a network table with `hosts`, `tls`, and
 `internal`/`splice` as lists of `{"host": ..., "reason": ...}` tables, and
-`policy` as a list of entry tables.
+`policy` as a list of entry tables. The table's `internal` is rendered as
+the document's `internal_expected`, the key the reader takes.
 
 What it normalises is what the document's vocabulary (customs/inspect_document)
 says a writer normalises: `methods` uppercased, `methods` and `paths` null
@@ -63,7 +64,7 @@ def policy_document(net: dict) -> dict:
     return {
         "tls": net.get("tls", TLS_DEFAULT),
         "hosts": list(hosts) if isinstance(hosts, list) else [],
-        "internal": _hosts_of(net, "internal"),
+        "internal_expected": _hosts_of(net, "internal"),
         "splice": _hosts_of(net, "splice"),
         "policy": _entries(net),
     }

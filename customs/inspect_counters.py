@@ -68,7 +68,8 @@ class Counters:
         self.lists = {
             "tls": policy.tls if policy else TLS_DEFAULT,
             "hosts": list(policy.hosts) if policy else [],
-            "internal": list(policy.internal) if policy else [],
+            "internal_expected": list(policy.internal_expected)
+            if policy else [],
             "splice": list(policy.splice) if policy else [],
             "policy": [
                 {"host": e.host,

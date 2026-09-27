@@ -279,7 +279,8 @@ class TestTheInspectorBehindTheLauncher(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.policy = os.path.join(self.dir, "policy.json")
         with open(self.policy, "w") as fh:
-            json.dump({"tls": "splice", "hosts": [], "internal": [],
+            json.dump({"tls": "splice", "hosts": [],
+                       "internal_expected": [],
                        "splice": [], "policy": []}, fh)
         self.status = os.path.join(self.dir, "status.json")
         self.record = os.path.join(self.dir, "record.jsonl")

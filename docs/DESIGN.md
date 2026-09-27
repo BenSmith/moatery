@@ -20,7 +20,7 @@ are in [examples/](../examples/).
   {
     "tls": "inspect",
     "hosts": ["api.example.com"],
-    "internal": [],
+    "internal_expected": [],
     "splice": [],
     "policy": [
       {"host": "api.example.com", "methods": ["POST"],
@@ -124,7 +124,7 @@ them somewhere to put it:
   the program's socket:
 
   ```
-  # one line per address an `internal` name resolves to, e.g.
+  # one line per address an `internal_expected` name resolves to, e.g.
   # meta mark 0x1 ip daddr 10.0.0.5 tcp dport 443 accept
   meta mark 0x1 ip daddr { 0.0.0.0/8, 10.0.0.0/8,
       100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
@@ -150,9 +150,9 @@ them somewhere to put it:
   to hold a rule. Here the allowlist is the whole control: keep wildcards
   off domains other people can add names under.
 
-The policy document's `internal` list does not open anything. It names
-the hosts the operator has deliberately given a private address (and an
-accept line above), so that when a dial into private space fails the
+The policy document's `internal_expected` list does not open anything. It
+names the hosts the operator has deliberately given a private address (and
+an accept line above), so that when a dial into private space fails the
 inspector can report `internal destination` -- a name with no accept
 line, one edit from working -- rather than `upstream unreachable`. With no
 rule loaded that dial succeeds, and the list only changes the report.

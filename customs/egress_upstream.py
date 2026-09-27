@@ -237,17 +237,17 @@ def tls_failure(host, exc):
     return (DROP_UNVERIFIED, f"the TLS session to {host} failed: {exc}")
 
 
-def dial_failure_reason(host: str, internal) -> str:
+def dial_failure_reason(host: str, internal_expected) -> str:
     """Why a dial to an allowlisted name failed, as far as can be told.
 
-    A name that resolves into private space and has no `internal` entry was
-    probably refused by the host's private-address rule; anything else is a
-    host that is down. The name is resolved again, since create_connection
-    does not say which address it tried, and a rotating record can make
-    that disagree: the cost is a misattributed counter, not a wrong
-    decision. The lookup is not bounded by CONNECTION_TIMEOUT.
+    A name that resolves into private space and has no `internal_expected`
+    entry was probably refused by the host's private-address rule; anything
+    else is a host that is down. The name is resolved again, since
+    create_connection does not say which address it tried, and a rotating
+    record can make that disagree: the cost is a misattributed counter, not
+    a wrong decision. The lookup is not bounded by CONNECTION_TIMEOUT.
     """
-    if host in internal:
+    if host in internal_expected:
         return DROP_UNREACHABLE
     try:
         infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
