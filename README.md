@@ -94,6 +94,8 @@ python3-rpm-macros: `just rpm` builds from the checkout into
 `localhost/customs-rpm:VERSION`, an image holding `/customs.rpm` alone,
 for another image's build to copy; a tag `vVERSION` on the forge pushes
 it, signed, to the local registry (`.forgejo/workflows/rpm-image.yml`).
+`.forgejo/workflows/unit.yml` runs `just lint` and `just coverage` on
+every push and pull request.
 
 ## Status
 

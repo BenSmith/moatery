@@ -145,6 +145,10 @@ python3 tests/manual/shape1n_rig.py         # same; listeners in the netns
 python3 tests/manual/shape1b_rig.py         # same; builds container/ first
 ```
 
+Every push and pull request runs `just lint` and `just coverage`
+(`.forgejo/workflows/unit.yml`); the RPM image's build runs `just test`
+too.
+
 `customs/` is the package, installed to site-packages; the programs
 import `customs.<module>` and the modules import each other relatively.
 `tests/__init__.py` puts the checkout root on `sys.path`; test modules

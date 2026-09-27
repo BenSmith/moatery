@@ -24,6 +24,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         podman \
         procps-ng \
         python3 \
+        python3-coverage \
         python3-pip \
         python3-rpm-macros \
         ripgrep \
