@@ -1,5 +1,5 @@
 {
-    "name": "pycharm-dev",
+    "name": "customs",
     "build": {
         "dockerfile": "Dockerfile",
         "args": { "FEDORA_VERSION": "44" }
