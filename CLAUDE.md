@@ -134,7 +134,8 @@ workload's CA with `customs-mint-ca`.
 ## Commands
 
 ```bash
-just test     # all unit tests (unittest discover; 852)
+just test     # all unit tests (unittest discover; 875)
+just coverage # the unit suite's coverage of the shipped code (.coveragerc)
 just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 just rpm      # the RPM, into rpmbuild/RPMS
 just rpm-image  # the RPM tested and built in a container (podman)

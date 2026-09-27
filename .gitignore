@@ -3,3 +3,7 @@
 __pycache__/
 rpmbuild/
 examples/bootc/customs.rpm
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

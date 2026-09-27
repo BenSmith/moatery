@@ -104,7 +104,10 @@ and a sidecar in a pod (`tests/manual/shape1b_rig.py`). The VM and cosy
 shapes are designed, not proved. The workload's DNS is answered by
 customs-resolve and forwarded nowhere ([DESIGN.md](docs/DESIGN.md),
 "DNS").
-`just test` runs the unit tests; `just lint` runs ruff.
+`just test` runs the unit tests; `just lint` runs ruff. `just coverage`
+runs the suite under coverage of the shipped code alone — the `customs`
+package and every entrypoint, including the scripts the suite executes as
+subprocesses — and fails below the floor in `.coveragerc`.
 
 ## Licence
 

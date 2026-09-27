@@ -1,0 +1,42 @@
+# `just coverage`. The shipped code is what matters: the customs package
+# and the extension-less entrypoints, never the tests. Subprocess coverage
+# is on, because the entrypoints are run as scripts (load_script execs one
+# per call; the sidecar forks and execs the programs) and a plain
+# `coverage run` sees none of that. COVERAGE_PROCESS_START makes each
+# child write its own parallel data file, which `coverage combine` merges.
+[run]
+branch = True
+parallel = True
+# `include` names every file that ships, and nothing else: the customs
+# package, the extension-less entrypoints (which `source = customs` cannot
+# name, since they are not importable modules), and the sidecar. `source`
+# is deliberately not set alongside it -- with both, coverage ignores
+# `include` and measures the package alone.
+include =
+    */customs/*.py
+    */libexec/customs-*
+    */container/customs-sidecar
+
+[paths]
+# The same file seen through the checkout and through an installed
+# site-packages copy combines into one row.
+source =
+    customs
+    */site-packages/customs
+
+[report]
+# A line that only runs when a syscall fails or a peer misbehaves is not
+# realistically coverable in a unit run; excluding it keeps the figure
+# honest rather than padding it with `# pragma: no cover` in the source.
+exclude_also =
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    \.\.\.
+
+# Below this, `just coverage` exits non-zero. The rigs are the real gate;
+# this is a floor under the unit suite, raised as it grows.
+fail_under = 85
+
+show_missing = True
+skip_covered = False
+precision = 1

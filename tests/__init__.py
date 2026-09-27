@@ -83,7 +83,11 @@ def script_env(**overrides):
     test that genuinely wants to see colour.
     """
     env = os.environ.copy()
-    env["PYTHONPATH"] = PACKAGE_ROOT
+    # TESTS_DIR goes on too, so a child finds tests/sitecustomize.py and,
+    # under `just coverage`, measures itself (COVERAGE_PROCESS_START is
+    # already in this environment when it is set). PACKAGE_ROOT is what
+    # the child needs to import customs from a checkout, as before.
+    env["PYTHONPATH"] = os.pathsep.join([PACKAGE_ROOT, str(TESTS_DIR)])
     env["NO_COLOR"] = "1"
     env.update({key: str(value) for key, value in overrides.items()})
     return env
