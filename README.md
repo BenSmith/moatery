@@ -99,7 +99,7 @@ every push and pull request.
 
 ## Status
 
-Version 0.3.0. Both programs have run end to end on a real host in
+Version 0.4.0. Both programs have run end to end on a real host in
 three shapes: a rootless container (`tests/manual/shape1_rig.py`), the
 same with the listeners in the container (`tests/manual/shape1n_rig.py`),
 and a sidecar in a pod (`tests/manual/shape1b_rig.py`). The VM and cosy
