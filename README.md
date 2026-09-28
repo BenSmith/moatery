@@ -100,10 +100,11 @@ every push and pull request.
 ## Status
 
 Version 0.4.0. Both programs have run end to end on a real host in
-three shapes: a rootless container (`tests/manual/shape1_rig.py`), the
+four shapes: a rootless container (`tests/manual/shape1_rig.py`), the
 same with the listeners in the container (`tests/manual/shape1n_rig.py`),
-and a sidecar in a pod (`tests/manual/shape1b_rig.py`). The VM and cosy
-shapes are designed, not proved. The workload's DNS is answered by
+a sidecar in a pod (`tests/manual/shape1b_rig.py`), and a VM inside the
+container (`tests/manual/shape2_rig.py`). The cosy shape is designed, not
+proved. The workload's DNS is answered by
 customs-resolve and forwarded nowhere ([DESIGN.md](docs/DESIGN.md),
 "DNS").
 `just test` runs the unit tests; `just lint` runs ruff. `just coverage`

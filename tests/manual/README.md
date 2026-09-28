@@ -321,3 +321,65 @@ the rig's own `127.0.0.1`, the address the responder gives in the pod.
 The name is asked of a nameserver that does not exist now, which only
 the redirect answers. `--without-rules` also turns neighbour and
 private red, which its note had left out.
+
+## shape2_rig.py — the pair under a VM
+
+`docs/DESIGN.md` shape 2: one rootless podman container under pasta whose
+only payload is qemu and the passt backend qemu starts itself, the
+guest's egress re-originated by passt as sockets in the container's
+netns, the pair as shape 1's hand-written user units on the host, the
+nft rules loaded into the container's netns, and a workload inside the
+guest that reaches the provider carrying the sealed key.
+
+```bash
+python3 tests/manual/shape2_rig.py                  # builds the qemu image first
+python3 tests/manual/shape2_rig.py --without-rules  # must go red
+python3 tests/manual/shape2_rig.py --without-dns-redirect  # dns red
+python3 tests/manual/shape2_rig.py --without-neighbour-discovery  # dns red
+python3 tests/manual/shape2_rig.py --no-build       # reuse the last image
+python3 tests/manual/shape2_rig.py --keep           # leave the container
+```
+
+Runs as the user, on a KVM host with `/dev/kvm` readable and writable.
+The operator puts a Fedora Cloud Base Generic qcow2 at
+`~/.local/state/customs-rig/shape2/guest.qcow2` once (44-1.7 was used);
+the rig builds its own qemu image from `shape2.Containerfile`. The guest
+probe (`shape2_guest.py`) goes in through the NoCloud seed with the CA
+bundle and the agent's environment, and reports on a virtio-serial port
+the host reads as a file.
+
+**Rows.** Premise (no `CAP_NET_ADMIN` in the container; the table is in
+its netns; qemu holds `/dev/kvm`; the guest is a namespace inside the
+container's; the guest's own nft tables hold none of ours; the neighbour
+table is flushed before the guest's first packet). The guest's UDP sends
+return while the container chain's `dropped` counter moves -- the guest's
+egress IS the container's. Shape 1's DNS rows, asked from inside the
+guest. The silent-drop and quic rows. The request (200; the real key
+arrived; the response names the provider's server; the guest's
+environment holds the placeholder only; the broker's journal grew by one;
+the record says `forward` under the credential). The broker's rows, plus
+a guest connect to a map port nothing accepts (timeout, drop counter).
+The unlisted row. The origin's two rows. The counters.
+
+**What it found, first run, 2026-09-28.** 30/30; `--without-rules` 11/29,
+`--without-dns-redirect` 15/29, `--without-neighbour-discovery` 13/29. No
+defect in the pair. Four facts, all in the guest half:
+
+- cloud-init's `scripts_user` caps a `runcmd` at about ten seconds and
+  fails the module when it overruns, killing the command. A probe that
+  can outlast that -- every red run -- has to be a systemd unit, not a
+  `runcmd`.
+- a systemd unit whose output goes to `/dev/ttyS0` stops at a write: the
+  process ran (a busy loop advanced its clock) but the next write to the
+  tty never returned, and the probe froze mid-row. The results go on a
+  virtio-serial port (`-chardev file:...`) instead; the serial console
+  stays for boot diagnostics.
+- the guest's resolver is systemd-resolved's stub. The probe reads the
+  uplink from `/run/systemd/resolve/resolv.conf` and queries it directly,
+  and pins each HTTPS connection to the address the responder gave with
+  the name in SNI, so neither depends on resolved's `.test` handling.
+- qemu 10.2's `-netdev passt,id=net0` starts passt itself, in the
+  container's netns, with no separate process and no shell entrypoint;
+  the guest's DNS reaches pasta's forwarder through passt, where the
+  port-53 DNAT claims it. SELinux in Enforcing needed no extra flag for
+  `--device /dev/kvm` or the bind mount.

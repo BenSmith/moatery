@@ -618,6 +618,7 @@ port listens on TCP in the pod.
 Run qemu inside a shape-1 container with `--device /dev/kvm` and
 `-netdev passt` (or `passt --socket` + `-netdev stream`). The guest's
 egress is now the container's egress and the recipe applies verbatim.
+`tests/manual/shape2_rig.py` is this recipe as a rig.
 Guest root can rewrite the guest's own nft all day; the rules that matter
 are one namespace out, where qemu and passt hold no `CAP_NET_ADMIN`.
 
