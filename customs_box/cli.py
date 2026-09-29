@@ -30,12 +30,12 @@ def build_parser():
     p.add_argument("--mount", action="append", default=[],
                    metavar="SRC[:DST][:ro]",
                    help="a host directory the box shares; repeatable")
-    p = sub.add_parser("enter", help="start a box if it is stopped, and "
-                                     "run a command in it, a shell by "
-                                     "default")
+    p = sub.add_parser("enter", usage="%(prog)s NAME [--root] "
+                                      "[-- COMMAND...]",
+                       help="start a box if it is stopped, and run a "
+                            "command in it, a shell by default")
     p.add_argument("name")
     p.add_argument("--root", action="store_true", help="as uid 0")
-    p.add_argument("argv", nargs=argparse.REMAINDER, metavar="COMMAND")
     p = sub.add_parser("stop", help="stop a box")
     p.add_argument("name")
     p = sub.add_parser("rm", help="stop a box and remove it; its home "
@@ -49,10 +49,24 @@ def build_parser():
                                                  required=True)
     unit.add_parser("rules").add_argument("name")
     unit.add_parser("sudoers").add_argument("name")
-    p = unit.add_parser("exec")
-    p.add_argument("name")
-    p.add_argument("argv", nargs=argparse.REMAINDER)
+    unit.add_parser("exec").add_argument("name")
     return parser
+
+
+def parse(words):
+    """The words before the first `--` are customs-box's; those after it
+    are the command's, options and all."""
+    words, command = list(words), []
+    if "--" in words:
+        at = words.index("--")
+        words, command = words[:at], words[at + 1:]
+    parser = build_parser()
+    args = parser.parse_args(words)
+    if command and not (args.command == "enter"
+                        or getattr(args, "unit_command", None) == "exec"):
+        parser.error(f"{args.command} takes no command")
+    args.argv = command
+    return args
 
 
 def run_command(args, *, tool, environ, cwd, isatty):
@@ -89,7 +103,7 @@ def run_command(args, *, tool, environ, cwd, isatty):
 def main(argv=None, environ=os.environ):
     argv = sys.argv if argv is None else argv
     try:
-        args = build_parser().parse_args(argv[1:])
+        args = parse(argv[1:])
     except SystemExit as exc:
         return int(exc.code or 0)
     tool = (sys.executable, os.path.abspath(argv[0]))

@@ -209,8 +209,6 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
     uid, gid = (0, 0) if root else (settings.uid, settings.gid)
     user = f"{uid}:{gid}"
     command = list(command)
-    if command[:1] == ["--"]:
-        command = command[1:]
     if not command:
         command = _login_shell(box, user, environ, runner)
     argv = ["podman", "exec", "-i", *(["-t"] if isatty else []),
@@ -249,8 +247,6 @@ def unit_rules(name, *, runner=run):
 
 
 def unit_exec(name, argv, *, runner=run, execv=os.execv):
-    if argv[:1] == ["--"]:
-        argv = argv[1:]
     exec_with_pid(name, argv, runner, execv)
 
 

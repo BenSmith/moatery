@@ -21,7 +21,7 @@ from tests import REPO_ROOT, load_script
 from tests.test_quadlet_example import _ruleset
 
 from customs_box import commands, netns
-from customs_box.cli import main
+from customs_box.cli import main, parse
 from customs_box.mounts import Mount, MountRefused, parse_mount, refuse
 from customs_box.paths import Box, protected, user_dirs, valid_name
 from customs_box.units import Settings, render
@@ -198,9 +198,12 @@ class TestUnits(unittest.TestCase):
         """What the launcher runs, with the pod's pid substituted, parsed by
         the launcher's own parser."""
         words = _exec_words(unit_text, "ExecStart")
-        prefix = [*self.settings.tool, "unit", "exec", "agent", "--"]
-        self.assertEqual(words[:len(prefix)], prefix)
-        argv = [w.replace(netns.PID, "4242") for w in words[len(prefix):]]
+        tool = len(self.settings.tool)
+        self.assertEqual(words[:tool], list(self.settings.tool))
+        args = parse(words[tool:])
+        self.assertEqual((args.command, args.unit_command, args.name),
+                         ("unit", "exec", "agent"))
+        argv = [w.replace(netns.PID, "4242") for w in args.argv]
         self.assertEqual(argv[0], self.settings.python)
         listen = load_script("libexec/customs-netns-listen")
         return listen.parse_args(argv[1:])
@@ -451,6 +454,17 @@ class TestCommands(unittest.TestCase):
         self._create("b")
         rows = commands.ls(dirs=self.dirs, runner=FakeHost(self.home))
         self.assertEqual([r[0] for r in rows], ["a", "b"])
+
+    def test_what_follows_the_first_separator_is_the_command(self):
+        args = parse(["enter", "agent", "--root", "--", "id", "--root",
+                      "--", "x"])
+        self.assertEqual((args.name, args.root), ("agent", True))
+        self.assertEqual(args.argv, ["id", "--root", "--", "x"])
+        self.assertEqual(parse(["enter", "agent"]).argv, [])
+        with mock.patch("sys.stderr"):
+            for words in (["stop", "agent", "--", "x"], ["enter", "a", "x"]):
+                with self.subTest(words), self.assertRaises(SystemExit):
+                    parse(words)
 
     def test_the_command_line_reports_a_refusal_and_exits_1(self):
         with mock.patch("sys.stderr") as err:
