@@ -6,9 +6,11 @@ enter NAME`. Each box is shape 1n ([DESIGN.md](DESIGN.md)) laid out as
 [examples/quadlet/](../examples/quadlet/): a pod that holds the network
 namespace and loads the rules when it starts, the inspector's and the
 responder's listeners bound in that namespace, and the workload started
-after them. The name is a placeholder.
+after them.
 
-Designed, not built.
+`create`, `enter`, `stop`, `rm` and `ls` are built and have run on a
+real host; credentials, the policy commands and the packaging are
+designed, not built.
 
 ## What a box is for
 
@@ -218,7 +220,6 @@ each one broken on purpose once, and the refusals.
 
 ## Open
 
-- The name.
 - A subpackage (`customs-box`, requiring the same version of customs),
   so a host that only runs the programs does not carry it.
 - Starting boxes at login (`create --autostart`).
