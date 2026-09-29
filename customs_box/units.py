@@ -135,6 +135,8 @@ def container_unit(box, settings):
     lines += [f"Environment={_quoted(f'{v}={settings.trust_path}')}"
               for v in CA_VARIABLES]
     body = "\n".join(lines)
+    # WorkingDir is also the home: podman writes the passwd entry of a user
+    # the pod's keep-id brings in with the working directory as its home.
     return f"""\
 # customs box {box.name}: the workload. A new container from the image at
 # every start; its home and its mounts are what persist.
@@ -148,6 +150,7 @@ After={box.inspect_service} {box.resolve_service}
 ContainerName={box.name}
 Pod={box.unit}.pod
 Image={_value(settings.image)}
+WorkingDir={_value(settings.home_path)}
 Exec=sleep infinity
 RunInit=true
 DropCapability=ALL

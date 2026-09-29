@@ -137,7 +137,10 @@ As in examples/quadlet, with these differences:
 - Each box has a home of its own, a directory on the host that only it
   mounts, at the path the user's home has on the host: the pod maps the
   user to the same name and uid inside (`UserNS=keep-id`). The user's
-  own home directory is never mounted.
+  own home directory is never mounted. The workload's working directory
+  is that path too: podman writes the passwd entry of a user the pod's
+  keep-id brings in with the working directory as its home, and `HOME`
+  from it.
 - At each start the workload's unit writes a sudoers drop-in, as root in
   the container (`ExecStartPost=`), giving the user sudo without a
   password: the image's own rule asks for one, and the user has none.

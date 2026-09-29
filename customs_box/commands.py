@@ -181,10 +181,16 @@ def _workdir(settings, cwd, root):
     return "/root" if root else settings.home_path
 
 
-def _login_shell(box, user, uid, runner):
-    entry = runner(["podman", "exec", "--user", user, box.name, "getent",
-                    "passwd", str(uid)], check=False).stdout.split(":")
-    shell = entry[6].strip() if len(entry) > 6 else ""
+# The user's own shell if the image has it, then bash; podman's entry for
+# the user names /bin/sh.
+_SHELL = ('for s; do [ -n "$s" ] && [ -x "$s" ] && exec echo "$s"; done; '
+          'getent passwd "$(id -u)" | cut -d: -f7')
+
+
+def _login_shell(box, user, environ, runner):
+    shell = runner(["podman", "exec", "--user", user, box.name, "sh", "-c",
+                    _SHELL, "sh", environ.get("SHELL", ""), "/bin/bash"],
+                   check=False).stdout.strip()
     return [shell or "/bin/sh", "-l"]
 
 
@@ -206,7 +212,7 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
     if command[:1] == ["--"]:
         command = command[1:]
     if not command:
-        command = _login_shell(box, user, uid, runner)
+        command = _login_shell(box, user, environ, runner)
     argv = ["podman", "exec", "-i", *(["-t"] if isatty else []),
             "--user", user, "--workdir", _workdir(settings, cwd, root)]
     for variable in PASSED_THROUGH:

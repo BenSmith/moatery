@@ -184,6 +184,8 @@ class TestUnits(unittest.TestCase):
         self.assertNotIn("Network=", self.work)
 
     def test_the_workload_mounts_its_own_home_and_trusts_the_bundle(self):
+        """The working directory is the home podman gives the user."""
+        self.assertEqual(_keys(self.work, "WorkingDir"), ["/home/u"])
         volumes = _keys(self.work, "Volume")
         self.assertIn(f"{self.box.home}:/home/u:z", volumes)
         self.assertIn(f"{self.box.bundle}:{TRUST}:ro,z", volumes)
@@ -327,8 +329,8 @@ class FakeHost:
             out = "999\n"
         elif "nft list table" in line:
             code = 0 if self.rules else 1
-        elif "getent passwd" in line:
-            out = "u:x:1000:1000::/home/u:/bin/bash\n"
+        elif "exec echo" in line:
+            out = "/bin/bash\n"
         if check and code:
             raise commands.CommandFailed(line)
         return subprocess.CompletedProcess(argv, code, out, "")
