@@ -406,8 +406,14 @@ class TestBrokerUnits(unittest.TestCase):
         self.assertNotIn(self.box.broker_service,
                          _keys(self.inspect, "Requires"))
         self.assertEqual(_keys(self.unit, "Type"), ["notify"])
-        self.assertEqual(_keys(self.unit, "PartOf"), [self.box.pod_service])
         self.assertNotIn("[Install]", self.unit)
+
+    def test_the_broker_is_not_bound_to_the_pod(self):
+        """A restart of the pod is a new namespace, which is nothing to the
+        broker; and systemd leaves a credentialed unit it stops while it
+        starts unable to start again."""
+        for key in ("PartOf", "BindsTo", "Requires", "After"):
+            self.assertEqual(_keys(self.unit, key), [], key)
 
     def test_the_inspector_dials_the_socket_the_broker_binds(self):
         broker = load_script("libexec/customs-broker").parse_args(
@@ -505,7 +511,7 @@ class FakeHost:
     """podman, systemctl and customs-mint-ca, as far as the commands ask."""
 
     def __init__(self, state_root, rules=True, load_state="loaded",
-                 unshare=True, broker=True):
+                 unshare=True, broker=True, broker_state="active"):
         self.calls = []
         self.inputs = []
         self.state_root = state_root
@@ -513,6 +519,7 @@ class FakeHost:
         self.load_state = load_state
         self.unshare = unshare
         self.broker = broker
+        self.broker_state = broker_state
 
     def __call__(self, argv, *, input=None, check=True, env=None):
         self.calls.append(argv)
@@ -527,6 +534,9 @@ class FakeHost:
         elif argv[:3] == ["systemctl", "--user", "start"] and \
                 argv[-1].endswith("-broker.service"):
             code = 0 if self.broker else 1
+        elif argv[:3] == ["systemctl", "--user", "is-active"] and \
+                argv[-1].endswith("-broker.service"):
+            out = self.broker_state + "\n"
         elif "customs-mint-ca" in line:
             ca = Path(argv[argv.index("--state-dir") + 1]) / "ca.pem"
             ca.write_text("BOX CA\n")
@@ -759,13 +769,21 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(after, {**before, "env": "K2"})
         self.assertIn(f"K2={before['placeholder']}",
                       box.container_file.read_text())
-        self.assertIn(["systemctl", "--user", "try-restart",
-                       box.broker_service], host.calls)
-        self.assertLess(host.calls.index(["systemctl", "--user",
-                                          "daemon-reload"]),
-                        host.calls.index(["systemctl", "--user",
-                                          "try-restart",
-                                          box.broker_service]))
+        start = ["systemctl", "--user", "start", box.broker_service]
+        self.assertLess(
+            host.calls.index(["systemctl", "--user", "daemon-reload"]),
+            host.calls.index(["systemctl", "--user", "stop",
+                              box.broker_service]))
+        self.assertLess(
+            host.calls.index(["systemctl", "--user", "reset-failed",
+                              box.broker_service]), host.calls.index(start))
+        host = FakeHost(self.home, broker_state="inactive")
+        self._add(secret="sk-newer", hosts=[], env=None, host=host)
+        self.assertNotIn(start, host.calls)
+        with self.assertRaisesRegex(commands.BoxError,
+                                    "broker of agent did not start"):
+            self._add(secret="sk-newest", hosts=[], env=None,
+                      host=FakeHost(self.home, broker=False))
 
     def test_a_replacement_a_box_could_not_hold_changes_nothing(self):
         self._add()
@@ -804,12 +822,56 @@ class TestCommands(unittest.TestCase):
                 self.assertEqual(len(ran), 1)
                 self.assertEqual(bool(said), not works)
 
-    def test_rm_removes_the_broker_unit(self):
+    def test_stop_and_rm_stop_the_broker(self):
         self._add()
         box, _ = self._create(policy=self._brokered())
-        commands.rm("agent", home=False, dirs=self.dirs,
-                    runner=FakeHost(self.home))
+        host = FakeHost(self.home)
+        commands.stop("agent", dirs=self.dirs, runner=host)
+        commands.rm("agent", home=False, dirs=self.dirs, runner=host)
+        stops = [c for c in host.calls if c[:3] == ["systemctl", "--user",
+                                                    "stop"]]
+        self.assertEqual(len(stops), 2)
+        for argv in stops:
+            self.assertEqual(argv[3:], [box.pod_service, box.broker_service])
         self.assertFalse(box.broker_file.exists())
+        self._create()
+        host = FakeHost(self.home)
+        commands.stop("agent", dirs=self.dirs, runner=host)
+        self.assertIn(["systemctl", "--user", "stop", box.pod_service],
+                      host.calls)
+
+    def test_enter_clears_what_a_stop_while_starting_left(self):
+        """A broker that is not active, which after a failed start is
+        `activating` while it waits to restart; before the start that
+        would fail on it; and a workspace left read-only."""
+        self._add()
+        box, _ = self._create(policy=self._brokered())
+        left = (self.dirs.runtime / "systemd" / "temporary-credentials"
+                / box.broker_service)
+        for state, cleared in (("failed", True), ("inactive", True),
+                               ("activating", True), ("active", False)):
+            left.mkdir(parents=True, exist_ok=True)
+            (left / "k").write_text("SECRET")
+            left.chmod(0o500)
+            self.addCleanup(lambda: left.exists() and left.chmod(0o700))
+            host = FakeHost(self.home, broker_state=state)
+            commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                           cwd=self.home, environ=self.env, isatty=False,
+                           runner=host, execvp=lambda f, a: None,
+                           warn=lambda m: None)
+            with self.subTest(state=state):
+                self.assertEqual(not left.exists(), cleared)
+                stop = ["systemctl", "--user", "stop", box.broker_service]
+                reset = ["systemctl", "--user", "reset-failed",
+                         box.broker_service]
+                start = ["systemctl", "--user", "start", box.service]
+                self.assertEqual(reset in host.calls, cleared)
+                self.assertEqual(stop in host.calls, cleared)
+                if cleared:
+                    self.assertLess(host.calls.index(stop),
+                                    host.calls.index(reset))
+                    self.assertLess(host.calls.index(reset),
+                                    host.calls.index(start))
 
     def test_the_command_line_takes_a_credential(self):
         args = parse(["credential", "add", "k", "--host", "a", "--host",

@@ -203,8 +203,16 @@ def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
                            "says why)")
 
 
+def _units_to_stop(box):
+    return [box.pod_service] + (
+        [box.broker_service] if box.broker_file.exists() else [])
+
+
 def _discard(box, *, home, runner):
-    runner(["systemctl", "--user", "stop", box.pod_service], check=False)
+    runner(["systemctl", "--user", "stop", *_units_to_stop(box)],
+           check=False)
+    if box.broker_file.exists():
+        _clear_broker(box, runner)
     for path in box.unit_files:
         path.unlink(missing_ok=True)
     runner(["systemctl", "--user", "daemon-reload"], check=False)
@@ -243,9 +251,45 @@ def _login_shell(box, user, environ, runner):
     return [shell or "/bin/sh", "-l"]
 
 
+def _broker_state(box, runner):
+    return runner(["systemctl", "--user", "is-active", box.broker_service],
+                  check=False).stdout.strip()
+
+
+def _remove_tree(path):
+    """A directory tree the user owns, whatever its modes."""
+    try:
+        os.chmod(path, 0o700)
+    except FileNotFoundError:
+        return
+    for directory, inner, _ in os.walk(path):
+        for name in inner:
+            os.chmod(os.path.join(directory, name), 0o700)
+    shutil.rmtree(path)
+
+
+def _reset_broker(box, runner):
+    runner(["systemctl", "--user", "stop", box.broker_service], check=False)
+    _clear_broker(box, runner)
+
+
+def _clear_broker(box, runner):
+    """What systemd leaves when it stops a credentialed unit while the
+    unit's credentials are being decrypted: the workspace, which every
+    start after fails on, a restart after a restart, and those
+    failures."""
+    if box.dirs.runtime is not None:
+        _remove_tree(box.dirs.runtime / "systemd" / "temporary-credentials"
+                     / box.broker_service)
+    runner(["systemctl", "--user", "reset-failed", box.broker_service],
+           check=False)
+
+
 def enter(name, command, *, root, dirs, cwd, environ, isatty,
           runner=run, execvp=os.execvp, warn=_warn):
     box, settings = _existing(name, dirs)
+    if box.broker_file.exists() and _broker_state(box, runner) != "active":
+        _reset_broker(box, runner)
     try:
         runner(["systemctl", "--user", "start", box.service])
     except CommandFailed as exc:
@@ -278,7 +322,7 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
 
 def stop(name, *, dirs, runner=run):
     box, _settings = _existing(name, dirs)
-    runner(["systemctl", "--user", "stop", box.pod_service])
+    runner(["systemctl", "--user", "stop", *_units_to_stop(box)])
 
 
 def rm(name, *, home, dirs, runner=run):
@@ -370,8 +414,17 @@ def credential_add(credential, secret, *, hosts, env, auth_header,
         _write_units(box, settings, broker)
     if boxes:
         runner(["systemctl", "--user", "daemon-reload"])
-        runner(["systemctl", "--user", "try-restart",
-                *(box.broker_service for box, _, _ in boxes)])
+    failed = []
+    for box, _, _ in boxes:
+        if _broker_state(box, runner) in ("active", "activating"):
+            _reset_broker(box, runner)
+            if runner(["systemctl", "--user", "start", box.broker_service],
+                      check=False).returncode != 0:
+                failed.append(box.name)
+    if failed:
+        raise BoxError(f"credential {credential} is sealed, but the broker "
+                       f"of {', '.join(failed)} did not start again; see "
+                       "journalctl --user -u 'customs-box-*-broker'")
     return [box.name for box, _, _ in boxes], new.env != old.env
 
 

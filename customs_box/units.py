@@ -7,7 +7,9 @@ and is After= the two listener units; they are BindsTo= and After= the
 pod's, which is active only once its ExecStartPost= has loaded the
 rules. The pod Wants= the listeners, so a restart of the pod brings
 them back into its new namespace. The inspector Wants= and is After=
-the broker, which is PartOf= the pod and ready once it is listening.
+the broker, which is ready once it is listening, and holds nothing of
+the namespace: a restart of the pod does not restart it, and `stop`
+stops it.
 """
 
 import json
@@ -262,7 +264,6 @@ def broker_unit(box, settings, broker):
 
 [Unit]
 Description=customs box {box.name}: broker
-PartOf={box.pod_service}
 
 [Service]
 Type=notify
