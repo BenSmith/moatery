@@ -123,11 +123,7 @@ take the box's name; `create` refuses a name either already has.
 As in examples/quadlet, with these differences:
 
 - The pod is created with `--hosts-file image`, so the host's hosts file
-  does not answer the workload's names, and `--share-parent=false`.
-  With a pod cgroup, every member's start creates the pod's slice when
-  its directory is missing, and fails if systemd already has that slice
-  loaded; without one there is no slice. The workload runs split, in its
-  own unit's cgroup, so it never used the pod's.
+  does not answer the workload's names.
 - The rules are loaded by the tool (`customs-box netns rules NAME`, for
   the units' use). The egress device is read inside the namespace.
 - The broker is `PartOf=` the pod, and the inspector `Wants=` and is
