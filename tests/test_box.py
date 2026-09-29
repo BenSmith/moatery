@@ -25,7 +25,8 @@ from customs_box import commands, netns
 from customs_box.cli import main, parse
 from customs_box.mounts import Mount, MountRefused, parse_mount, refuse
 from customs_box.paths import Box, protected, user_dirs, valid_name
-from customs_box.units import Settings, render
+from customs_box.units import (ALL_CAPABILITIES, CAPABILITIES, Settings,
+                               render)
 
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
 DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo")
@@ -177,12 +178,19 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(_keys(self.pod, "UserNS"), ["keep-id"])
 
     def test_the_workload_cannot_touch_its_namespace(self):
-        self.assertEqual(_keys(self.work, "DropCapability"), ["ALL"])
-        added = set(_keys(self.work, "AddCapability"))
-        self.assertTrue(added)
-        self.assertFalse(added & {"NET_ADMIN", "NET_RAW", "SYS_ADMIN"})
+        """Root holds podman's default set at most, and the user nothing:
+        podman gives the user what a unit adds."""
+        dropped = set(_keys(self.work, "DropCapability"))
+        self.assertEqual(dropped, set(ALL_CAPABILITIES) - set(CAPABILITIES))
+        self.assertNotIn("NET_ADMIN", CAPABILITIES)
+        self.assertNotIn("AddCapability", self.work)
         self.assertNotIn("PodmanArgs", self.work)
         self.assertNotIn("Network=", self.work)
+
+    def test_every_capability_this_kernel_has_is_named(self):
+        last = int(Path("/proc/sys/kernel/cap_last_cap").read_text())
+        self.assertGreaterEqual(len(ALL_CAPABILITIES), last + 1)
+        self.assertEqual(len(set(ALL_CAPABILITIES)), len(ALL_CAPABILITIES))
 
     def test_the_workload_mounts_its_own_home_and_trusts_the_bundle(self):
         """The working directory is the home podman gives the user."""

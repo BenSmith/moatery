@@ -16,11 +16,26 @@ from typing import NamedTuple
 from .mounts import Mount
 from .netns import PID
 
-# podman's default set, written out so a containers.conf cannot widen
-# it. None is CAP_NET_ADMIN.
+# podman's default set, the most root in a box holds; none is
+# CAP_NET_ADMIN. The unit drops every other capability, so a
+# containers.conf cannot widen it, and adds none: podman gives what a
+# unit adds to the box's user as well.
 CAPABILITIES = ("CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL",
                 "NET_BIND_SERVICE", "SETFCAP", "SETGID", "SETPCAP",
                 "SETUID", "SYS_CHROOT")
+
+# Every capability the kernel names, in its order (linux/capability.h).
+ALL_CAPABILITIES = (
+    "CHOWN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "FOWNER", "FSETID", "KILL",
+    "SETGID", "SETUID", "SETPCAP", "LINUX_IMMUTABLE", "NET_BIND_SERVICE",
+    "NET_BROADCAST", "NET_ADMIN", "NET_RAW", "IPC_LOCK", "IPC_OWNER",
+    "SYS_MODULE", "SYS_RAWIO", "SYS_CHROOT", "SYS_PTRACE", "SYS_PACCT",
+    "SYS_ADMIN", "SYS_BOOT", "SYS_NICE", "SYS_RESOURCE", "SYS_TIME",
+    "SYS_TTY_CONFIG", "MKNOD", "LEASE", "AUDIT_WRITE", "AUDIT_CONTROL",
+    "SETFCAP", "MAC_OVERRIDE", "MAC_ADMIN", "SYSLOG", "WAKE_ALARM",
+    "BLOCK_SUSPEND", "AUDIT_READ", "PERFMON", "BPF", "CHECKPOINT_RESTORE")
+
+DROPPED = tuple(c for c in ALL_CAPABILITIES if c not in CAPABILITIES)
 
 # Each replaces a client's trust store, so the bundle carries the
 # system's CAs as well as the box's.
@@ -131,7 +146,9 @@ def container_unit(box, settings):
     for mount in settings.mounts:
         volumes.append(f"{mount.source}:{mount.target}:"
                        + ("ro,z" if mount.readonly else "z"))
-    lines = [f"Volume={_value(v)}" for v in volumes]
+    lines = [f"DropCapability={' '.join(DROPPED[i:i + 5])}"
+             for i in range(0, len(DROPPED), 5)]
+    lines += [f"Volume={_value(v)}" for v in volumes]
     lines += [f"Environment={_quoted(f'{v}={settings.trust_path}')}"
               for v in CA_VARIABLES]
     body = "\n".join(lines)
@@ -153,8 +170,6 @@ Image={_value(settings.image)}
 WorkingDir={_value(settings.home_path)}
 Exec=sleep infinity
 RunInit=true
-DropCapability=ALL
-AddCapability={" ".join(CAPABILITIES)}
 {body}
 
 [Service]
