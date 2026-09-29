@@ -134,6 +134,14 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
 def _lay_out(box, settings, policy_path, host_bundle, environ, runner):
     for path in (box.config, box.state, box.logs, box.home):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # The runtime makes a missing mount point, and each directory above
+    # it, as the box's root, which the user could not write in its own
+    # home.
+    for mount in settings.mounts:
+        target = PurePosixPath(mount.target)
+        if target.is_relative_to(settings.home_path):
+            (box.home / target.relative_to(settings.home_path)).mkdir(
+                parents=True, exist_ok=True)
     box.policy.write_bytes(Path(policy_path).read_bytes())
     box.policy.chmod(0o600)
     minted = runner([settings.python,
@@ -168,7 +176,10 @@ def _discard(box, *, home, runner):
     shutil.rmtree(box.config, ignore_errors=True)
     shutil.rmtree(box.state, ignore_errors=True)
     if home:
-        shutil.rmtree(box.share, ignore_errors=True)
+        # The box's other uids write in its home too: root by sudo, and
+        # the runtime.
+        runner(["podman", "unshare", "rm", "-rf", "--", str(box.share)],
+               check=False)
 
 
 def _workdir(settings, cwd, root):
@@ -227,8 +238,10 @@ def stop(name, *, dirs, runner=run):
 def rm(name, *, home, dirs, runner=run):
     box, _settings = _existing(name, dirs)
     _discard(box, home=home, runner=runner)
-    kept = [str(box.logs)] + ([] if home else [str(box.home)])
-    return kept
+    if home and box.share.exists():
+        raise BoxError(f"box {name} is removed but its home is not: "
+                       f"podman unshare rm -rf {box.share}")
+    return [str(box.logs)] + ([] if home else [str(box.home)])
 
 
 def ls(*, dirs, runner=run):

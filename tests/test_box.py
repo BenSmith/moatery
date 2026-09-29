@@ -11,6 +11,7 @@ parsed by the programs' own parsers, so a flag renamed there fails here.
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -305,11 +306,13 @@ class TestRules(unittest.TestCase):
 class FakeHost:
     """podman, systemctl and customs-mint-ca, as far as the commands ask."""
 
-    def __init__(self, state_root, rules=True, load_state="loaded"):
+    def __init__(self, state_root, rules=True, load_state="loaded",
+                 unshare=True):
         self.calls = []
         self.state_root = state_root
         self.rules = rules
         self.load_state = load_state
+        self.unshare = unshare
 
     def __call__(self, argv, *, input=None, check=True, env=None):
         self.calls.append(argv)
@@ -334,6 +337,8 @@ class FakeHost:
             code = 0 if self.rules else 1
         elif "exec echo" in line:
             out = "/bin/bash\n"
+        elif argv[:4] == ["podman", "unshare", "rm", "-rf"] and self.unshare:
+            shutil.rmtree(argv[-1], ignore_errors=True)
         if check and code:
             raise commands.CommandFailed(line)
         return subprocess.CompletedProcess(argv, code, out, "")
@@ -375,6 +380,7 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(box.policy.stat().st_mode & 0o777, 0o600)
         self.assertEqual(box.bundle.read_text(), "BOX CA\nSYSTEM CAS\n")
         self.assertTrue(box.home.is_dir())
+        self.assertTrue((box.home / "projects" / "p").is_dir())
         settings = Settings.from_json(box.settings.read_text())
         self.assertEqual(settings.trust_path, TRUST)
         self.assertEqual(settings.mounts[0].source,
@@ -448,6 +454,10 @@ class TestCommands(unittest.TestCase):
         commands.rm("agent", home=True, dirs=self.dirs,
                     runner=FakeHost(self.home))
         self.assertFalse(box.home.exists())
+        self._create()
+        with self.assertRaisesRegex(commands.BoxError, "home is not"):
+            commands.rm("agent", home=True, dirs=self.dirs,
+                        runner=FakeHost(self.home, unshare=False))
 
     def test_ls_lists_each_box_and_its_state(self):
         self._create("a")
