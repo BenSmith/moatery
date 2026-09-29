@@ -5,11 +5,14 @@
 # --caller-uid is %U: in shape 1 the broker's one caller is the inspector,
 # which runs as this user. The socket is in the user's runtime directory,
 # which the container has no path to and no other uid can enter.
+# Type=notify: started once the socket is listening, so the inspector,
+# ordered after it, finds it there.
 
 [Unit]
 Description=customs credential broker
 
 [Service]
+Type=notify
 ExecStart=/usr/libexec/customs/customs-broker --name example \
     --listen unix:%t/customs/broker.sock --caller-uid %U \
     --host api.example.com=example \

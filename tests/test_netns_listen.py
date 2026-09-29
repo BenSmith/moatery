@@ -183,27 +183,6 @@ class TestReadiness(unittest.TestCase):
         sock.settimeout(5)
         return path, sock
 
-    def test_ready_is_sent_and_the_variable_removed(self):
-        path, sock = self._notify_socket()
-        environ = {"NOTIFY_SOCKET": path, "OTHER": "1"}
-        netns_listen.notify_ready(environ)
-        self.assertEqual(sock.recv(64), b"READY=1")
-        self.assertEqual(environ, {"OTHER": "1"})
-
-    def test_an_abstract_socket_is_reached(self):
-        name = f"customs-test-{os.getpid()}-{time.monotonic_ns()}"
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        self.addCleanup(sock.close)
-        sock.bind("\0" + name)
-        sock.settimeout(5)
-        netns_listen.notify_ready({"NOTIFY_SOCKET": "@" + name})
-        self.assertEqual(sock.recv(64), b"READY=1")
-
-    def test_nothing_is_sent_unasked(self):
-        environ = {"OTHER": "1"}
-        netns_listen.notify_ready(environ)
-        self.assertEqual(environ, {"OTHER": "1"})
-
     def test_the_launcher_tells_after_the_bind_and_the_program_is_not_asked(
             self):
         path, sock = self._notify_socket()

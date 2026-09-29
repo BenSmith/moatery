@@ -17,7 +17,9 @@ from unittest import mock
 
 from customs import broker_profiles
 from customs import broker_server
+from customs.sd_notify import notify_ready
 from tests import load_script
+from tests.test_sd_notify import notify_socket
 
 
 def build(hosts, placeholders=(), auth_headers=(), auth_formats=(),
@@ -451,6 +453,27 @@ class TestEntrypointWiring(unittest.TestCase):
         self.assertIn(f"listening url=http+unix:{path}", err)
         self.assertFalse(os.path.exists(path),
                          "server_close did not unlink the socket")
+
+    def test_ready_is_sent_once_the_socket_is_listening(self):
+        """Type=notify: the inspector is ordered after the broker, and its
+        first brokered request must find the socket there."""
+        path, sock = notify_socket(self)
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, ignore_errors=True)
+        listen = os.path.join(d, "broker.sock")
+        argv = list(self.MINIMAL)
+        argv[argv.index("--listen") + 1] = f"unix:{listen}"
+        bound = []
+
+        def notify(environ=os.environ):
+            bound.append(os.path.exists(listen))
+            notify_ready(environ)
+
+        with mock.patch.dict(os.environ, {"NOTIFY_SOCKET": path}):
+            self._run(argv, notify_ready=notify)
+        self.assertEqual(bound, [True])
+        self.assertEqual(sock.recv(64), b"READY=1")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,7 +29,8 @@ sys.dont_write_bytecode = True
 
 from customs.netns_listen import (
     PLANE_LISTENERS, RESOLVER_LISTENERS, BindFailed, hand_over,
-    listeners_in, notify_ready)
+    listeners_in)
+from customs.sd_notify import notify_ready
 
 
 def parse_args(argv):

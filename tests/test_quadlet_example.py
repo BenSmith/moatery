@@ -76,6 +76,12 @@ class TestQuadletExample(unittest.TestCase):
                 self.assertIn("example-pod.service", _keys(unit, "After"))
                 self.assertEqual(_keys(unit, "Type"), ["notify"])
 
+    def test_the_broker_notifies(self):
+        """The inspector is After= it, and a brokered request in its first
+        moment finds the socket."""
+        broker = EXAMPLES / "systemd" / "customs-broker.service"
+        self.assertEqual(_keys(broker, "Type"), ["notify"])
+
     def test_the_script_is_given_the_pod_name(self):
         pod = QUADLET / "example.pod"
         (name,) = _keys(pod, "PodName")

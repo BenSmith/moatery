@@ -167,11 +167,12 @@ class TestThePackageIsTheClosure(unittest.TestCase):
 
     def test_the_launcher_reaches_only_the_planes(self):
         """customs-netns-listen binds and execs. The port numbers are the
-        one thing it shares with the inspector, and nothing that parses a
-        byte a workload sent is in it."""
+        one thing it shares with the inspector, the readiness notice the
+        one it shares with the broker, and nothing that parses a byte a
+        workload sent is in it."""
         mods = _lib_modules()
         self.assertEqual(sorted(_closure(NETNS_LISTEN, mods)),
-                         ["egress_plane", "netns_listen"])
+                         ["egress_plane", "netns_listen", "sd_notify"])
 
     def test_the_resolver_reaches_no_dialling_module(self):
         """customs-resolve answers from memory. Its closure is its own three
@@ -185,11 +186,12 @@ class TestThePackageIsTheClosure(unittest.TestCase):
              "sd_listen"])
 
     def test_the_broker_closure_is_the_four_broker_modules(self):
+        """And the readiness notice, which reads nothing."""
         mods = _lib_modules()
         self.assertEqual(
             sorted(_closure(BROKER, mods)),
             ["broker_profiles", "broker_request", "broker_server",
-             "peer_identity"])
+             "peer_identity", "sd_notify"])
 
     def test_the_inspector_closure_does_not_reach_the_broker(self):
         """The inspector dials the broker; it never imports it. The one

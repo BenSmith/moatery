@@ -14,7 +14,8 @@ that cannot map that uid is refused at start, since every unmapped caller
 reads as the same overflow uid.
 
 Every value is a flag; the material arrives under $CREDENTIALS_DIRECTORY by
-LoadCredentialEncrypted=, and a --host names the credential id.
+LoadCredentialEncrypted=, and a --host names the credential id. Under a
+Type=notify unit it sends READY=1 once it is listening.
 
 Usage:
   customs-broker --name NAME --listen ADDRESS:PORT|unix:PATH
@@ -45,6 +46,7 @@ from customs.broker_server import (
 from customs.peer_identity import (
     overflow_uid, unmappable_uids, userns_maps_everything,
 )
+from customs.sd_notify import notify_ready
 
 
 def parse_args(argv):
@@ -133,6 +135,11 @@ def main(argv=None):
     Handler.read_timeout = args.read_timeout
 
     server = make_server(addr, Handler)
+    try:
+        notify_ready()
+    except OSError as exc:
+        sys.exit(f"cannot tell the service manager the broker is "
+                 f"listening: {exc}")
     log("listening", url=listening_url(addr),
         workload=args.name, uid=args.caller_uid,
         hosts=len(Handler.profiles), unknown="refused")
