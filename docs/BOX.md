@@ -13,9 +13,10 @@ Designed, not built.
 ## What a box is for
 
 An agent or a toolchain run from a terminal. It reaches the hosts its
-policy lists, it holds a placeholder where a provider's key would be,
-and it shares with the host only the directories `create` was told to
-mount.
+policy lists, over HTTPS and HTTP; it holds a placeholder where a
+provider's key would be; and it shares with the host only the
+directories `create` was told to mount. Every other port is dropped,
+so git over ssh cannot leave a box, and git over https can.
 
 Not for a display, audio or a GPU; the host's network or a custom one;
 devices; or the user's home directory.
@@ -38,7 +39,9 @@ customs-box ls
 
 **create** writes the box's files (below), mints its CA with
 `customs-mint-ca`, builds its bundle, and runs `systemctl --user
-daemon-reload`. Nothing starts.
+daemon-reload`. Nothing starts. The image defaults to
+`registry.fedoraproject.org/fedora-toolbox:44`, Fedora's own, which has
+the git, Python, ssh client and manual pages `fedora:44` leaves out.
 
 **enter** starts the workload's unit if it is inactive, which starts,
 in order, the pod, the rules, the broker and the listeners, and the
@@ -71,7 +74,16 @@ host the workload reaches has to be listed.
   refused, not let through.
 
 Package installs inside a box are the hard case: a mirror list spreads
-over many hosts. A box's tools are better built into its image.
+over many hosts, and the install does not outlive a stop (next
+section). A box's tools are better built into its image.
+
+## What persists
+
+Quadlet runs the workload with `--replace --rm`, and removes it at
+stop: every start is a new container from the image. The box's home is
+a mount, so it persists, and with it anything installed under it (`pip
+install --user`, an installer that writes to `~/.local`). The image's
+filesystem does not, and neither does a `dnf install`.
 
 ## Credentials
 
@@ -123,6 +135,10 @@ As in examples/quadlet, with these differences:
   variables.
 - The box's home is mounted at the user's home path; the pod maps the
   user to the same uid inside (`UserNS=keep-id`).
+- At each start the workload's unit writes a sudoers drop-in, as root in
+  the container (`ExecStartPost=`), giving the user sudo without a
+  password: the image's own rule asks for one, and the user has none.
+  Root in a box is filtered as the user is.
 - No `[Install]`: a box runs from `enter` to `stop`.
 
 What starts what: `enter` starts `customs-box-NAME.service`, which
@@ -193,8 +209,11 @@ each one broken on purpose once, and the refusals.
 ## Open
 
 - The name.
-- The default image: `fedora-toolbox:44` has sudo and a toolchain;
-  `fedora:44` is smaller.
+- Whether the image's filesystem should persist until `rm`, as
+  distrobox's does. Then neither the workload nor the pod can be a
+  quadlet unit: quadlet creates the pod with `--replace` at each start
+  and removes it, and every container in it, at stop. `create` would
+  make both once, and units of the tool's own would start them.
 - A subpackage (`customs-box`, requiring the same version of customs),
   so a host that only runs the programs does not carry it.
 - Starting boxes at login (`create --autostart`).
