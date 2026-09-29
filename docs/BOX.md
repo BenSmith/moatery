@@ -188,7 +188,9 @@ a failure; that is untested.
 `customs-box` is a host layout, the thing DESIGN.md says customs is not.
 Its code is its own package, `customs_box`, beside `customs`; the
 programs never import it, and `tests/test_closure.py` holds them to that
-unchanged. It may import `customs` (the policy loader).
+unchanged. It may import `customs` (the policy loader). The customs RPM
+carries it, `/usr/bin/customs-box` and the package beside `customs` in
+site-packages; there is no separate package.
 
 ## Requirements
 
@@ -220,9 +222,7 @@ each one broken on purpose once, and the refusals.
 
 ## Open
 
-- A subpackage (`customs-box`, requiring the same version of customs),
-  so a host that only runs the programs does not carry it.
 - Starting boxes at login (`create --autostart`).
 - Rotating the records: the inspector stops writing one past 512 MiB.
-- DESIGN.md: "What customs does not do" to say the programs do not, and
-  the cosy shape to keep, replace or drop.
+- DESIGN.md: "What customs does not do" to say the programs do not,
+  once the RPM carries customs-box.

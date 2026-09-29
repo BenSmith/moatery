@@ -65,8 +65,8 @@ flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
   reads.
 - [docs/DESIGN.md](docs/DESIGN.md): placing the pair: a rootless
   container, with the inspector's listeners on the host or in the
-  container; a sidecar in a pod; a VM; a cosy container; and what the
-  host has to do that customs does not (private addresses among it).
+  container; a sidecar in a pod; a VM; and what the host has to do
+  that customs does not (private addresses among it).
 - [docs/INTERFACE.md](docs/INTERFACE.md): what stays stable for a
   program that imports the modules or reads the inspector's status file.
 - [examples/](examples/): user units, a logrotate configuration, and the
@@ -103,8 +103,7 @@ Version 0.4.0. Both programs have run end to end on a real host in
 four shapes: a rootless container (`tests/manual/shape1_rig.py`), the
 same with the listeners in the container (`tests/manual/shape1n_rig.py`),
 a sidecar in a pod (`tests/manual/shape1b_rig.py`), and a VM inside the
-container (`tests/manual/shape2_rig.py`). The cosy shape is designed, not
-proved. The workload's DNS is answered by
+container (`tests/manual/shape2_rig.py`). The workload's DNS is answered by
 customs-resolve and forwarded nowhere ([DESIGN.md](docs/DESIGN.md),
 "DNS").
 `just test` runs the unit tests; `just lint` runs ruff. `just coverage`

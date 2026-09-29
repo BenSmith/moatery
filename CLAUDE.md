@@ -7,7 +7,7 @@ workloads, lifted out of workloadctl into its own project. workloadctl
 now requires the customs RPM and runs its programs; there is no second
 copy. Read
 `README.md`, then `docs/DESIGN.md` (how the pair applies to a rootless
-container, a pod sidecar, a VM, and cosy), `docs/POLICY.md` (the policy
+container, a pod sidecar and a VM), `docs/POLICY.md` (the policy
 document) and `docs/INTERFACE.md` (the names workloadctl imports and
 the status file paths it reads).
 `examples/` holds shape-1 user units and a logrotate configuration,
