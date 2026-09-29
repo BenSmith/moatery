@@ -89,6 +89,13 @@ class TestQuadletExample(unittest.TestCase):
         inspect = (QUADLET / LISTENERS[0]).read_text()
         self.assertIn('--netns-pid "$$pid"', inspect)
 
+    def test_the_pod_has_no_cgroup_of_its_own(self):
+        """With a pod cgroup, a container's start asks systemd for the
+        pod's slice whenever podman misses its directory, and fails
+        against a slice systemd already has."""
+        pod = QUADLET / "example.pod"
+        self.assertIn("--share-parent=false", _keys(pod, "PodmanArgs"))
+
     def test_the_rules_are_shape_1n(self):
         design = DESIGN.read_text().split(
             "## Shape 1n", 1)[1].split("\n## ", 1)[0]

@@ -502,7 +502,7 @@ the two facts the image cannot know -- the workload's label and its uid
 -- and passes every other flag to the broker untouched:
 
 ```
-podman pod create --name POD --hosts-file image
+podman pod create --name POD --hosts-file image --share-parent=false
 podman run -d --pod POD --name sidecar --restart on-failure \
     --cap-drop all --cap-add chown,dac_override,setgid,setuid \
     -v policy.json:/etc/customs/policy.json:ro,Z \
@@ -547,6 +547,13 @@ podman run -d --pod POD --name workload --user 1000:1000 --cap-drop all \
     -e SSL_CERT_FILE=/usr/local/share/ca-certificates/egress-ca.crt … \
     IMAGE
 ```
+
+The pod has no cgroup of its own (`--share-parent=false`). With one,
+every container's start asks systemd to create the pod's slice unless
+podman finds its directory at the path it assumes for the user's
+manager, and a slice systemd already has fails that start. Nothing here
+sets a limit on the pod as a whole, so the slice would hold nothing the
+pod needs.
 
 The programs' upstream dials leave by the same device as the workload's
 disallowed egress, so the egress chain has to tell them apart. It cannot

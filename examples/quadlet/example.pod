@@ -5,6 +5,10 @@
 #
 # keep-id maps this user to the same uid inside; every uid the pod's
 # user namespace maps is served by the inspector.
+#
+# No pod cgroup: with one, every container's start asks systemd for the
+# pod's slice unless podman finds its directory at the path it assumes,
+# and a slice systemd already has fails that start.
 
 [Unit]
 Wants=customs-inspect-example.service customs-resolve-example.service
@@ -14,6 +18,7 @@ PodName=example
 Network=pasta
 UserNS=keep-id
 ExitPolicy=continue
+PodmanArgs=--share-parent=false
 
 [Service]
 ExecStartPost=%h/.local/bin/customs-pod-netns rules example

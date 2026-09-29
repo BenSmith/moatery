@@ -177,7 +177,7 @@ def create_pod():
     what the redirect catches."""
     run(["podman", "pod", "create", "--name", POD,
          "--network", f"pasta:--map-host-loopback={LOOPBACK_MAP}",
-         "--hosts-file", "image",
+         "--hosts-file", "image", "--share-parent=false",
          "--add-host", f"{PROVIDER}:{LOOPBACK_MAP}"])
 
 
