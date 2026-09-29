@@ -21,15 +21,19 @@ from unittest import mock
 from tests import REPO_ROOT, load_script
 from tests.test_quadlet_example import _ruleset
 
+from customs.inspect_policy import load_policy
 from customs_box import commands, netns
 from customs_box.cli import main, parse
+from customs_box.credentials import (Broker, Credential, CredentialError,
+                                     brokering, describe)
 from customs_box.mounts import Mount, MountRefused, parse_mount, refuse
-from customs_box.paths import Box, protected, user_dirs, valid_name
+from customs_box.paths import (Box, boxes_root, credentials_root, described,
+                               protected, sealed, user_dirs, valid_name)
 from customs_box.units import (ALL_CAPABILITIES, CAPABILITIES, Settings,
                                container_unit, render)
 
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
-DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo")
+DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo", "PartOf")
 TRUST = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 
 
@@ -41,6 +45,18 @@ def _settings(home, **over):
                   pythonpath=None)
     values.update(over)
     return Settings(**values)
+
+
+def _credential(id="anthropic", hosts=("api.anthropic.com",),
+                env="ANTHROPIC_API_KEY"):
+    return Credential(id, tuple(hosts), env, "x-api-key", "{secret}",
+                      f"customs-placeholder-{id}")
+
+
+def _policy(case, entries, hosts=()):
+    path = Path(case.enterContext(tempfile.TemporaryDirectory())) / "p.json"
+    path.write_text(json.dumps({"hosts": list(hosts), "policy": entries}))
+    return load_policy(path)
 
 
 def _keys(text, key):
@@ -77,6 +93,16 @@ class TestNamesAndPaths(unittest.TestCase):
         self.assertEqual(box.pod_file,
                          Path("/c/containers/systemd/customs-box-a.pod"))
         self.assertIn(Path("/run/user/7"), protected(dirs))
+
+    def test_the_credentials_are_beside_the_boxes_and_protected(self):
+        """Among them, a box named `credentials` would be their
+        directory."""
+        dirs = user_dirs({"HOME": "/h"})
+        root = credentials_root(dirs)
+        self.assertFalse(root.is_relative_to(boxes_root(dirs)))
+        self.assertTrue(any(root.is_relative_to(p) for p in protected(dirs)))
+        self.assertEqual(sealed(dirs, "k"), root / "k.cred")
+        self.assertEqual(described(dirs, "k"), root / "k.json")
 
 
 class TestMounts(unittest.TestCase):
@@ -139,7 +165,7 @@ class TestUnits(unittest.TestCase):
         self.settings = _settings(
             "/home/u", mounts=(Mount(Path("/home/u/p"), "/w", True),))
         self.units = {p.name: t for p, t in
-                      render(self.box, self.settings).items()}
+                      render(self.box, self.settings, None).items()}
         self.pod = self.units["customs-box-agent.pod"]
         self.work = self.units["customs-box-agent.container"]
         self.inspect = self.units["customs-box-agent-inspect.service"]
@@ -186,7 +212,7 @@ class TestUnits(unittest.TestCase):
         self.assertNotIn("NET_ADMIN", CAPABILITIES)
         self.assertNotIn("AddCapability", self.work)
         settings = self.settings._replace(uid=1001, gid=1002)
-        work = container_unit(self.box, settings)
+        work = container_unit(self.box, settings, None)
         self.assertEqual((_keys(work, "User"), _keys(work, "Group")),
                          (["1001"], ["1002"]))
         self.assertNotIn("PodmanArgs", self.work)
@@ -248,7 +274,7 @@ class TestUnits(unittest.TestCase):
         box = Box("agent", user_dirs({"HOME": "/home/a b%c$d"}))
         settings = _settings("/home/a b%c$d",
                              pythonpath="/src/a b", tool=("/py", "/t x"))
-        units = {p.name: t for p, t in render(box, settings).items()}
+        units = {p.name: t for p, t in render(box, settings, None).items()}
         pod = units["customs-box-agent.pod"]
         self.assertEqual(_exec_words(pod, "ExecStartPost"),
                          ["/py", "/t x", "unit", "rules", "agent"])
@@ -260,6 +286,165 @@ class TestUnits(unittest.TestCase):
         self.assertIn(
             "\nVolume=/home/a b%%c$d/.local/share/customs/box/agent/home:"
             "/home/a b%%c$d:z\n", work)
+
+
+class TestCredentials(unittest.TestCase):
+    """A credential is checked as its broker will check it, and a policy
+    sends it to no host its `credential add` did not name."""
+
+    def _describe(self, **over):
+        values = dict(credential="k", hosts=["API.x.com:443", "api.x.com"],
+                      env="K", auth_header="Authorization",
+                      auth_format="Bearer {secret}", fiction="fake",
+                      secret="sk-real", reserved=commands.RESERVED)
+        values.update(over)
+        return describe(values.pop("credential"), values.pop("hosts"),
+                        values.pop("env"), values.pop("auth_header"),
+                        values.pop("auth_format"), values.pop("fiction"),
+                        values.pop("secret"), **values)
+
+    def test_a_credential_is_described_with_its_hosts_normalised(self):
+        c = self._describe()
+        self.assertEqual(c.hosts, ("api.x.com",))
+        self.assertEqual(Credential.from_json("k", c.to_json()), c)
+        self.assertNotIn("sk-real", c.to_json())
+
+    def test_what_its_broker_would_refuse_is_refused_here(self):
+        cases = {"host name": dict(hosts=["*.x.com"]),
+                 "needs a --host": dict(hosts=[]),
+                 "variable": dict(env="1K"),
+                 "may set": dict(env="SSL_CERT_FILE"),
+                 "no {secret}": dict(auth_format="Bearer"),
+                 "empty": dict(secret=""),
+                 "byte-identical": dict(fiction="sk-real"),
+                 "not a header name": dict(auth_header="a b"),
+                 "U\\+000A": dict(secret="sk\nreal"),
+                 "credential's id": dict(credential="../k")}
+        for words, over in cases.items():
+            with self.subTest(words), \
+                    self.assertRaisesRegex(CredentialError, words):
+                self._describe(**over)
+
+    def _brokering(self, entries, *held):
+        held = {c.id: c for c in held}
+
+        def load(credential):
+            if credential not in held:
+                raise CredentialError(f"no credential {credential}")
+            return held[credential]
+        return brokering(_policy(self, entries, ["pypi.org"]), load)
+
+    def test_a_policy_with_no_credential_has_no_broker(self):
+        self.assertIsNone(self._brokering([{"host": "api.x.com"}]))
+
+    def test_the_broker_holds_what_the_policy_brokers_among_its_hosts(self):
+        a = _credential("a", ["api.a.com", "up.a.com"], "A")
+        b = _credential("b", ["api.b.com"], "B")
+        broker = self._brokering([
+            {"host": "*.a.com", "paths": ["/v1/*"], "credential": "a"},
+            {"host": "api.b.com", "credential": "b"}], a, b)
+        self.assertEqual(broker.hosts, (("api.a.com", "a"),
+                                        ("up.a.com", "a"),
+                                        ("api.b.com", "b")))
+        self.assertEqual(broker.credentials, (a, b))
+
+    def test_a_host_the_credential_does_not_name_is_refused(self):
+        with self.assertRaisesRegex(CredentialError, "for api.a.com only"):
+            self._brokering([{"host": "evil.example", "credential": "a"}],
+                            _credential("a", ["api.a.com"]))
+
+    def test_a_credential_an_earlier_entry_takes_every_host_of(self):
+        a = _credential("a", ["api.x.com"], "A")
+        b = _credential("b", ["api.x.com"], "B")
+        with self.assertRaisesRegex(CredentialError, "earlier entry"):
+            self._brokering([{"host": "api.x.com", "credential": "a"},
+                             {"host": "api.x.com", "credential": "b"}], a, b)
+
+    def test_two_credentials_may_not_set_one_variable(self):
+        with self.assertRaisesRegex(CredentialError, "both set K"):
+            self._brokering([{"host": "api.a.com", "credential": "a"},
+                             {"host": "api.b.com", "credential": "b"}],
+                            _credential("a", ["api.a.com"], "K"),
+                            _credential("b", ["api.b.com"], "K"))
+
+    def test_an_unknown_credential_is_refused(self):
+        with self.assertRaisesRegex(CredentialError, "no credential a"):
+            self._brokering([{"host": "api.a.com", "credential": "a"}])
+
+
+class TestBrokerUnits(unittest.TestCase):
+    """A box whose policy names credentials has a broker, which the
+    inspector waits for and dials, and whose credentials are the ones
+    systemd loads for it."""
+
+    def setUp(self):
+        self.dirs = user_dirs({"HOME": "/home/u",
+                               "XDG_RUNTIME_DIR": "/run/user/1000"})
+        self.box = Box("agent", self.dirs)
+        self.settings = _settings("/home/u")
+        a = _credential("a", ["api.a.com"], "A_KEY")
+        b = _credential("b", ["api.b.com", "up.b.com"], "B_KEY")
+        self.broker = Broker((("api.a.com", "a"), ("up.b.com", "b")), (a, b))
+        self.units = {p.name: t for p, t in render(
+            self.box, self.settings, self.broker).items()}
+        self.inspect = self.units["customs-box-agent-inspect.service"]
+        self.work = self.units["customs-box-agent.container"]
+        self.unit = self.units["customs-box-agent-broker.service"]
+
+    def test_every_unit_named_is_one_the_box_provides(self):
+        for name, text in self.units.items():
+            for key in DEPENDENCIES:
+                for unit in _keys(text, key):
+                    with self.subTest(file=name, key=key, unit=unit):
+                        self.assertIn(unit, self.box.services)
+
+    def test_the_inspector_waits_for_the_broker_and_does_not_need_it(self):
+        """Wants=, not Requires=: a broker restarted for a new key would
+        restart the inspector, and the inspector the workload."""
+        self.assertIn(self.box.broker_service, _keys(self.inspect, "Wants"))
+        self.assertIn(self.box.broker_service, _keys(self.inspect, "After"))
+        self.assertNotIn(self.box.broker_service,
+                         _keys(self.inspect, "Requires"))
+        self.assertEqual(_keys(self.unit, "Type"), ["notify"])
+        self.assertEqual(_keys(self.unit, "PartOf"), [self.box.pod_service])
+        self.assertNotIn("[Install]", self.unit)
+
+    def test_the_inspector_dials_the_socket_the_broker_binds(self):
+        broker = load_script("libexec/customs-broker").parse_args(
+            _exec_words(self.unit, "ExecStart")[1:])
+        words = [w.replace(netns.PID, "4242")
+                 for w in _exec_words(self.inspect, "ExecStart")]
+        inspect = load_script("libexec/customs-inspect").parse_args(
+            words[words.index("--", words.index("--") + 1) + 2:])
+        self.assertEqual(broker.listen, f"unix:{self.box.broker_socket}")
+        self.assertEqual(inspect.broker, str(self.box.broker_socket))
+        self.assertEqual(broker.caller_uid, self.settings.uid)
+        (runtime,) = _keys(self.unit, "RuntimeDirectory")
+        self.assertEqual(self.dirs.runtime / runtime,
+                         self.box.broker_socket.parent)
+
+    def test_the_broker_loads_each_credential_its_hosts_name(self):
+        """It reads $CREDENTIALS_DIRECTORY/ID for each --host's ID."""
+        broker = load_script("libexec/customs-broker").parse_args(
+            _exec_words(self.unit, "ExecStart")[1:])
+        self.assertEqual(broker.host, ["api.a.com=a", "up.b.com=b"])
+        loaded = dict(v.split(":", 1)
+                      for v in _keys(self.unit, "LoadCredentialEncrypted"))
+        self.assertEqual(loaded, {c: str(sealed(self.dirs, c))
+                                  for c in ("a", "b")})
+        self.assertIn("a=customs-placeholder-a", broker.placeholder)
+        self.assertIn("b=x-api-key", broker.auth_header)
+
+    def test_the_workload_holds_each_placeholder(self):
+        env = _keys(self.work, "Environment")
+        self.assertIn("A_KEY=customs-placeholder-a", env)
+        self.assertIn("B_KEY=customs-placeholder-b", env)
+
+    def test_a_box_without_credentials_has_no_broker(self):
+        units = render(self.box, self.settings, None)
+        self.assertNotIn(self.box.broker_file, units)
+        inspect = units[self.box.inspect_file]
+        self.assertNotIn("broker", inspect)
 
 
 class TestRules(unittest.TestCase):
@@ -320,20 +505,28 @@ class FakeHost:
     """podman, systemctl and customs-mint-ca, as far as the commands ask."""
 
     def __init__(self, state_root, rules=True, load_state="loaded",
-                 unshare=True):
+                 unshare=True, broker=True):
         self.calls = []
+        self.inputs = []
         self.state_root = state_root
         self.rules = rules
         self.load_state = load_state
         self.unshare = unshare
+        self.broker = broker
 
     def __call__(self, argv, *, input=None, check=True, env=None):
         self.calls.append(argv)
+        self.inputs.append(input)
         line = " ".join(argv)
         code, out = 0, ""
         if argv[:3] in (["podman", "container", "exists"],
                         ["podman", "pod", "exists"]):
             code = 1
+        elif argv[:3] == ["systemd-creds", "--user", "encrypt"]:
+            Path(argv[-1]).write_text("SEALED\n")
+        elif argv[:3] == ["systemctl", "--user", "start"] and \
+                argv[-1].endswith("-broker.service"):
+            code = 0 if self.broker else 1
         elif "customs-mint-ca" in line:
             ca = Path(argv[argv.index("--state-dir") + 1]) / "ca.pem"
             ca.write_text("BOX CA\n")
@@ -388,7 +581,9 @@ class TestCommands(unittest.TestCase):
     def test_create_lays_the_box_out(self):
         box, host = self._create(mounts=["projects/p"])
         for path in box.unit_files:
-            self.assertTrue(path.is_file(), path)
+            if path != box.broker_file:
+                self.assertTrue(path.is_file(), path)
+        self.assertFalse(box.broker_file.exists())
         self.assertEqual(box.policy.read_text(), self.policy.read_text())
         self.assertEqual(box.policy.stat().st_mode & 0o777, 0o600)
         self.assertEqual(box.bundle.read_text(), "BOX CA\nSYSTEM CAS\n")
@@ -410,7 +605,7 @@ class TestCommands(unittest.TestCase):
         cases = {"exists": dict(name="agent"),
                  "name": dict(name="Agent"),
                  "policy": dict(name="b", policy=bad_policy),
-                 "credentials": dict(name="c", policy=brokered),
+                 "no credential k": dict(name="c", policy=brokered),
                  "home directory": dict(name="d", mounts=[str(self.home)])}
         for words, kwargs in cases.items():
             with self.subTest(words), \
@@ -488,6 +683,140 @@ class TestCommands(unittest.TestCase):
             for words in (["stop", "agent", "--", "x"], ["enter", "a", "x"]):
                 with self.subTest(words), self.assertRaises(SystemExit):
                     parse(words)
+
+    def _add(self, credential="k", secret="sk-real", host=None, **over):
+        values = dict(hosts=["api.x"], env="K", auth_header="Authorization",
+                      auth_format="Bearer {secret}")
+        values.update(over)
+        host = host or FakeHost(self.home)
+        return commands.credential_add(credential, secret, dirs=self.dirs,
+                                       runner=host, **values), host
+
+    def _brokered(self, name="brokered.json", host="api.x"):
+        path = self.policy.with_name(name)
+        path.write_text(json.dumps({"policy": [
+            {"host": host, "paths": ["/v1/*"], "credential": "k"}]}))
+        return path
+
+    def test_a_secret_is_sealed_by_its_standard_input(self):
+        (boxes, _), host = self._add(secret="sk-real\n")
+        (argv,) = [c for c in host.calls if c[0] == "systemd-creds"]
+        self.assertEqual(argv, ["systemd-creds", "--user", "encrypt",
+                                "--name=k", "-", argv[-1]])
+        self.assertEqual(host.inputs[host.calls.index(argv)], "sk-real")
+        self.assertFalse([c for c in host.calls if "sk-real" in " ".join(c)])
+        self.assertEqual(sealed(self.dirs, "k").stat().st_mode & 0o777,
+                         0o600)
+        self.assertNotIn("sk-real", described(self.dirs, "k").read_text())
+        self.assertEqual(boxes, [])
+        self.assertEqual(commands.credential_ls(dirs=self.dirs),
+                         [("k", "K", "api.x", "-")])
+
+    def test_a_new_credential_needs_its_hosts_and_variable(self):
+        with self.assertRaisesRegex(commands.BoxError, "needs --host"):
+            self._add(hosts=[])
+        with self.assertRaisesRegex(commands.BoxError, "no {secret}"):
+            self._add(auth_format="Bearer")
+        self.assertFalse(credentials_root(self.dirs).exists())
+
+    def test_a_box_naming_a_credential_has_a_broker_holding_it(self):
+        self._add()
+        box, _ = self._create(policy=self._brokered())
+        self.assertTrue(box.broker_file.is_file())
+        unit = box.broker_file.read_text()
+        self.assertIn(f"LoadCredentialEncrypted=k:{sealed(self.dirs, 'k')}",
+                      unit)
+        placeholder = json.loads(
+            described(self.dirs, "k").read_text())["placeholder"]
+        self.assertIn(f"Environment=K={placeholder}",
+                      box.container_file.read_text())
+        self.assertNotIn("sk-real", unit + box.container_file.read_text())
+        self.assertEqual(commands.credential_ls(dirs=self.dirs),
+                         [("k", "K", "api.x", "agent")])
+
+    def test_create_refuses_a_credential_sent_where_it_was_not_added_for(
+            self):
+        self._add()
+        with self.assertRaisesRegex(commands.BoxError, "for api.x only"):
+            self._create(policy=self._brokered(host="evil.example"))
+        env = {k: v for k, v in self.env.items() if k != "XDG_RUNTIME_DIR"}
+        self.dirs = user_dirs(env)
+        with self.assertRaisesRegex(commands.BoxError, "XDG_RUNTIME_DIR"):
+            self._create(policy=self._brokered())
+        self.assertFalse(Box("agent", self.dirs).config.exists())
+
+    def test_a_credential_added_again_is_replaced_in_each_box(self):
+        """Its secret, and what is given; the placeholder stays. The box's
+        broker is restarted, and the workload's unit written again."""
+        self._add()
+        box, _ = self._create(policy=self._brokered())
+        before = json.loads(described(self.dirs, "k").read_text())
+        (boxes, moved), host = self._add(secret="sk-new", hosts=[],
+                                         env="K2", auth_header=None,
+                                         auth_format=None)
+        after = json.loads(described(self.dirs, "k").read_text())
+        self.assertEqual((boxes, moved), (["agent"], True))
+        self.assertEqual(after, {**before, "env": "K2"})
+        self.assertIn(f"K2={before['placeholder']}",
+                      box.container_file.read_text())
+        self.assertIn(["systemctl", "--user", "try-restart",
+                       box.broker_service], host.calls)
+        self.assertLess(host.calls.index(["systemctl", "--user",
+                                          "daemon-reload"]),
+                        host.calls.index(["systemctl", "--user",
+                                          "try-restart",
+                                          box.broker_service]))
+
+    def test_a_replacement_a_box_could_not_hold_changes_nothing(self):
+        self._add()
+        self._create(policy=self._brokered())
+        before = described(self.dirs, "k").read_text()
+        with self.assertRaisesRegex(commands.BoxError,
+                                    "box agent: .*for api.y only"):
+            self._add(hosts=["api.y"])
+        self.assertEqual(described(self.dirs, "k").read_text(), before)
+
+    def test_a_credential_a_box_names_is_not_removed(self):
+        self._add()
+        self._create(policy=self._brokered())
+        with self.assertRaisesRegex(commands.BoxError, "named by"):
+            commands.credential_rm("k", dirs=self.dirs)
+        commands.rm("agent", home=True, dirs=self.dirs,
+                    runner=FakeHost(self.home))
+        commands.credential_rm("k", dirs=self.dirs)
+        self.assertEqual(list(credentials_root(self.dirs).iterdir()), [])
+        with self.assertRaisesRegex(commands.BoxError, "no credential"):
+            commands.credential_rm("k", dirs=self.dirs)
+
+    def test_enter_starts_a_stopped_broker_and_says_if_it_did_not(self):
+        self._add()
+        self._create(policy=self._brokered())
+        for works in (True, False):
+            host, ran, said = FakeHost(self.home, broker=works), [], []
+            commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                           cwd=self.home, environ=self.env, isatty=False,
+                           runner=host, execvp=lambda f, a: ran.append(a),
+                           warn=said.append)
+            with self.subTest(works=works):
+                self.assertIn(["systemctl", "--user", "start",
+                               "customs-box-agent-broker.service"],
+                              host.calls)
+                self.assertEqual(len(ran), 1)
+                self.assertEqual(bool(said), not works)
+
+    def test_rm_removes_the_broker_unit(self):
+        self._add()
+        box, _ = self._create(policy=self._brokered())
+        commands.rm("agent", home=False, dirs=self.dirs,
+                    runner=FakeHost(self.home))
+        self.assertFalse(box.broker_file.exists())
+
+    def test_the_command_line_takes_a_credential(self):
+        args = parse(["credential", "add", "k", "--host", "a", "--host",
+                      "b", "--env", "K"])
+        self.assertEqual((args.credential_command, args.id, args.host,
+                          args.env, args.auth_header),
+                         ("add", "k", ["a", "b"], "K", None))
 
     def test_the_command_line_reports_a_refusal_and_exits_1(self):
         with mock.patch("sys.stderr") as err:

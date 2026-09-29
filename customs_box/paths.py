@@ -43,6 +43,20 @@ def boxes_root(dirs):
     return dirs.config / "customs" / "box"
 
 
+def credentials_root(dirs):
+    """Beside the boxes, not among them, where a box's name could be
+    its."""
+    return dirs.config / "customs" / "credentials"
+
+
+def sealed(dirs, credential):
+    return credentials_root(dirs) / f"{credential}.cred"
+
+
+def described(dirs, credential):
+    return credentials_root(dirs) / f"{credential}.json"
+
+
 def protected(dirs):
     """What no box may mount, or mount a parent of, or mount from inside:
     every box's key, policy, record and home, the units that load its
@@ -110,6 +124,15 @@ class Box(NamedTuple):
         return self.share / "home"
 
     @property
+    def runtime(self):
+        """The broker's, in the user's runtime directory."""
+        return self.dirs.runtime / "customs-box" / self.name
+
+    @property
+    def broker_socket(self):
+        return self.runtime / "broker.sock"
+
+    @property
     def pod_file(self):
         return self.dirs.config / "containers" / "systemd" / f"{self.unit}.pod"
 
@@ -127,9 +150,13 @@ class Box(NamedTuple):
         return self.dirs.config / "systemd" / "user" / self.resolve_service
 
     @property
+    def broker_file(self):
+        return self.dirs.config / "systemd" / "user" / self.broker_service
+
+    @property
     def unit_files(self):
         return (self.pod_file, self.container_file, self.inspect_file,
-                self.resolve_file)
+                self.resolve_file, self.broker_file)
 
     # quadlet names the services it generates: NAME.pod gives
     # NAME-pod.service, NAME.container gives NAME.service.
@@ -150,6 +177,10 @@ class Box(NamedTuple):
         return f"{self.unit}-resolve.service"
 
     @property
+    def broker_service(self):
+        return f"{self.unit}-broker.service"
+
+    @property
     def services(self):
         return (self.pod_service, self.service, self.inspect_service,
-                self.resolve_service)
+                self.resolve_service, self.broker_service)

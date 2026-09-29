@@ -3,15 +3,21 @@ takes its inputs as arguments, so the tests can hand them in."""
 
 import os
 import shutil
+import sys
 from pathlib import Path, PurePosixPath
 
+from customs.broker_profiles import (BROKER_DEFAULT_AUTH_FORMAT,
+                                     BROKER_DEFAULT_AUTH_HEADER)
 from customs.inspect_policy import load_policy
 
+from . import credentials
+from .credentials import CredentialError, brokering, describe
 from .mounts import MountRefused, parse_mount, refuse
 from .netns import exec_with_pid, load_rules, pod_pid, rules_loaded
-from .paths import Box, boxes_root, valid_name
+from .paths import Box, boxes_root, credentials_root, described, sealed, \
+    valid_name
 from .process import CommandFailed, run
-from .units import Settings, render
+from .units import CA_VARIABLES, Settings, render
 
 DEFAULT_IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
 DEFAULT_LIBEXEC = "/usr/libexec/customs"
@@ -37,6 +43,9 @@ chmod 0440 /etc/sudoers.d/customs-box
 
 PASSED_THROUGH = ("TERM", "COLORTERM", "LANG")
 
+# What a credential's variable may not be: the box sets these itself.
+RESERVED = CA_VARIABLES + PASSED_THROUGH
+
 
 class BoxError(Exception):
     """A command refused, with the reason."""
@@ -56,6 +65,16 @@ def _existing(name, dirs):
     return box, Settings.from_json(box.settings.read_text())
 
 
+def _boxes(dirs):
+    for settings_file in sorted(boxes_root(dirs).glob("*/box.json")):
+        yield (Box(settings_file.parent.name, dirs),
+               Settings.from_json(settings_file.read_text()))
+
+
+def _warn(message):
+    print(f"customs-box: {message}", file=sys.stderr)
+
+
 def _program_env(environ, pythonpath):
     env = dict(environ)
     if pythonpath:
@@ -63,15 +82,34 @@ def _program_env(environ, pythonpath):
     return env
 
 
-def _refuse_credentials(policy_path):
+def _policy(path):
     try:
-        policy = load_policy(policy_path)
+        return load_policy(path)
     except (OSError, ValueError) as exc:
         raise BoxError(f"policy: {exc}") from None
-    named = sorted({e.credential for e in policy.policy if e.credential})
-    if named:
-        raise BoxError(f"policy: names credentials ({', '.join(named)}), "
-                       "and a box has no broker yet")
+
+
+def _broker(policy, dirs, load=None):
+    """The box's broker, from its policy and the credentials it names."""
+    try:
+        broker = brokering(
+            policy, load or (lambda c: credentials.read(dirs, c)))
+    except CredentialError as exc:
+        raise BoxError(f"policy: {exc}") from None
+    if broker and dirs.runtime is None:
+        raise BoxError("XDG_RUNTIME_DIR is not set, and a box's broker "
+                       "listens in it")
+    return broker
+
+
+def _write_units(box, settings, broker):
+    units = render(box, settings, broker)
+    for path, text in units.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    for path in box.unit_files:
+        if path not in units:
+            path.unlink(missing_ok=True)
 
 
 def _trust_path(image, runner):
@@ -104,7 +142,7 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
         if runner(["podman", kind, "exists", name],
                   check=False).returncode == 0:
             raise BoxError(f"a {kind} named {name} exists")
-    _refuse_credentials(policy_path)
+    broker = _broker(_policy(policy_path), dirs)
     host_bundle = _host_bundle()
     try:
         mounts = tuple(parse_mount(spec, cwd, dirs.home)
@@ -124,14 +162,16 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
                         libexec=str(libexec), pythonpath=pythonpath)
     home_existed = box.home.exists()
     try:
-        _lay_out(box, settings, policy_path, host_bundle, environ, runner)
+        _lay_out(box, settings, broker, policy_path, host_bundle, environ,
+                 runner)
     except BaseException:
         _discard(box, home=not home_existed, runner=runner)
         raise
     return box
 
 
-def _lay_out(box, settings, policy_path, host_bundle, environ, runner):
+def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
+             runner):
     for path in (box.config, box.state, box.logs, box.home):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
     # The runtime makes a missing mount point, and each directory above
@@ -151,9 +191,7 @@ def _lay_out(box, settings, policy_path, host_bundle, environ, runner):
     ca = Path(minted.stdout.strip())
     box.bundle.write_text(ca.read_text() + host_bundle.read_text())
     box.bundle.chmod(0o644)
-    for path, text in render(box, settings).items():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+    _write_units(box, settings, broker)
     box.settings.write_text(settings.to_json())
     runner(["systemctl", "--user", "daemon-reload"])
     for service in (box.pod_service, box.service):
@@ -206,7 +244,7 @@ def _login_shell(box, user, environ, runner):
 
 
 def enter(name, command, *, root, dirs, cwd, environ, isatty,
-          runner=run, execvp=os.execvp):
+          runner=run, execvp=os.execvp, warn=_warn):
     box, settings = _existing(name, dirs)
     try:
         runner(["systemctl", "--user", "start", box.service])
@@ -217,6 +255,14 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
         raise BoxError(f"box {name}'s namespace has no customs rules: its "
                        "pod was started outside systemd. customs-box stop "
                        f"{name}, then enter it again")
+    # Started again if it stopped; without it, a request with one of its
+    # credentials is refused, not sent without.
+    if box.broker_file.exists() and runner(
+            ["systemctl", "--user", "start", box.broker_service],
+            check=False).returncode != 0:
+        warn(f"box {name}'s broker did not start, and requests with its "
+             f"credentials are refused; see journalctl --user -u "
+             f"{box.broker_service}")
     uid, gid = (0, 0) if root else (settings.uid, settings.gid)
     user = f"{uid}:{gid}"
     command = list(command)
@@ -246,13 +292,113 @@ def rm(name, *, home, dirs, runner=run):
 
 def ls(*, dirs, runner=run):
     rows = []
-    for settings_file in sorted(boxes_root(dirs).glob("*/box.json")):
-        box = Box(settings_file.parent.name, dirs)
-        settings = Settings.from_json(settings_file.read_text())
+    for box, settings in _boxes(dirs):
         state = runner(["systemctl", "--user", "is-active", box.service],
                        check=False).stdout.strip() or "unknown"
         rows.append((box.name, state, settings.image))
     return rows
+
+
+def _naming(credential, dirs):
+    """The boxes whose policies name the credential, with their settings
+    and policies."""
+    for box, settings in _boxes(dirs):
+        policy = _policy(box.policy)
+        if any(e.credential == credential for e in policy.policy):
+            yield box, settings, policy
+
+
+def _replace(path, data, mode=0o600):
+    new = path.with_name(f".{path.name}.new")
+    try:
+        new.write_bytes(data)
+        new.chmod(mode)
+        os.replace(new, path)
+    finally:
+        new.unlink(missing_ok=True)
+
+
+def credential_add(credential, secret, *, hosts, env, auth_header,
+                   auth_format, dirs, runner=run):
+    """Seal the secret, or replace one sealed before: what is not given is
+    kept, and so is the placeholder. The boxes naming it are written
+    again and their brokers restarted. Returns their names and whether
+    the variable changed, which a running box's workload has from its
+    next start."""
+    if not valid_name(credential):
+        raise BoxError(f"{credential!r}: a credential's id is lowercase "
+                       "letters, digits and inner dashes, 48 at most")
+    try:
+        old = credentials.read(dirs, credential)
+    except CredentialError:
+        if not (hosts and env):
+            raise BoxError(f"credential {credential} is new, and needs "
+                           "--host and --env") from None
+        old = credentials.Credential(
+            credential, (), env, BROKER_DEFAULT_AUTH_HEADER,
+            BROKER_DEFAULT_AUTH_FORMAT, credentials.placeholder())
+    try:
+        new = describe(credential, hosts or old.hosts, env or old.env,
+                       auth_header or old.auth_header,
+                       auth_format or old.auth_format, old.placeholder,
+                       secret.strip(), reserved=RESERVED)
+    except CredentialError as exc:
+        raise BoxError(f"credential: {exc}") from None
+
+    def load(c):
+        return new if c == credential else credentials.read(dirs, c)
+
+    boxes = []
+    for box, settings, policy in _naming(credential, dirs):
+        try:
+            boxes.append((box, settings, _broker(policy, dirs, load)))
+        except BoxError as exc:
+            raise BoxError(f"box {box.name}: {exc}") from None
+    credentials_root(dirs).mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = sealed(dirs, credential)
+    staged = path.with_name(f".{path.name}.new")
+    try:
+        runner(["systemd-creds", "--user", "encrypt",
+                f"--name={credential}", "-", str(staged)],
+               input=secret.strip())
+        staged.chmod(0o600)
+        os.replace(staged, path)
+    finally:
+        staged.unlink(missing_ok=True)
+    _replace(described(dirs, credential), new.to_json().encode())
+    for box, settings, broker in boxes:
+        _write_units(box, settings, broker)
+    if boxes:
+        runner(["systemctl", "--user", "daemon-reload"])
+        runner(["systemctl", "--user", "try-restart",
+                *(box.broker_service for box, _, _ in boxes)])
+    return [box.name for box, _, _ in boxes], new.env != old.env
+
+
+def credential_ls(*, dirs):
+    named = {}
+    for box, _settings in _boxes(dirs):
+        for entry in _policy(box.policy).policy:
+            if entry.credential:
+                named.setdefault(entry.credential, set()).add(box.name)
+    rows = []
+    for path in sorted(credentials_root(dirs).glob("*.json")):
+        c = credentials.read(dirs, path.stem)
+        rows.append((c.id, c.env, ",".join(c.hosts),
+                     ",".join(sorted(named.get(c.id, ()))) or "-"))
+    return rows
+
+
+def credential_rm(credential, *, dirs):
+    if not valid_name(credential) or not described(dirs,
+                                                    credential).exists():
+        raise BoxError(f"no credential {credential}")
+    boxes = [box.name for box, _, _ in _naming(credential, dirs)]
+    if boxes:
+        raise BoxError(f"credential {credential} is named by the policy of "
+                       f"{', '.join(boxes)}")
+    sealed(dirs, credential).unlink(missing_ok=True)
+    described(dirs, credential).unlink()
 
 
 def unit_rules(name, *, runner=run):

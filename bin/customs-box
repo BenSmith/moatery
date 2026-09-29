@@ -6,10 +6,10 @@ workloads (docs/BOX.md).
 Each box is a quadlet pod holding a network namespace, the customs
 rules loaded into it at every start, the inspector's and the
 responder's listeners bound in it, and a workload started after them,
-with a home of its own. The units run the programs from
-$CUSTOMS_LIBEXEC, /usr/libexec/customs by default, and call back into
-this command (`customs-box unit ...`) for what they cannot say
-themselves.
+with a home of its own; and, if its policy names credentials, a broker
+holding them. The units run the programs from $CUSTOMS_LIBEXEC,
+/usr/libexec/customs by default, and call back into this command
+(`customs-box unit ...`) for what they cannot say themselves.
 
 Usage:
   customs-box create NAME --policy FILE [--image IMAGE]
@@ -18,6 +18,10 @@ Usage:
   customs-box stop NAME
   customs-box rm NAME [--home]
   customs-box ls
+  customs-box credential add ID [--host HOST]... [--env VARIABLE]
+                     [--auth-header FIELD] [--auth-format FORMAT]
+  customs-box credential ls
+  customs-box credential rm ID
 """
 
 import sys

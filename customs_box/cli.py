@@ -1,17 +1,18 @@
 """customs-box's command line: parse, hand the environment in, report."""
 
 import argparse
+import getpass
 import os
 import sys
 
 from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, BoxError, create,
-                       enter, ls, rm, stop, unit_exec, unit_rules,
-                       unit_sudoers)
+                       credential_add, credential_ls, credential_rm, enter,
+                       ls, rm, stop, unit_exec, unit_rules, unit_sudoers)
 from .netns import NetnsError
 from .paths import user_dirs
 from .process import CommandFailed
 
-PUBLIC = "{create,enter,stop,rm,ls}"
+PUBLIC = "{create,enter,stop,rm,ls,credential}"
 
 
 def build_parser():
@@ -44,6 +45,24 @@ def build_parser():
     p.add_argument("--home", action="store_true",
                    help="remove its home too")
     sub.add_parser("ls", help="list the boxes")
+    credential = sub.add_parser(
+        "credential", help="seal a provider's key for the boxes' brokers"
+    ).add_subparsers(dest="credential_command", required=True)
+    p = credential.add_parser(
+        "add", help="seal the secret on standard input as ID; an ID that "
+                    "exists is replaced, keeping what is not given")
+    p.add_argument("id")
+    p.add_argument("--host", action="append", default=[],
+                   help="a host the secret is sent to; repeatable")
+    p.add_argument("--env", metavar="VARIABLE",
+                   help="the variable a box holds the placeholder in")
+    p.add_argument("--auth-header", metavar="FIELD",
+                   help="the header the secret is sent in (x-api-key)")
+    p.add_argument("--auth-format", metavar="FORMAT",
+                   help="its value, with {secret} substituted ({secret})")
+    credential.add_parser("ls", help="list the credentials")
+    credential.add_parser("rm", help="remove a credential no box's "
+                                     "policy names").add_argument("id")
     # For the units' own use; not listed.
     unit = sub.add_parser("unit").add_subparsers(dest="unit_command",
                                                  required=True)
@@ -69,7 +88,31 @@ def parse(words):
     return args
 
 
-def run_command(args, *, tool, environ, cwd, isatty):
+def _secret(credential, stdin):
+    if stdin.isatty():
+        return getpass.getpass(f"{credential}: ")
+    return stdin.read()
+
+
+def run_credential(args, *, dirs, stdin):
+    if args.credential_command == "add":
+        boxes, moved = credential_add(
+            args.id, _secret(args.id, stdin), hosts=args.host, env=args.env,
+            auth_header=args.auth_header, auth_format=args.auth_format,
+            dirs=dirs)
+        print(f"credential {args.id} sealed")
+        for name in boxes:
+            print(f"box {name}: its broker holds it"
+                  + ("; the new variable is set from its next start"
+                     if moved else ""))
+    elif args.credential_command == "ls":
+        for row in credential_ls(dirs=dirs):
+            print("  ".join(row))
+    else:
+        credential_rm(args.id, dirs=dirs)
+
+
+def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
     dirs = user_dirs(environ)
     if args.command == "create":
         box = create(args.name, args.policy, args.image, args.mount,
@@ -91,6 +134,8 @@ def run_command(args, *, tool, environ, cwd, isatty):
     elif args.command == "ls":
         for row in ls(dirs=dirs):
             print("  ".join(row))
+    elif args.command == "credential":
+        run_credential(args, dirs=dirs, stdin=stdin)
     elif args.unit_command == "rules":
         unit_rules(args.name)
     elif args.unit_command == "sudoers":

@@ -1,11 +1,13 @@
-"""A box's four units as text: the pod and the workload for quadlet, the
-inspector and the responder for the user's manager.
+"""A box's units as text: the pod and the workload for quadlet, the
+inspector, the responder and, if its policy names a credential, the
+broker for the user's manager.
 
 What starts what: `enter` starts the workload's unit, which Requires=
 and is After= the two listener units; they are BindsTo= and After= the
 pod's, which is active only once its ExecStartPost= has loaded the
 rules. The pod Wants= the listeners, so a restart of the pod brings
-them back into its new namespace.
+them back into its new namespace. The inspector Wants= and is After=
+the broker, which is PartOf= the pod and ready once it is listening.
 """
 
 import json
@@ -15,6 +17,7 @@ from typing import NamedTuple
 
 from .mounts import Mount
 from .netns import PID
+from .paths import sealed
 
 # podman's default set, the most root in a box holds; none is
 # CAP_NET_ADMIN. The unit drops every other capability, so a
@@ -140,7 +143,7 @@ PodmanArgs=--hosts-file=image --share-parent=false
 """
 
 
-def container_unit(box, settings):
+def container_unit(box, settings, broker):
     volumes = [f"{box.home}:{settings.home_path}:z",
                f"{box.bundle}:{settings.trust_path}:ro,z"]
     for mount in settings.mounts:
@@ -151,6 +154,8 @@ def container_unit(box, settings):
     lines += [f"Volume={_value(v)}" for v in volumes]
     lines += [f"Environment={_quoted(f'{v}={settings.trust_path}')}"
               for v in CA_VARIABLES]
+    lines += [f"Environment={_quoted(f'{c.env}={c.placeholder}')}"
+              for c in (broker.credentials if broker else ())]
     body = "\n".join(lines)
     # The user is named: podman gives a container whose user it is not told
     # root's capabilities, and exec as the user keeps them. WorkingDir is
@@ -183,7 +188,9 @@ SuccessExitStatus=143
 """
 
 
-def _listener_unit(box, settings, what, argv):
+def _listener_unit(box, settings, what, argv, broker=None):
+    after = [box.pod_service] + ([box.broker_service] if broker else [])
+    wants = f"Wants={box.broker_service}\n" if broker else ""
     return f"""\
 # customs box {box.name}: the {what}, its listeners bound in the pod's
 # namespace. Type=notify: started once they are bound.
@@ -191,7 +198,7 @@ def _listener_unit(box, settings, what, argv):
 [Unit]
 Description=customs box {box.name}: {what}
 BindsTo={box.pod_service}
-After={box.pod_service}
+{wants}After={' '.join(after)}
 
 [Service]
 Type=notify
@@ -200,12 +207,15 @@ Type=notify
 """
 
 
-def inspect_argv(box, settings):
-    return [*_program(settings, "customs-netns-listen"), "--pid", PID,
+def inspect_argv(box, settings, broker):
+    argv = [*_program(settings, "customs-netns-listen"), "--pid", PID,
             "--", *_program(settings, "customs-inspect"),
             "--name", box.name, "--policy", str(box.policy),
             "--state-dir", str(box.state), "--status", str(box.status),
             "--record", str(box.record), "--netns-pid", PID]
+    if broker:
+        argv += ["--broker", f"unix:{box.broker_socket}"]
+    return argv
 
 
 def resolve_argv(box, settings):
@@ -216,9 +226,9 @@ def resolve_argv(box, settings):
             "--status", str(box.resolve_status)]
 
 
-def inspect_unit(box, settings):
+def inspect_unit(box, settings, broker):
     return _listener_unit(box, settings, "inspector",
-                          inspect_argv(box, settings))
+                          inspect_argv(box, settings, broker), broker)
 
 
 def resolve_unit(box, settings):
@@ -226,9 +236,51 @@ def resolve_unit(box, settings):
                           resolve_argv(box, settings))
 
 
-def render(box, settings):
-    """Unit file path to text, for every unit the box has."""
-    return {box.pod_file: pod_unit(box, settings),
-            box.container_file: container_unit(box, settings),
-            box.inspect_file: inspect_unit(box, settings),
-            box.resolve_file: resolve_unit(box, settings)}
+def broker_argv(box, settings, broker):
+    """Its one caller is the inspector, which runs as the user."""
+    argv = [*_program(settings, "customs-broker"), "--name", box.name,
+            "--listen", f"unix:{box.broker_socket}",
+            "--caller-uid", str(settings.uid)]
+    for host, credential in broker.hosts:
+        argv += ["--host", f"{host}={credential}"]
+    for c in broker.credentials:
+        argv += ["--placeholder", f"{c.id}={c.placeholder}",
+                 "--auth-header", f"{c.id}={c.auth_header}",
+                 "--auth-format", f"{c.id}={c.auth_format}"]
+    return argv
+
+
+def broker_unit(box, settings, broker):
+    loads = "".join(
+        f"LoadCredentialEncrypted={c.id}:{_value(sealed(box.dirs, c.id))}\n"
+        for c in broker.credentials)
+    runtime = box.runtime.relative_to(box.dirs.runtime)
+    return f"""\
+# customs box {box.name}: the broker, holding the credentials the box's
+# policy names. Its socket is in the user's runtime directory, which the
+# box has no path to. Type=notify: started once it is listening.
+
+[Unit]
+Description=customs box {box.name}: broker
+PartOf={box.pod_service}
+
+[Service]
+Type=notify
+{_environment(settings)}ExecStart={_exec_line(
+    broker_argv(box, settings, broker))}
+{loads}RuntimeDirectory={_value(runtime)}
+RuntimeDirectoryMode=0700
+Restart=on-failure
+"""
+
+
+def render(box, settings, broker):
+    """Unit file path to text, for every unit the box has: the broker's
+    only if it has a broker."""
+    units = {box.pod_file: pod_unit(box, settings),
+             box.container_file: container_unit(box, settings, broker),
+             box.inspect_file: inspect_unit(box, settings, broker),
+             box.resolve_file: resolve_unit(box, settings)}
+    if broker:
+        units[box.broker_file] = broker_unit(box, settings, broker)
+    return units
