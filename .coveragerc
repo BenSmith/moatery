@@ -14,6 +14,8 @@ parallel = True
 # `include` and measures the package alone.
 include =
     */customs/*.py
+    */customs_box/*.py
+    */bin/customs-box
     */libexec/customs-*
     */container/customs-sidecar
 
@@ -23,6 +25,9 @@ include =
 source =
     customs
     */site-packages/customs
+box =
+    customs_box
+    */site-packages/customs_box
 
 [report]
 # A line that only runs when a syscall fails or a peer misbehaves is not

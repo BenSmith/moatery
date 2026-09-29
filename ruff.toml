@@ -2,7 +2,8 @@
 # no style rules beyond that, and no formatter (measured and declined: it
 # explodes paired argv lists).
 line-length = 79
-include = ["customs/*.py", "libexec/customs-broker", "libexec/customs-inspect",
+include = ["customs/*.py", "customs_box/*.py", "bin/customs-box",
+           "libexec/customs-broker", "libexec/customs-inspect",
            "libexec/customs-mint-ca", "libexec/customs-netns-listen",
            "libexec/customs-resolve", "container/customs-sidecar",
            "tests/manual/*.py"]
@@ -18,3 +19,4 @@ select = ["E4", "E7", "E9", "F", "E501"]
 "libexec/customs-netns-listen" = ["E402"]
 "libexec/customs-resolve" = ["E402"]
 "container/customs-sidecar" = ["E402"]
+"bin/customs-box" = ["E402"]
