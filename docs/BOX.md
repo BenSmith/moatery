@@ -124,8 +124,9 @@ As in examples/quadlet, with these differences:
 
 - The pod is created with `--hosts-file image`, so the host's hosts file
   does not answer the workload's names.
-- The rules are loaded by the tool (`customs-box netns rules NAME`, for
-  the units' use). The egress device is read inside the namespace.
+- The rules are loaded by the tool (`customs-box unit rules NAME`, one
+  of the commands for the units' use). The egress device is read inside
+  the namespace.
 - The broker is `PartOf=` the pod, and the inspector `Wants=` and is
   ordered `After=` it.
 - The bundle is mounted read-only over the image's own system bundle,
@@ -133,8 +134,10 @@ As in examples/quadlet, with these differences:
   `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO` and
   `PIP_CERT`. The mount is what root sees under sudo, which drops the
   variables.
-- The box's home is mounted at the user's home path; the pod maps the
-  user to the same uid inside (`UserNS=keep-id`).
+- Each box has a home of its own, a directory on the host that only it
+  mounts, at the path the user's home has on the host: the pod maps the
+  user to the same name and uid inside (`UserNS=keep-id`). The user's
+  own home directory is never mounted.
 - At each start the workload's unit writes a sudoers drop-in, as root in
   the container (`ExecStartPost=`), giving the user sudo without a
   password: the image's own rule asks for one, and the user has none.
@@ -152,9 +155,12 @@ a restart of the pod brings them back into its new namespace.
 
 `create` refuses:
 
-- a mount that is, or contains, `$HOME`, `$XDG_RUNTIME_DIR`, or a
-  customs directory above: those hold the broker's socket, the CA's
-  key and the sealed credentials;
+- a mount that is, or contains, `$HOME`;
+- a mount that overlaps `$XDG_RUNTIME_DIR`, a customs directory above,
+  or podman's or systemd's user configuration and storage: those hold
+  the broker's socket, the CA's key, the sealed credentials, and the
+  units that load a box's rules, which a box able to write them could
+  drop;
 - a name outside `[a-z0-9-]`, or one a container or pod already has.
 
 Nothing is passed to podman that the tool does not write itself: no
@@ -210,11 +216,6 @@ each one broken on purpose once, and the refusals.
 ## Open
 
 - The name.
-- Whether the image's filesystem should persist until `rm`, as
-  distrobox's does. Then neither the workload nor the pod can be a
-  quadlet unit: quadlet creates the pod with `--replace` at each start
-  and removes it, and every container in it, at stop. `create` would
-  make both once, and units of the tool's own would start them.
 - A subpackage (`customs-box`, requiring the same version of customs),
   so a host that only runs the programs does not carry it.
 - Starting boxes at login (`create --autostart`).
