@@ -208,7 +208,8 @@ What remains:
 
 ```
 # 1. CA + bundle + policy.json (examples/README.md)
-# 2. broker, user unit
+# 2. broker, user unit; started once it is listening
+Type=notify
 ExecStart=customs-broker --name x --listen unix:%t/customs/broker.sock \
     --caller-uid %U \
     --host api.example.com=example --placeholder example=sk-placeholder \

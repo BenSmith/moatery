@@ -1,47 +1,57 @@
 #!/usr/bin/env python3
 """box_rig.py — a customs box, made and run through its command line.
 
-docs/BOX.md: `customs-box create`, `enter`, `stop` and `rm`, the box's
-units run by the user's manager and quadlet, and shape 1n's rules and
-listeners in the pod's namespace. Run on the proving host as an ordinary
-user, from a checkout:
+docs/BOX.md: `customs-box credential add`, `create`, `enter`, `stop` and
+`rm`, the box's units run by the user's manager and quadlet, shape 1n's
+rules and listeners in the pod's namespace, and the box's broker. Run on
+the proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/box_rig.py [--keep] [--without-rules]
-                                    [--restarts N]
+                                    [--broker-not-ready] [--restarts N]
 
 The tool is the checkout's bin/customs-box running the checkout's
 programs, or, with CUSTOMS_LIBEXEC=/usr/libexec/customs, the installed
 customs-box. riglib's two host facts need sudo and are undone at teardown.
 
-Beside the units `create` writes, the rig writes three drop-ins, and
+Beside the units `create` writes, the rig writes four drop-ins, and
 removes them before `rm`:
 
   inspector SSL_CERT_FILE names the stub's certificate, which no system
             store holds.
+  broker    the same, and a PYTHONPATH whose sitecustomize sleeps 3 s, so
+            the broker's start has a window a request can fall in; with
+            --broker-not-ready, Type=simple.
   workload  Exec= is a script in the box's home in place of `sleep
             infinity`. At every start its first act is a request to the
             provider, whose nonce and status it appends to a file in the
             home; then it sleeps. That request is the window: nothing the
-            workload sends may come before the rules and the listeners.
+            workload sends may come before the rules, the listeners and
+            the broker.
   pod       for the fail rows, its ExecStartPost= is `false`; with
             --without-rules, it is empty.
 
 The stub is on the host's 127.0.0.1, which the pod cannot reach, so
-anything the stub answers came by the inspector's dial. The box holds no
-key, so the stub's answer is its 401. Every request's path carries a
-nonce, found in the stub's log and in the record.
+anything the stub answers came by the inspector's dial. The provider is
+brokered: the box holds a placeholder, and the stub answers 200 only to
+the key the rig sealed, which only the broker holds, and 401 to anything
+else. Every request's path carries a nonce, found in the stub's log and
+in the record.
 
 THE ROWS
 
+  credential  add seals the key: neither file holds it, and ls lists it.
   create    the files docs/BOX.md lists are there, and nothing started.
   chain     the manager loaded the order: the workload pulls in both
             listeners and is After= them, and is BindsTo= the pod; each
-            listener is BindsTo= and After= the pod.
+            listener is BindsTo= and After= the pod; the inspector pulls
+            in the broker and is After= it, which is Type=notify and not
+            bound to the pod.
   fail      with the pod's rules load failing, enter refuses and the
-            workload never ran: its first act left no line.
+            workload never ran: its first act left no line; stop leaves
+            no unit active.
   first     at the box's first start, the workload's first request was
-            inspected: the stub logged its path and the record says
-            forward.
+            inspected and brokered: the stub answered 200 and logged its
+            path, and the record says forward under the credential.
   premise   root in the box, by sudo, holds no CAP_NET_ADMIN and is refused
             `ip link add`; the user holds no capability at all; the rules
             are in the pod's namespace; the pod has no cgroup of its own.
@@ -59,13 +69,24 @@ THE ROWS
   silent    a filtered UDP send returns rc=0 while the drop counter moves.
   quic      a UDP send to 443 moves the quic counter, and is dropped.
   ssh       a TCP connect to port 22 times out, and is dropped.
-  listed    the provider's 401 reaches the user, the stub logged the path,
-            and the record says forward.
+  listed    the provider's 200 reaches the user, the stub logged the path,
+            and the record says forward under the credential.
   unlisted  the inspector's 403, and one more record for the host, saying
             why, with no upstream.
   root      root, by sudo, which drops the CA variables, is inspected the
             same: the listed host verifies through the bundle mounted over
             the system store, and the unlisted one gets the 403.
+  broker    the box holds the placeholder, by exec and by enter, and never
+            the key; the broker's socket is on the host and not in the box,
+            and it holds no TCP socket. Stopped, a request is refused 502,
+            never reaches the provider, and the record says why; enter
+            starts it again, and a request is served. Premise: systemd
+            will not start the broker again after a stop while it starts;
+            enter does, and a request is served.
+  rotate    with the stub now wanting a new key (the old one gets 401),
+            credential add with the new key: the next request is served,
+            and the broker restarted while the inspector and the workload
+            did not.
   counters  every caller was named and none dropped as foreign.
   persist   after a workload restart, a file written outside the home is
             gone and one in it is there.
@@ -77,14 +98,24 @@ THE ROWS
   outside   after `podman pod restart`, outside systemd, the namespace is
             new and has no rules, and enter refuses it; stop, then enter,
             serves it again.
-  rm        no unit, pod or container is left; the home and the record
-            stay, and create finds the home again; rm --home removes it.
+  rm        credential rm is refused while the box names it; no unit, pod
+            or container is left, nor the broker's socket; the home and the
+            record stay, and create, with a policy naming no credential,
+            finds the home again and writes no broker; rm --home removes
+            it; then credential rm removes the credential.
 
 `--without-rules` empties the pod's ExecStartPost=, so the pod starts
 with no rules in its namespace: first, the premise that the rules are
-there, enter (which refuses), dns, silent, quic, ssh, listed, unlisted,
-root, restart, and each enter after a stop with its first request must
-go red.
+there, enter (which refuses) and every row through it, dns, silent,
+quic, ssh, listed, unlisted, root, the broker's requests, rotate,
+restart, and each enter after a stop with its first request must go
+red.
+
+`--broker-not-ready` makes the broker's unit Type=simple, so nothing
+waits for its socket: the first request after each start of the broker,
+at the first start, each enter that starts it again, rotate, and each
+enter after a stop, must go red; and the premise of a stop while it
+starts, since a Type=simple unit is started when forked.
 """
 
 import argparse
@@ -105,7 +136,9 @@ from riglib import (  # noqa
     say,
 )
 from customs.egress_ca import ca_cert_path  # noqa
-from customs.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
+from customs.egress_record import (  # noqa
+    DROP_BROKER_UNREACHABLE, DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED,
+)
 
 BOX = "customs-rig-box"
 UNIT = f"customs-box-{BOX}"
@@ -113,7 +146,9 @@ POD_SERVICE = f"{UNIT}-pod.service"
 SERVICE = f"{UNIT}.service"
 INSPECT_SERVICE = f"{UNIT}-inspect.service"
 RESOLVE_SERVICE = f"{UNIT}-resolve.service"
-SERVICES = (POD_SERVICE, INSPECT_SERVICE, RESOLVE_SERVICE, SERVICE)
+BROKER_SERVICE = f"{UNIT}-broker.service"
+SERVICES = (POD_SERVICE, INSPECT_SERVICE, RESOLVE_SERVICE, BROKER_SERVICE,
+            SERVICE)
 LISTENERS = {INSPECT_SERVICE, RESOLVE_SERVICE}
 # docs/BOX.md's default.
 IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
@@ -127,14 +162,24 @@ BOX_HOME = SHARE / "home"
 QUADLET = HOME / ".config" / "containers" / "systemd"
 UNITS = HOME / ".config" / "systemd" / "user"
 UNIT_FILES = (QUADLET / f"{UNIT}.pod", QUADLET / f"{UNIT}.container",
-              UNITS / INSPECT_SERVICE, UNITS / RESOLVE_SERVICE)
+              UNITS / INSPECT_SERVICE, UNITS / RESOLVE_SERVICE,
+              UNITS / BROKER_SERVICE)
 LAID_OUT = (CONFIG / "policy.json", CONFIG / "bundle.pem",
             ca_cert_path(STATE), LOGS, BOX_HOME, *UNIT_FILES)
 STATUS = STATE / "status.json"
 RESOLVE_STATUS = STATE / "resolve-status.json"
 RECORD = LOGS / "requests.log"
+CREDENTIAL = "customs-rig-key"
+CREDENTIAL_ENV = "CUSTOMS_RIG_KEY"
+CREDENTIALS = HOME / ".config" / "customs" / "credentials"
+SEALED = CREDENTIALS / f"{CREDENTIAL}.cred"
+DESCRIBED = CREDENTIALS / f"{CREDENTIAL}.json"
+RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR")
+               or f"/run/user/{os.getuid()}")
+BROKER_SOCKET = RUNTIME / "customs-box" / BOX / "broker.sock"
 
 DROP_INS = {"inspect": UNITS / f"{INSPECT_SERVICE}.d" / "rig.conf",
+            "broker": UNITS / f"{BROKER_SERVICE}.d" / "rig.conf",
             "workload": QUADLET / f"{UNIT}.container.d" / "rig.conf",
             "pod": UNITS / f"{POD_SERVICE}.d" / "rig.conf"}
 FAILING_RULES = "[Service]\nExecStartPost=\nExecStartPost=/usr/bin/false\n"
@@ -149,6 +194,8 @@ WRITTEN = ".customs-rig-written"
 MARKER = HOME / ".customs-rig-marker"
 
 POLICY = RIG / "box-policy.json"
+PLAIN_POLICY = RIG / "box-plain-policy.json"
+SLOW = RIG / "box-slow"
 PROJECT = RIG / "box-project"
 SUBDIR = PROJECT / "sub"
 READONLY = RIG / "box-ro"
@@ -171,6 +218,7 @@ START_SCRIPT = f"""\
 # start, then what `create` runs.
 n=$(cat /proc/sys/kernel/random/uuid)
 c=$(curl -s -o /dev/null -w '%{{http_code}}' --max-time 10 \\
+    -H "Authorization: Bearer ${CREDENTIAL_ENV}" \\
     "https://{PROVIDER}/start/$n")
 echo "$n $c" >> "{INSIDE}/{STARTS}"
 exec sleep infinity
@@ -211,13 +259,23 @@ SSH = "192.0.2.1:22"
 
 RULES = {"table inet customs", "table netdev customs"}
 
+SITECUSTOMIZE = """\
+# written by tests/manual/box_rig.py: the broker's interpreter waits
+# before it runs, so its start has a window a request can fall in.
+import time
+time.sleep(3)
+"""
+
 
 # --- the tool and the box ----------------------------------------------------
 
-def box(*args, cwd=RIG, timeout=180):
-    """customs-box as the user types it, with nothing on its stdin."""
+def box(*args, cwd=RIG, timeout=180, input=None):
+    """customs-box as the user types it, with `input`, or nothing, on its
+    stdin."""
+    stdin = {"input": input} if input is not None else {
+        "stdin": subprocess.DEVNULL}
     return run([*TOOL, *args], check=False, cwd=cwd, env=TOOL_ENV,
-               stdin=subprocess.DEVNULL, timeout=timeout)
+               timeout=timeout, **stdin)
 
 
 def exec_in(argv, *, user=USER, timeout=30):
@@ -249,6 +307,28 @@ def listed():
     for line in box("ls").stdout.splitlines():
         words = line.split()
         if words and words[0] == BOX:
+            return words
+    return None
+
+
+def show(unit, key):
+    return run(["systemctl", "--user", "show", "-p", key, "--value", unit],
+               check=False).stdout.strip()
+
+
+def placeholder():
+    try:
+        return json.loads(DESCRIBED.read_text())["placeholder"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def credential_listed():
+    """The rig's credential's line in `credential ls`, as words, or
+    None."""
+    for line in box("credential", "ls").stdout.splitlines():
+        words = line.split()
+        if words and words[0] == CREDENTIAL:
             return words
     return None
 
@@ -366,15 +446,19 @@ def stub_logged(path):
 
 
 def served(path, code):
-    """Whether a request to the provider at `path` went by the inspector:
-    the stub's 401, the path in the stub's log, the record's forward."""
+    """Whether a request to the provider at `path` went by the inspector
+    and the broker: the stub's 200, which it answers only the sealed key,
+    the path in the stub's log, the record's forward under the
+    credential."""
     logged = await_(lambda: stub_logged(path), 5)
     rec = await_(lambda: record_for(path), 5)
-    ok = (code == "401" and logged and rec is not None
-          and rec.get("decision") == "forward" and rec.get("status") == 401)
+    ok = (code == "200" and logged and rec is not None
+          and rec.get("decision") == "forward" and rec.get("status") == 200
+          and rec.get("credential") == CREDENTIAL)
     seen = "logged" if logged else "never saw"
     return ok, (f"http={code!r}; the stub {seen} {path}; record: "
-                + (f"{rec.get('decision')} {rec.get('status')}" if rec
+                + (f"{rec.get('decision')} {rec.get('status')} "
+                   f"{rec.get('reason') or rec.get('credential')}" if rec
                    else "none"))
 
 
@@ -387,6 +471,26 @@ def start_row(label, seen):
 
 
 # --- the rows ----------------------------------------------------------------
+
+def credential_rows(secret):
+    say("credential")
+    added = box("credential", "add", CREDENTIAL, "--host", PROVIDER,
+                "--env", CREDENTIAL_ENV, "--auth-header", "Authorization",
+                "--auth-format", "Bearer {secret}", input=secret + "\n")
+    files = [p for p in (SEALED, DESCRIBED) if p.exists()]
+    holding = [p.name for p in files if secret.encode() in p.read_bytes()]
+    mode = f"{SEALED.stat().st_mode & 0o777:o}" if SEALED.exists() else None
+    row("credential: add seals the key, and neither file holds it",
+        added.returncode == 0 and len(files) == 2 and not holding
+        and mode == "600",
+        f"rc={added.returncode} {added.stderr.strip()[-200:]}; files "
+        f"{[p.name for p in files]}; holding the key: {holding}; "
+        f"mode {mode}")
+    mine = credential_listed()
+    row("credential: ls lists it for the provider, named by no box",
+        mine == [CREDENTIAL, CREDENTIAL_ENV, PROVIDER, "-"], f"{mine}")
+    return added.returncode == 0
+
 
 def create_rows():
     say("create")
@@ -411,16 +515,17 @@ def create_rows():
 def chain_rows():
     say("chain")
 
+    keys = ("Requires", "Wants", "After", "BindsTo", "PartOf", "Type")
+
     def loaded(unit):
-        out = run(["systemctl", "--user", "show", "-p", "Requires",
-                   "-p", "Wants", "-p", "After", "-p", "BindsTo", unit],
+        out = run(["systemctl", "--user", "show",
+                   *(w for k in keys for w in ("-p", k)), unit],
                   check=False).stdout
         got = {}
         for line in out.splitlines():
             key, _, value = line.partition("=")
             got[key] = set(value.split())
-        return {k: got.get(k, set())
-                for k in ("Requires", "Wants", "After", "BindsTo")}
+        return {k: got.get(k, set()) for k in keys}
 
     work = loaded(SERVICE)
     row("chain: the workload pulls in both listeners, is After= them, and "
@@ -429,7 +534,7 @@ def chain_rows():
         and LISTENERS | {POD_SERVICE} <= work["After"]
         and POD_SERVICE in work["BindsTo"],
         "; ".join(f"{k}: {sorted(map(short, v & (LISTENERS | {POD_SERVICE})))}"
-                  for k, v in work.items()))
+                  for k, v in work.items() if k != "Type"))
     for unit in sorted(LISTENERS):
         deps = loaded(unit)
         row(f"chain: the {short(unit)} listener is BindsTo= and "
@@ -441,6 +546,19 @@ def chain_rows():
     row("chain: the pod pulls in both listeners",
         LISTENERS <= pod["Wants"] | pod["Requires"],
         f"Wants: {sorted(map(short, pod['Wants'] & LISTENERS))}")
+    inspect = loaded(INSPECT_SERVICE)
+    row("chain: the inspector pulls in the broker and is After= it, "
+        "without Requires=",
+        BROKER_SERVICE in inspect["Wants"] & inspect["After"]
+        and BROKER_SERVICE not in inspect["Requires"],
+        f"broker in Wants {BROKER_SERVICE in inspect['Wants']}, After "
+        f"{BROKER_SERVICE in inspect['After']}, Requires "
+        f"{BROKER_SERVICE in inspect['Requires']}")
+    broker = loaded(BROKER_SERVICE)
+    bound = [k for k, v in broker.items() if POD_SERVICE in v]
+    row("chain: the broker is Type=notify, and nothing binds it to the pod",
+        broker["Type"] == {"notify"} and not bound,
+        f"Type: {broker['Type']}; the pod in {bound or 'none'}")
 
 
 def fail_rows():
@@ -457,6 +575,12 @@ def fail_rows():
         "no container is left",
         not wrote and not exists("container"),
         f"lines {before} -> {len(starts())}; units {states()}")
+    stopped = box("stop", BOX)
+    now = states()
+    row("fail: stop leaves no unit active, the broker's either",
+        stopped.returncode == 0
+        and set(now.values()) <= {"inactive", "failed"},
+        f"rc={stopped.returncode} {stopped.stderr.strip()[-160:]}; {now}")
 
 
 def first_rows():
@@ -617,8 +741,8 @@ def request_rows():
         path = f"/{label}/{nonce}"
         got = exec_in([*prefix, *CURL, f"https://{PROVIDER}{path}"])
         ok, detail = served(path, got.stdout.strip())
-        row(f"{label}: {who} reaches the listed host through the inspector",
-            ok, f"{detail} {got.stderr.strip()}")
+        row(f"{label}: {who} reaches the brokered host through the "
+            "inspector and the broker", ok, f"{detail} {got.stderr.strip()}")
         # Refused after the handshake, before the request is read: the
         # record has no path, and is the one more for the host.
         before = len(refusals())
@@ -647,6 +771,107 @@ def counter_rows():
     foreign = status.get("drop_reasons", {}).get(DROP_FOREIGN_CALLER)
     row("counters: nothing was dropped as a foreign caller",
         foreign == 0, f"{DROP_FOREIGN_CALLER!r}: {foreign}")
+
+
+def invocation(unit):
+    return show(unit, "InvocationID")
+
+
+def broker_rows(secret):
+    say("broker")
+    fiction = placeholder()
+    env = exec_in(["env"]).stdout
+    got = box("enter", BOX, "--", "printenv", CREDENTIAL_ENV)
+    row("broker: the box holds the placeholder, by exec and by enter, and "
+        "never the key",
+        fiction is not None
+        and f"{CREDENTIAL_ENV}={fiction}" in env.splitlines()
+        and got.stdout.strip() == fiction
+        and secret not in env and secret not in got.stdout,
+        f"placeholder {fiction!r}; exec's {CREDENTIAL_ENV} "
+        f"{f'{CREDENTIAL_ENV}={fiction}' in env.splitlines()}; enter's "
+        f"{got.stdout.strip()!r}; the key in either: "
+        f"{secret in env or secret in got.stdout}")
+    inside = exec_in(["test", "-e", str(BROKER_SOCKET)]).returncode
+    row("broker: its socket is on the host, and the box has no path to it",
+        BROKER_SOCKET.is_socket() and inside != 0,
+        f"{BROKER_SOCKET} a socket on the host: {BROKER_SOCKET.is_socket()};"
+        f" test -e inside: rc={inside}")
+    pid = show(BROKER_SERVICE, "MainPID")
+    tcp = [ln.split()[3] for ln in run(["ss", "-lntpH"]).stdout.splitlines()
+           if f"pid={pid}," in ln]
+    row("broker: it holds no TCP socket", pid not in ("", "0") and not tcp,
+        f"pid {pid}: {tcp or 'none'}")
+
+    run(["systemctl", "--user", "stop", BROKER_SERVICE], check=False)
+    path = f"/stopped/{os.urandom(8).hex()}"
+    got = exec_in([*CURL, f"https://{PROVIDER}{path}"])
+    rec = await_(lambda: record_for(path), 5)
+    row("broker: stopped, a request is refused 502, never reaches the "
+        "provider, and the record says why",
+        got.stdout.strip() == "502" and not stub_logged(path)
+        and rec is not None and rec.get("decision") == "drop"
+        and rec.get("reason") == DROP_BROKER_UNREACHABLE,
+        f"http={got.stdout.strip()!r}; the stub saw it: "
+        f"{stub_logged(path)}; record: "
+        + (f"{rec.get('decision')} {rec.get('reason')!r}" if rec
+           else "none"))
+    path = f"/again/{os.urandom(8).hex()}"
+    got = box("enter", BOX, "--", *CURL, f"https://{PROVIDER}{path}")
+    ok, detail = served(path, got.stdout.strip())
+    row("broker: enter starts it again, and a request is served",
+        got.returncode == 0 and ok,
+        f"rc={got.returncode} {got.stderr.strip()[-160:]}; {detail}")
+
+    say("broker stopped while it starts")
+    run(["systemctl", "--user", "stop", BROKER_SERVICE], check=False)
+    run(["systemctl", "--user", "start", "--no-block", BROKER_SERVICE],
+        check=False)
+    # Inside the 3 s its interpreter sleeps.
+    time.sleep(1)
+    was = show(BROKER_SERVICE, "ActiveState")
+    run(["systemctl", "--user", "stop", BROKER_SERVICE], check=False)
+    again = run(["systemctl", "--user", "start", BROKER_SERVICE],
+                check=False)
+    row("broker: premise: stopped while it starts, systemd will not start "
+        "it again",
+        was == "activating" and again.returncode != 0,
+        f"stopped while {was}; start rc={again.returncode}")
+    path = f"/cleared/{os.urandom(8).hex()}"
+    got = box("enter", BOX, "--", *CURL, f"https://{PROVIDER}{path}")
+    ok, detail = served(path, got.stdout.strip())
+    row("broker: enter starts it anyway, and a request is served",
+        got.returncode == 0 and ok,
+        f"rc={got.returncode} {got.stderr.strip()[-160:]}; {detail}")
+
+
+def rotate_rows():
+    say("rotate")
+    new = "sk-new-" + os.urandom(12).hex()
+    riglib.stop_children()
+    riglib.children.clear()
+    riglib.start_stub(new)
+    path = f"/old/{os.urandom(8).hex()}"
+    got = exec_in([*CURL, f"https://{PROVIDER}{path}"])
+    row("rotate: premise: the provider now wants a new key, and the old one "
+        "gets its 401", got.stdout.strip() == "401",
+        f"http={got.stdout.strip()!r} {got.stderr.strip()}")
+    before = {u: invocation(u) for u in (SERVICE, INSPECT_SERVICE,
+                                         BROKER_SERVICE)}
+    added = box("credential", "add", CREDENTIAL, input=new + "\n")
+    path = f"/rotated/{os.urandom(8).hex()}"
+    got = exec_in([*CURL, f"https://{PROVIDER}{path}"])
+    ok, detail = served(path, got.stdout.strip())
+    row("rotate: credential add with the new key, and the box's next "
+        "request carries it",
+        added.returncode == 0 and f"box {BOX}:" in added.stdout and ok,
+        f"rc={added.returncode} {added.stdout.strip()!r} "
+        f"{added.stderr.strip()[-160:]}; {detail}")
+    after = {u: invocation(u) for u in before}
+    moved = sorted(short(u) for u in before if before[u] != after[u])
+    row("rotate: the broker restarted, and the inspector and the workload "
+        "did not", moved == ["broker"], f"restarted: {moved}")
+    return new
 
 
 def restart_rows(count, tag):
@@ -742,42 +967,64 @@ def load_state(unit):
 
 def rm_rows(tag):
     say("rm")
+    refused = box("credential", "rm", CREDENTIAL)
+    row("rm: credential rm is refused while the box names it",
+        refused.returncode != 0 and "named by" in refused.stderr
+        and SEALED.exists() and DESCRIBED.exists(),
+        f"rc={refused.returncode} {refused.stderr.strip()[-160:]}")
     remove_drop_ins()
     # A box nothing reached has no record.
     recorded = RECORD.exists()
     removed = box("rm", BOX)
     left = [p.name for p in UNIT_FILES if p.exists()]
     loads = {short(s): load_state(s) for s in SERVICES}
-    row("rm: no unit, pod or container is left, and ls does not list it",
+    row("rm: no unit, pod or container is left, nor the broker's socket, "
+        "and ls does not list it",
         removed.returncode == 0 and not left
         and set(loads.values()) == {"not-found"}
         and not exists("pod") and not exists("container")
-        and listed() is None,
+        and not BROKER_SOCKET.parent.exists() and listed() is None,
         f"rc={removed.returncode}; files left {left}; {loads}; pod "
-        f"{exists('pod')}, container {exists('container')}")
+        f"{exists('pod')}, container {exists('container')}; socket "
+        f"directory {BROKER_SOCKET.parent.exists()}")
     row("rm: the box's home and its record stay",
         (BOX_HOME / KEPT).exists() and LOGS.is_dir()
         and RECORD.exists() == recorded,
         f"{KEPT} in the home: {(BOX_HOME / KEPT).exists()}; record: "
         f"{recorded} -> {RECORD.exists()}; said {removed.stdout.split()}")
-    made = box("create", BOX, "--policy", str(POLICY))
+    made = box("create", BOX, "--policy", str(PLAIN_POLICY))
     got = box("enter", BOX, "--", "cat", f"{INSIDE}/{KEPT}")
-    row("rm: create again finds the home",
-        made.returncode == 0 and got.stdout.strip() == tag,
+    broker = (UNITS / BROKER_SERVICE).exists()
+    row("rm: create again, with a policy naming no credential, finds the "
+        "home and writes no broker",
+        made.returncode == 0 and got.stdout.strip() == tag and not broker,
         f"create rc={made.returncode}; enter: {got.stdout.strip()!r} "
-        f"{got.stderr.strip()[-200:]}")
+        f"{got.stderr.strip()[-200:]}; broker unit {broker}")
     removed = box("rm", BOX, "--home")
     row("rm --home: the home goes too",
         removed.returncode == 0 and not SHARE.exists()
         and not CONFIG.exists(),
         f"rc={removed.returncode}; home {SHARE.exists()}, config "
         f"{CONFIG.exists()}")
+    gone = box("credential", "rm", CREDENTIAL)
+    row("rm: then credential rm removes the credential",
+        gone.returncode == 0 and not SEALED.exists()
+        and not DESCRIBED.exists() and credential_listed() is None,
+        f"rc={gone.returncode} {gone.stderr.strip()[-160:]}; files "
+        f"{SEALED.exists()}, {DESCRIBED.exists()}")
 
 
-def probe(args, tag):
+def probe(args, tag, secret):
     chain_rows()
     write_drop_in("inspect",
                   f"[Service]\nEnvironment=SSL_CERT_FILE={riglib.STUB_CERT}\n")
+    pythonpath = ":".join([str(SLOW), *PROGRAM_ENV.values()])
+    write_drop_in("broker",
+                  f"[Service]\nEnvironment=SSL_CERT_FILE={riglib.STUB_CERT}\n"
+                  f"Environment=PYTHONPATH={pythonpath}\n"
+                  + ("Type=simple\n" if args.broker_not_ready else ""))
+    if args.broker_not_ready:
+        say("  the broker's unit is Type=simple, as asked")
     (BOX_HOME / START).write_text(START_SCRIPT)
     write_drop_in("workload", f"[Container]\nExec=/bin/sh {INSIDE}/{START}\n")
     fail_rows()
@@ -795,6 +1042,8 @@ def probe(args, tag):
     dns_rows()
     drop_rows()
     request_rows()
+    broker_rows(secret)
+    rotate_rows()
     counter_rows()
     restart_rows(args.restarts, tag)
     stop_rows()
@@ -810,21 +1059,27 @@ def clear_leftovers():
     remove_drop_ins()
     if (CONFIG / "box.json").exists():
         box("rm", BOX, "--home")
+    run(["systemctl", "--user", "stop", BROKER_SERVICE], check=False)
     run(["podman", "pod", "rm", "-f", "-i", BOX], check=False)
     run(["podman", "rm", "-f", "-i", BOX], check=False)
     # The box's root writes in its home, as a uid the user is not.
     run(["podman", "unshare", "rm", "-rf", "--", str(CONFIG), str(STATE),
          str(LOGS), str(SHARE), str(PROJECT), str(READONLY)], check=False)
-    for path in (MARKER, HOME / WRITTEN):
+    for path in (MARKER, HOME / WRITTEN, SEALED, DESCRIBED):
         path.unlink(missing_ok=True)
+    shutil.rmtree(SLOW, ignore_errors=True)
 
 
 def material():
     say("material")
     riglib.make_stub_cert()
     POLICY.write_text(json.dumps({
-        "tls": "inspect", "hosts": [PROVIDER], "internal_expected": [],
-        "splice": [], "policy": []}, indent=2) + "\n")
+        "tls": "inspect", "hosts": [], "internal_expected": [],
+        "splice": [], "policy": [
+            {"host": PROVIDER, "credential": CREDENTIAL}]}, indent=2) + "\n")
+    PLAIN_POLICY.write_text(json.dumps({"hosts": [PROVIDER]}) + "\n")
+    SLOW.mkdir(parents=True, exist_ok=True)
+    (SLOW / "sitecustomize.py").write_text(SITECUSTOMIZE)
     tag = os.urandom(4).hex()
     SUBDIR.mkdir(parents=True)
     READONLY.mkdir(parents=True)
@@ -842,9 +1097,10 @@ def teardown(keep):
         remove_drop_ins()
         if (CONFIG / "box.json").exists():
             box("rm", BOX, "--home")
-        for path in (PROJECT, READONLY):
+        for path in (PROJECT, READONLY, SLOW):
             shutil.rmtree(path, ignore_errors=True)
-        MARKER.unlink(missing_ok=True)
+        for path in (MARKER, SEALED, DESCRIBED):
+            path.unlink(missing_ok=True)
     riglib.stop_children()
     riglib.restore_privileged_ports()
     riglib.remove_hosts_entry()
@@ -859,13 +1115,16 @@ def main():
     ap.add_argument("--without-rules", action="store_true",
                     help="empty the pod's ExecStartPost=; the rows that "
                          "need the rules must go red")
+    ap.add_argument("--broker-not-ready", action="store_true",
+                    help="make the broker's unit Type=simple; the first "
+                         "request after each start of it must go red")
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
     args = ap.parse_args()
 
     riglib.preflight(
         ("podman", "nsenter", "openssl", "curl", "ss", "systemctl",
-         *(("customs-box",) if riglib.INSTALLED else ())),
+         "systemd-creds", *(("customs-box",) if riglib.INSTALLED else ())),
         (riglib.PROVIDER_PORT,))
     state = run(["systemctl", "--user", "is-system-running", "--wait"],
                 check=False, timeout=180).stdout.strip()
@@ -875,22 +1134,31 @@ def main():
     RIG.mkdir(parents=True, exist_ok=True)
     clear_leftovers()
     tag = material()
-    # The box holds no key; the stub answers it 401.
+    # Only the broker holds it; the stub answers 200 to it alone.
     secret = "sk-real-" + os.urandom(12).hex()
     try:
         say("host side")
         riglib.lower_privileged_ports()
         riglib.write_hosts_entry(HOSTS_MARK)
         riglib.start_stub(secret)
-        if create_rows():
-            probe(args, tag)
+        if credential_rows(secret) and create_rows():
+            probe(args, tag, secret)
     finally:
         teardown(args.keep)
 
-    rc = riglib.report(
-        "--without-rules: first, premise's rules, enter, dns, silent, "
-        "quic, ssh, listed, unlisted, root, restart, and each enter after "
-        "a stop are expected red" if args.without_rules else None)
+    expected = []
+    if args.without_rules:
+        expected.append(
+            "--without-rules: first, premise's rules, enter and every row "
+            "through it, dns, silent, quic, ssh, listed, unlisted, root, the "
+            "broker's requests, rotate, restart, and each enter after a stop "
+            "are expected red")
+    if args.broker_not_ready:
+        expected.append(
+            "--broker-not-ready: first, the premise of a stop while the "
+            "broker starts, each enter that starts it again, rotate's "
+            "request, and each enter after a stop are expected red")
+    rc = riglib.report("; ".join(expected) or None)
     if rc:
         say(f"journal: journalctl --user -u '{UNIT}*' -b")
     return rc

@@ -8,8 +8,8 @@ namespace and loads the rules when it starts, the inspector's and the
 responder's listeners bound in that namespace, and the workload started
 after them.
 
-`create`, `enter`, `stop`, `rm` and `ls` are built, and a rig proves
-them on a real host (below); credentials, the policy commands and the
+`create`, `enter`, `stop`, `rm`, `ls` and the credentials are built, and
+a rig proves them on a real host (below); the policy commands and the
 packaging are designed, not built.
 
 ## What a box is for
@@ -32,8 +32,10 @@ customs-box enter NAME [--root] [-- COMMAND...]
 customs-box log NAME [--refused]
 customs-box allow NAME HOST [--method M]... [--path P]...
 customs-box policy NAME
-customs-box credential add ID --host HOST... --env VAR
-                   [--header FIELD] [--format FORMAT]
+customs-box credential add ID [--host HOST]... [--env VARIABLE]
+                   [--auth-header FIELD] [--auth-format FORMAT]
+customs-box credential ls
+customs-box credential rm ID
 customs-box stop NAME
 customs-box rm NAME [--home]
 customs-box ls
@@ -49,10 +51,14 @@ the git, Python, ssh client and manual pages `fedora:44` leaves out.
 in order, the pod, the rules, the broker and the listeners, and the
 workload. It then checks that the pod's namespace holds both customs
 tables, and refuses if it does not, before `podman exec -it` as the
-user (or uid 0 with `--root`). The working directory is the host's
-current one if that is inside a mount, and the box's home otherwise.
+user (or uid 0 with `--root`). A box with a broker has it started again
+if it had stopped, and is told if it does not start: a request with its
+credentials is then refused, not sent without. The working directory is
+the host's current one if that is inside a mount, and the box's home
+otherwise.
 
-**stop** stops the pod's unit; everything bound to it stops too.
+**stop** stops the pod's unit, and the broker's; everything bound to
+the pod stops too.
 **rm** stops the box and removes its units, container and pod; its home
 and its record stay unless `--home`.
 
@@ -89,17 +95,31 @@ filesystem does not, and neither does a `dnf install`.
 
 ## Credentials
 
-**credential add** reads the secret from standard input and seals it
-to this user and host (`systemd-creds --user encrypt`), and records the
-hosts, the variable, the header and format, and a generated
-placeholder beside it. A credential is sealed once and serves every box
-whose policy names it.
+**credential add** reads the secret from standard input, or the
+terminal without echo, and seals it to this user and host
+(`systemd-creds --user encrypt`). Beside it, it records the hosts, the
+variable, the header and format (the broker's defaults are `x-api-key`
+and `{secret}`), and a generated placeholder. All of it is checked by
+the broker's own `build_profiles` with the real secret first, so a key
+the broker would refuse is refused here. A credential is sealed once
+and serves every box whose policy names it.
 
-Each box has its own broker, holding only the credentials its policy
-names. The broker picks a credential by `Host`, so a broker for every
-box lets two boxes hold different keys for one provider, and `rm` takes
-the box's broker with it. The workload's environment gets each named
-credential's variable, set to its placeholder.
+Adding an ID that exists replaces it: the secret, and whichever of the
+hosts, variable, header and format are given; the placeholder stays.
+The units of every box whose policy names it are written again and a
+running broker is restarted, which a request in the gap finds refused.
+A changed variable reaches a running workload at its next start. A
+replacement a box could no longer hold is refused, and nothing changes.
+**credential rm** refuses while a box's policy names the credential.
+
+A credential's hosts are the most it is sent to. Each box has its own
+broker, holding the credentials its policy names, for those of their
+hosts the policy brokers with them: the inspector's own choice of
+credential for a host, among the hosts `credential add` named. The
+broker picks a credential by `Host`, so a broker for every box lets two
+boxes hold different keys for one provider, and `rm` takes the box's
+broker with it. The workload's environment gets each named credential's
+variable, set to its placeholder.
 
 ## Files
 
@@ -115,10 +135,12 @@ For box NAME, credential ID:
 | pod, workload | `~/.config/containers/systemd/customs-box-NAME.{pod,container}` |
 | inspector, responder, broker | `~/.config/systemd/user/customs-box-NAME-{inspect,resolve,broker}.service` |
 | broker's socket | `$XDG_RUNTIME_DIR/customs-box/NAME/broker.sock` |
-| credential | `~/.config/customs/box/credentials/ID.{cred,json}` |
+| credential | `~/.config/customs/credentials/ID.{cred,json}` |
 
 The pod and the container are both named NAME, so `podman` commands
-take the box's name; `create` refuses a name either already has.
+take the box's name; `create` refuses a name either already has. The
+credentials are beside the boxes, not among them, where they would be a
+box's directory.
 
 ## The units
 
@@ -129,8 +151,17 @@ As in examples/quadlet, with these differences:
 - The rules are loaded by the tool (`customs-box unit rules NAME`, one
   of the commands for the units' use). The egress device is read inside
   the namespace.
-- The broker is `PartOf=` the pod, and the inspector `Wants=` and is
-  ordered `After=` it.
+- The broker is Type=notify, started once it is listening, and the
+  inspector `Wants=` and is ordered `After=` it: not `Requires=`, which
+  would restart the inspector, and with it the workload, at every new
+  key. Its start takes as long as the decryption, over a second on the
+  proving host. It is bound to nothing: a restart of the pod is a new
+  namespace, which is nothing to the broker, and `stop` and `rm` stop it.
+- systemd leaves a credentialed unit's workspace behind when it stops
+  the unit while its credentials are being decrypted, and every start
+  after fails on it. `enter` and `credential add` stop a broker that is
+  not active, remove the workspace, and forget its failures before they
+  start it.
 - The bundle is mounted read-only over the image's own system bundle,
   found at `create`, and pointed at by `SSL_CERT_FILE`,
   `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO` and
@@ -154,7 +185,8 @@ What starts what: `enter` starts `customs-box-NAME.service`, which
 `BindsTo=` and `After=` the pod, whose unit is active only once its
 `ExecStartPost=` has loaded the rules. A rules load that fails fails
 the pod, and nothing after it starts. The pod `Wants=` the listeners, so
-a restart of the pod brings them back into its new namespace.
+a restart of the pod brings them back into its new namespace. The
+inspector `Wants=` the broker and starts after it is listening.
 
 ## Refused
 
@@ -166,7 +198,18 @@ a restart of the pod brings them back into its new namespace.
   the broker's socket, the CA's key, the sealed credentials, and the
   units that load a box's rules, which a box able to write them could
   drop;
-- a name outside `[a-z0-9-]`, or one a container or pod already has.
+- a name outside `[a-z0-9-]`, or one a container or pod already has;
+- a policy naming a credential that has not been added, an entry naming
+  one for a host `credential add` did not name, a credential an earlier
+  entry takes every host of, and two credentials setting one variable;
+- a credential in a box when `XDG_RUNTIME_DIR` is not set, since the
+  broker's socket is in it.
+
+`credential add` refuses a host that is not a name, a variable the box
+sets itself (the CA variables, `TERM`, `COLORTERM`, `LANG`), a format
+without `{secret}`, and whatever the broker would refuse at its start: a
+header that is not one, a secret with a line break, a placeholder equal
+to it.
 
 Nothing is passed to podman that the tool does not write itself: no
 network, capability, device, `--privileged` or hosts flag. The
@@ -219,14 +262,20 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
   in; the user's own home is not the box's; a file outside the home is
   gone after a restart;
 - `enter` refuses a box whose pod `podman pod restart` started;
-- `rm` leaves no unit, container or pod, and keeps the home and the
-  record, which `create` finds again; `rm --home` removes the home.
+- a brokered request reaches a stub provider carrying the sealed key,
+  at every start of the broker as well, while the box holds the
+  placeholder and has no path to the broker's socket; a stopped broker's
+  request is refused, never sent without the key, and `enter` starts it
+  again, even after a stop while it started; a new key with `credential
+  add` is the next request's, and neither the inspector nor the workload
+  restarted;
+- `rm` leaves no unit, container or pod, nor the broker's socket, and
+  keeps the home and the record, which `create` finds again; `rm --home`
+  removes the home; `credential rm` is refused while a box names the
+  credential.
 
-With credentials the rig gains a brokered request that reaches a stub
-provider carrying the sealed key while the box's environment holds the
-placeholder, and the broker's socket path ENOENT from inside; with the
-policy commands, `allow` admitting a host, and a malformed edit refused
-while the running box keeps its listeners.
+With the policy commands the rig gains `allow` admitting a host, and a
+malformed edit refused while the running box keeps its listeners.
 
 Unit tests hold the generated units' dependencies to the chain above,
 each one broken on purpose once, and the refusals.

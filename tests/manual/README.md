@@ -386,31 +386,37 @@ defect in the pair. Four facts, all in the guest half:
 
 ## box_rig.py — a customs box, through its command line
 
-`docs/BOX.md`: `customs-box create`, `enter`, `stop` and `rm`, the box's
-units run by the user's manager and quadlet, shape 1n's rules and
-listeners in the pod's namespace. The tool is the checkout's
-`bin/customs-box`, or with `CUSTOMS_LIBEXEC=/usr/libexec/customs` the
-installed one.
+`docs/BOX.md`: `customs-box credential add`, `create`, `enter`, `stop`
+and `rm`, the box's units run by the user's manager and quadlet, shape
+1n's rules and listeners in the pod's namespace, and the box's broker.
+The tool is the checkout's `bin/customs-box`, or with
+`CUSTOMS_LIBEXEC=/usr/libexec/customs` the installed one.
 
 ```bash
-python3 tests/manual/box_rig.py                  # every row green
-python3 tests/manual/box_rig.py --without-rules  # must go red
-python3 tests/manual/box_rig.py --restarts 10    # more restarts of each
+python3 tests/manual/box_rig.py                     # every row green
+python3 tests/manual/box_rig.py --without-rules     # must go red
+python3 tests/manual/box_rig.py --broker-not-ready  # must go red
+python3 tests/manual/box_rig.py --restarts 10       # more restarts of each
 ```
 
-The fixture is riglib's, and three drop-ins beside the units `create`
-writes, removed before `rm`: the inspector trusts the stub's
-certificate; the pod's rules load fails, for two rows, or is empty,
+The fixture is riglib's, and four drop-ins beside the units `create`
+writes, removed before `rm`: the inspector and the broker trust the
+stub's certificate; the broker's interpreter sleeps 3 s before it runs,
+so its start has a window, and under `--broker-not-ready` its unit is
+Type=simple; the pod's rules load fails, for two rows, or is empty,
 under `--without-rules`; and the workload's `Exec=` is a script whose
 first act at every start is a request to the provider, with a nonce in
 its path, recorded in the box's home. That request is the window: the
 row for each start is the stub's log and the record naming its nonce.
-The box holds no key, so what the stub answers is its 401, which only
-the inspector's dial can have fetched.
+The provider is brokered: the rig seals a key with `credential add`, the
+box holds a placeholder, and the stub answers 200 only to the sealed
+key, which only the broker has, and 401 to anything else.
 
-**Rows.** The files `create` lays out, and nothing started. The chain as
-the manager loaded it. A failing rules load starts nothing: `enter`
-refuses, and the workload's first act never happened. The first request
+**Rows.** `credential add` seals the key, and neither file holds it. The
+files `create` lays out, and nothing started. The chain as the manager
+loaded it, the broker Type=notify and bound to nothing. A failing rules
+load starts nothing: `enter` refuses, the workload's first act never
+happened, and `stop` leaves nothing active. The first request, brokered,
 at the first start, at every workload restart and pod restart, and
 after `stop` and `enter`. Root in the box holds no `CAP_NET_ADMIN` and
 the user no capability; the rules are in the pod's namespace; the pod
@@ -418,12 +424,23 @@ has no cgroup. `enter`'s user, home, working directory and `--root`.
 The box's home is not the user's, and the directories between it and a
 mount in it are the user's. A `:ro` mount. The host's hosts file is not
 the box's. riglib's DNS rows, the silent drop, quic, and TCP 22 dropped.
-The listed host and the unlisted one, as the user and as root by sudo.
-The inspector's counters. A file outside the home is gone after a
+The brokered host and the unlisted one, as the user and as root by sudo.
+The box's placeholder, by exec and by `enter`, and never the key; the
+broker's socket on the host and not in the box, and no TCP socket. A
+stopped broker: a request is refused 502, never reaches the provider,
+and the record says `credential broker unreachable`; `enter` starts it
+again. The premise that systemd will not start a broker stopped while
+it starts, and `enter` starting it anyway. `credential add` with a new
+key, which the stub now wants: the next request carries it, and the
+broker restarted while the inspector and the workload did not. The
+inspector's counters. A file outside the home is gone after a
 restart. After `podman pod restart` the namespace has no rules and
-`enter` refuses it, and `stop` then `enter` serves it again. `rm` leaves
-no unit, pod or container and keeps the home and the record; `create`
-finds the home again; `rm --home` removes it.
+`enter` refuses it, and `stop` then `enter` serves it again. `credential
+rm` is refused while the box names the credential. `rm` leaves no unit,
+pod or container, nor the broker's socket, and keeps the home and the
+record; `create`, with a policy naming no credential, finds the home
+again and writes no broker; `rm --home` removes it; then `credential rm`
+removes the credential.
 
 **What it found, first runs, 2026-09-29.** Three defects in customs-box,
 none of which the unit suite could see:
@@ -460,3 +477,30 @@ second, before the listeners and the workload are back; quadlet adds
 `Wants=` from the pod to its container, which is what brings the
 workload back. A run takes under two minutes, `--without-rules` under
 four.
+
+**The broker, 2026-09-29.** 56/73 at first: the broker never started,
+and every brokered request was refused 502 and recorded `credential
+broker unreachable`, none sent without the key. systemd leaves a
+credentialed unit's workspace,
+`$XDG_RUNTIME_DIR/systemd/temporary-credentials/UNIT`, when it stops the
+unit while its credentials are being decrypted, and every start after
+fails `243/CREDENTIALS`, `File exists`, a restart after a restart, until
+the user's manager ends. The fail rows' pod restarted, and the broker,
+then `PartOf=` it and inside its 3 s, was stopped with it. Reproduced
+with a bare unit: Type=notify, Type=simple with an `ExecStartPre=` or
+`ExecStartPost=`, and Type=simple stopped in its first second, since
+decrypting with `systemd-creds --user` takes over a second on the
+proving host; a restart of an active unit is safe, and removing the
+workspace from outside lets the next start through. The broker is bound
+to nothing now; `stop` and `rm` stop it; `enter` and `credential add`
+stop a broker that is not active, remove its workspace, forget its
+failures, and start it. 63/75 while the repair skipped a broker waiting
+to restart, which is `activating`; then 75/75. `--broker-not-ready`
+68/75, the seven rows it names (an earlier 59/75, before the repair
+covered every state but `active`, left the broker unable to start for
+the rest of the run); `--without-rules` 36/75.
+
+A broker's start is about 1.5 s on the proving host, the decryption and
+the interpreter: as Type=simple, the first brokered request of every
+start that starts it is refused. A run takes two minutes,
+`--without-rules` four and a half.
