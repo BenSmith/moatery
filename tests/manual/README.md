@@ -383,3 +383,80 @@ defect in the pair. Four facts, all in the guest half:
   the guest's DNS reaches pasta's forwarder through passt, where the
   port-53 DNAT claims it. SELinux in Enforcing needed no extra flag for
   `--device /dev/kvm` or the bind mount.
+
+## box_rig.py — a customs box, through its command line
+
+`docs/BOX.md`: `customs-box create`, `enter`, `stop` and `rm`, the box's
+units run by the user's manager and quadlet, shape 1n's rules and
+listeners in the pod's namespace. The tool is the checkout's
+`bin/customs-box`, or with `CUSTOMS_LIBEXEC=/usr/libexec/customs` the
+installed one.
+
+```bash
+python3 tests/manual/box_rig.py                  # every row green
+python3 tests/manual/box_rig.py --without-rules  # must go red
+python3 tests/manual/box_rig.py --restarts 10    # more restarts of each
+```
+
+The fixture is riglib's, and three drop-ins beside the units `create`
+writes, removed before `rm`: the inspector trusts the stub's
+certificate; the pod's rules load fails, for two rows, or is empty,
+under `--without-rules`; and the workload's `Exec=` is a script whose
+first act at every start is a request to the provider, with a nonce in
+its path, recorded in the box's home. That request is the window: the
+row for each start is the stub's log and the record naming its nonce.
+The box holds no key, so what the stub answers is its 401, which only
+the inspector's dial can have fetched.
+
+**Rows.** The files `create` lays out, and nothing started. The chain as
+the manager loaded it. A failing rules load starts nothing: `enter`
+refuses, and the workload's first act never happened. The first request
+at the first start, at every workload restart and pod restart, and
+after `stop` and `enter`. Root in the box holds no `CAP_NET_ADMIN` and
+the user no capability; the rules are in the pod's namespace; the pod
+has no cgroup. `enter`'s user, home, working directory and `--root`.
+The box's home is not the user's, and the directories between it and a
+mount in it are the user's. A `:ro` mount. The host's hosts file is not
+the box's. riglib's DNS rows, the silent drop, quic, and TCP 22 dropped.
+The listed host and the unlisted one, as the user and as root by sudo.
+The inspector's counters. A file outside the home is gone after a
+restart. After `podman pod restart` the namespace has no rules and
+`enter` refuses it, and `stop` then `enter` serves it again. `rm` leaves
+no unit, pod or container and keeps the home and the record; `create`
+finds the home again; `rm --home` removes it.
+
+**What it found, first runs, 2026-09-29.** Three defects in customs-box,
+none of which the unit suite could see:
+
+- `enter NAME --root -- COMMAND`, the documented form, handed `--root`
+  to the command: the parser took everything after the name. Found
+  writing the rig. The words after the first `--` are the command's now.
+- a mount inside the home had its mount point, and every directory above
+  it, made by the runtime as the box's root: the user could not write in
+  its own `~/.local`, and `rm --home`, which ignored errors, left the
+  home and said nothing. `create` makes those directories as the user,
+  and `rm --home` removes the home through `podman unshare`.
+- the box's user held all eleven of podman's default capabilities,
+  effective and ambient, and could `chown` a root file without sudo. The
+  home row above passed over a stale home the box's root owned, which is
+  how it showed. Podman gives a non-root user what `--cap-add` names,
+  and a container whose user is not named gets root's set, which exec as
+  the keep-id user keeps. The unit drops every capability outside the
+  default set, adds none, and names the user.
+
+53/56 at first (the home, and two rig rows matching the unlisted record
+by path: the inspector refuses an unlisted host after the handshake,
+before a request is read, so the record has none); then 57/57 with the
+capabilities hidden; 57/58 with the added set gone and the user still
+unnamed; 58/58. `--without-rules` 25/58. With `create`'s directories
+left out the home row goes red, `Permission denied`.
+
+Facts for the design. `podman pod restart` leaves every unit active
+while the workload runs in a new namespace with no rules; its first
+request there got no answer (no responder, and the provider's address
+is the pod's own loopback), and `enter` refuses the box, as
+`docs/BOX.md` says. `systemctl restart` of the pod returns in under a
+second, before the listeners and the workload are back; quadlet adds
+`Wants=` from the pod to its container, which is what brings the
+workload back. A run takes under two minutes, `--without-rules` under
+four.

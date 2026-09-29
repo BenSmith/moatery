@@ -146,6 +146,7 @@ python3 tests/manual/shape1_rig.py          # on the proving host, as the user
 python3 tests/manual/shape1n_rig.py         # same; listeners in the netns
 python3 tests/manual/shape1b_rig.py         # same; builds container/ first
 python3 tests/manual/shape2_rig.py          # same; a VM in the container (/dev/kvm)
+python3 tests/manual/box_rig.py             # same; a box, through customs-box
 ```
 
 Every push and pull request runs `just lint` and `just coverage`

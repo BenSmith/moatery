@@ -8,9 +8,9 @@ namespace and loads the rules when it starts, the inspector's and the
 responder's listeners bound in that namespace, and the workload started
 after them.
 
-`create`, `enter`, `stop`, `rm` and `ls` are built and have run on a
-real host; credentials, the policy commands and the packaging are
-designed, not built.
+`create`, `enter`, `stop`, `rm` and `ls` are built, and a rig proves
+them on a real host (below); credentials, the policy commands and the
+packaging are designed, not built.
 
 ## What a box is for
 
@@ -205,20 +205,28 @@ session.
 ## Proving it
 
 A rig, `tests/manual/box_rig.py`, on a real host, through the command
-line alone:
+line ([tests/manual/README.md](../tests/manual/README.md)):
 
-- a listed host answers, an unlisted one is refused 403, and a brokered
-  request reaches a stub provider carrying the sealed key while the
-  box's environment holds the placeholder;
-- from inside, the broker's socket path is ENOENT, root cannot flush the
-  rules, and UDP 443 is dropped and counted;
-- the first connection after a workload restart, and after a pod
-  restart, is redirected and served;
-- repeated restarts of the workload, and of the pod, each start it;
-- `allow` admits a host; a malformed edit is refused by the command, and
-  the running box keeps its listeners;
-- `enter` refuses a box whose pod was started by `podman pod start`;
-- `rm` leaves no unit, container, pod or socket.
+- the workload's first request at every start, the box's first, each
+  restart of the workload and of the pod, and `enter` after `stop`, is
+  inspected: the rules and the listeners are in place before it;
+- a rules load that fails starts nothing, and `enter` refuses the box;
+- a listed host answers and an unlisted one is refused 403, as the user
+  and as root by sudo; the workload's DNS is the responder's; UDP 443,
+  TCP 22 and a stray datagram are dropped and counted;
+- root in the box holds no `CAP_NET_ADMIN`, and the user no capability;
+- `enter` runs in the box's home, or the mount the host's directory is
+  in; the user's own home is not the box's; a file outside the home is
+  gone after a restart;
+- `enter` refuses a box whose pod `podman pod restart` started;
+- `rm` leaves no unit, container or pod, and keeps the home and the
+  record, which `create` finds again; `rm --home` removes the home.
+
+With credentials the rig gains a brokered request that reaches a stub
+provider carrying the sealed key while the box's environment holds the
+placeholder, and the broker's socket path ENOENT from inside; with the
+policy commands, `allow` admitting a host, and a malformed edit refused
+while the running box keeps its listeners.
 
 Unit tests hold the generated units' dependencies to the chain above,
 each one broken on purpose once, and the refusals.
