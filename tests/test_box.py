@@ -880,6 +880,30 @@ class TestCommands(unittest.TestCase):
                           args.env, args.auth_header),
                          ("add", "k", ["a", "b"], "K", None))
 
+    def test_the_secret_is_read_from_a_pipe_or_asked_for(self):
+        """Asked without echo at a terminal; never an argument."""
+        from customs_box import cli
+        pipe = mock.Mock(isatty=lambda: False, read=lambda: "sk-piped\n")
+        self.assertEqual(cli._secret("k", pipe), "sk-piped\n")
+        tty = mock.Mock(isatty=lambda: True)
+        with mock.patch.object(cli.getpass, "getpass",
+                               return_value="sk-typed") as asked:
+            self.assertEqual(cli._secret("k", tty), "sk-typed")
+        asked.assert_called_once_with("k: ")
+
+    def test_credential_add_says_which_boxes_hold_it(self):
+        from customs_box import cli
+        args = parse(["credential", "add", "k"])
+        stdin = mock.Mock(isatty=lambda: False, read=lambda: "sk-new")
+        with mock.patch.object(cli, "credential_add",
+                               return_value=(["a", "b"], True)) as added, \
+                mock.patch("sys.stdout") as out:
+            cli.run_credential(args, dirs=self.dirs, stdin=stdin)
+        self.assertEqual(added.call_args.args, ("k", "sk-new"))
+        said = "".join(c.args[0] for c in out.write.call_args_list)
+        self.assertIn("credential k sealed", said)
+        self.assertIn("box b: its broker holds it; the new variable", said)
+
     def test_the_command_line_reports_a_refusal_and_exits_1(self):
         with mock.patch("sys.stderr") as err:
             code = main(["customs-box", "stop", "nosuch"], environ=self.env)
