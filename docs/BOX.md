@@ -172,8 +172,9 @@ Nothing is passed to podman that the tool does not write itself: no
 network, capability, device, `--privileged` or hosts flag. The
 workload's unit drops every capability outside podman's default set,
 which has no `NET_ADMIN`, so a `containers.conf` cannot widen root's in
-the box. It adds none: podman gives the capabilities a unit adds to the
-box's user as well, and the user holds none.
+the box. It adds none, and names the box's user: podman gives the user
+the capabilities a unit adds, and root's when the unit names no user.
+The user holds none.
 
 ## What is not closed
 

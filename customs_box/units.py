@@ -19,7 +19,7 @@ from .netns import PID
 # podman's default set, the most root in a box holds; none is
 # CAP_NET_ADMIN. The unit drops every other capability, so a
 # containers.conf cannot widen it, and adds none: podman gives what a
-# unit adds to the box's user as well.
+# unit adds to the box's user as well, and the user holds none.
 CAPABILITIES = ("CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL",
                 "NET_BIND_SERVICE", "SETFCAP", "SETGID", "SETPCAP",
                 "SETUID", "SYS_CHROOT")
@@ -152,8 +152,10 @@ def container_unit(box, settings):
     lines += [f"Environment={_quoted(f'{v}={settings.trust_path}')}"
               for v in CA_VARIABLES]
     body = "\n".join(lines)
-    # WorkingDir is also the home: podman writes the passwd entry of a user
-    # the pod's keep-id brings in with the working directory as its home.
+    # The user is named: podman gives a container whose user it is not told
+    # root's capabilities, and exec as the user keeps them. WorkingDir is
+    # also the home: podman writes the user's passwd entry with the working
+    # directory as its home.
     return f"""\
 # customs box {box.name}: the workload. A new container from the image at
 # every start; its home and its mounts are what persist.
@@ -167,6 +169,8 @@ After={box.inspect_service} {box.resolve_service}
 ContainerName={box.name}
 Pod={box.unit}.pod
 Image={_value(settings.image)}
+User={settings.uid}
+Group={settings.gid}
 WorkingDir={_value(settings.home_path)}
 Exec=sleep infinity
 RunInit=true

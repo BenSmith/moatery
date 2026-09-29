@@ -26,7 +26,7 @@ from customs_box.cli import main, parse
 from customs_box.mounts import Mount, MountRefused, parse_mount, refuse
 from customs_box.paths import Box, protected, user_dirs, valid_name
 from customs_box.units import (ALL_CAPABILITIES, CAPABILITIES, Settings,
-                               render)
+                               container_unit, render)
 
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
 DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo")
@@ -179,11 +179,16 @@ class TestUnits(unittest.TestCase):
 
     def test_the_workload_cannot_touch_its_namespace(self):
         """Root holds podman's default set at most, and the user nothing:
-        podman gives the user what a unit adds."""
+        podman gives the user what a unit adds, and root's set when the
+        unit does not name the user."""
         dropped = set(_keys(self.work, "DropCapability"))
         self.assertEqual(dropped, set(ALL_CAPABILITIES) - set(CAPABILITIES))
         self.assertNotIn("NET_ADMIN", CAPABILITIES)
         self.assertNotIn("AddCapability", self.work)
+        settings = self.settings._replace(uid=1001, gid=1002)
+        work = container_unit(self.box, settings)
+        self.assertEqual((_keys(work, "User"), _keys(work, "Group")),
+                         (["1001"], ["1002"]))
         self.assertNotIn("PodmanArgs", self.work)
         self.assertNotIn("Network=", self.work)
 
