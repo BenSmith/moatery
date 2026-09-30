@@ -196,15 +196,29 @@ class TestTheIdGroupsOneConnection(_Harness):
         """Restarts are the case. The listener is socket-activated, so a
         counter begins again at zero every time the socket re-triggers it,
         while the record file it keys outlives that restart — two unrelated
-        connections would collide on the one key a reader joins on."""
+        connections would collide on the one key a reader joins on.
+
+        _handle hands each connection to a thread, which writes its line;
+        the threads are joined before the output is read."""
         out = io.StringIO()
         listener = Listener([_listener_with(CLEARTEXT_LOCAL)], out,
                                 limit=0)
-        for _ in range(4):
-            conn = unittest.mock.MagicMock()
-            conn.recv.return_value = b""
-            listener._handle(conn, ("192.0.2.1", 1024),
-                             _listener_with(CLEARTEXT_LOCAL))
+        started, real = [], threading.Thread
+
+        def spawn(*args, **kwargs):
+            started.append(real(*args, **kwargs))
+            return started[-1]
+
+        with unittest.mock.patch.object(threading, "Thread",
+                                        side_effect=spawn):
+            for _ in range(4):
+                conn = unittest.mock.MagicMock()
+                conn.recv.return_value = b""
+                listener._handle(conn, ("192.0.2.1", 1024),
+                                 _listener_with(CLEARTEXT_LOCAL))
+        self.assertEqual(len(started), 4)
+        for thread in started:
+            thread.join(5)
         found = ID.findall(out.getvalue())
         self.assertEqual(len(found), 4)
         self.assertEqual(len(set(found)), 4)
