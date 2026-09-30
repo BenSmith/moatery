@@ -27,7 +27,7 @@ devices; or the user's home directory.
 
 ```
 customs-box create NAME --policy FILE [--image IMAGE]
-                   [--mount SRC[:DST][:ro]]...
+                   [--mount SRC[:DST][:ro]]... [--autostart]
 customs-box enter NAME [--root] [-- COMMAND...]
 customs-box log NAME [--refused]
 customs-box allow NAME HOST [--method M]... [--path P]...
@@ -46,6 +46,11 @@ customs-box ls
 daemon-reload`. Nothing starts. The image defaults to
 `registry.fedoraproject.org/fedora-toolbox:44`, Fedora's own, which has
 the git, Python, ssh client and manual pages `fedora:44` leaves out.
+With `--autostart` the workload's unit is wanted by `default.target`,
+so the user's manager starts the box when it starts: at login, or at
+boot for a lingering user. It starts the same chain `enter` does, and
+`ls` marks the box `autostart`. A box stopped with `stop` starts again
+at the next login.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
 order, the pod, the rules, the broker and the listeners, and the
@@ -61,6 +66,8 @@ and the box's home otherwise.
 
 **stop** stops the pod's unit, and the broker's; everything bound to
 the pod stops too.
+**ls** lists each box, whether its workload is active, its image, and
+`autostart` if it has it.
 **rm** stops the box and removes its units, container and pod; its home
 and its record stay unless `--home`.
 
@@ -334,4 +341,4 @@ each one broken on purpose once, and the refusals.
 
 ## Open
 
-- Starting boxes at login (`create --autostart`).
+Nothing.

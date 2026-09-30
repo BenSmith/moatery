@@ -414,6 +414,7 @@ python3 tests/manual/box_rig.py --broker-not-ready  # must go red
 python3 tests/manual/box_rig.py --listeners-required  # must go red
 python3 tests/manual/box_rig.py --without-reload    # must go red
 python3 tests/manual/box_rig.py --without-reopen    # must go red
+python3 tests/manual/box_rig.py --without-autostart  # must go red
 python3 tests/manual/box_rig.py --restarts 10       # more restarts of each
 ```
 
@@ -438,7 +439,8 @@ key, which only the broker has, and 401 to anything else. Its
 apart, long enough for an `allow` to land in it.
 
 **Rows.** `credential add` seals the key, and neither file holds it. The
-files `create` lays out, and nothing started. The chain as the manager
+files `create` lays out, and nothing started; the box is made with
+`--autostart`, and `ls` says so. The chain as the manager
 loaded it: the workload wants the listeners and requires neither, the
 broker is Type=notify and bound to nothing, and the pod pulls in the
 record's rotation timer, which is `PartOf=` it. A failing rules
@@ -480,7 +482,11 @@ rotation: its timer active with the pod and its run exited 0; the
 record padded past 32 MiB, the manager's run of the rotation moves it
 aside, and the next request's line is in a new record and not in the
 moved one. A file outside
-the home is gone after a restart. After `podman pod restart` the namespace has no rules and
+the home is gone after a restart. Autostart: the manager loaded the
+workload as wanted by `default.target`, and with the box stopped, its
+start of `default.target`, which is what a login or a lingering boot
+does, starts the box with the rules, and the first request is
+inspected; a box made without `--autostart` it does not start. After `podman pod restart` the namespace has no rules and
 `enter` refuses it, and `stop` then `enter` serves it again. `credential
 rm` is refused while the box names the credential. `rm` leaves no unit,
 pod or container, nor the broker's socket, and keeps the home and the
@@ -614,6 +620,14 @@ since the inspector wrote on into the file it held open.
 `--without-rules` 48/100: the rotation's row is red with the rows that
 make a request, and the timer's two stay green, since neither needs the
 rules.
+
+**Autostart, 2026-09-30.** 103/103. quadlet adds the pod's unit to
+the workload's `WantedBy=` itself, so the row reads `default.target`
+among them. `--without-autostart` 99/103: create's `ls`, the two
+autostart rows, and `outside`'s first, which restarts a pod that is
+now not running. A real login is not driven: a lingering user's
+manager outlives the ssh session, and `start default.target` is the
+job the manager queues at its own start.
 
 **The workspace, 2026-09-30: the user manager's alone.** A bare unit
 loading a sealed credential, `ExecStart=sleep infinity`, started with

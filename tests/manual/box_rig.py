@@ -11,6 +11,7 @@ the proving host as an ordinary user, from a checkout:
                                     [--broker-not-ready]
                                     [--listeners-required]
                                     [--without-reload] [--without-reopen]
+                                    [--without-autostart]
                                     [--restarts N]
 
 The tool is the checkout's bin/customs-box running the checkout's
@@ -46,7 +47,8 @@ in the record.
 THE ROWS
 
   credential  add seals the key: neither file holds it, and ls lists it.
-  create    the files docs/BOX.md lists are there, and nothing started.
+  create    the files docs/BOX.md lists are there, and nothing started;
+            the box is made with --autostart, and ls says so.
   chain     the manager loaded the order: the workload Wants= both
             listeners, Requires= neither, and is After= them, and is
             BindsTo= the pod; each
@@ -127,13 +129,18 @@ THE ROWS
   stop      every unit inactive, the timer too, no pod, no container, and
             ls says so; then enter starts it, and its first request was
             inspected.
+  autostart the manager loaded the workload as wanted by default.target;
+            stopped, the manager's start of default.target, as at login,
+            starts it with the rules, and its first request was
+            inspected.
   outside   after `podman pod restart`, outside systemd, the namespace is
             new and has no rules, and enter refuses it; stop, then enter,
             serves it again.
   rm        credential rm is refused while the box names it; no unit, pod
             or container is left, nor the broker's socket; the home and the
             record stay, and create, with a policy naming no credential,
-            finds the home again and writes no broker; rm --home removes
+            finds the home again and writes no broker; made without
+            --autostart, default.target does not start it; rm --home removes
             it; then credential rm removes the credential.
 
 `--without-rules` empties the pod's ExecStartPost=, so the pod starts
@@ -168,6 +175,10 @@ after allow stays green.
 logrotate configuration without its `postrotate` would: the record's
 row that the next request's line is in the new record must go red,
 since the inspector writes on into the file it has open.
+
+`--without-autostart` makes the box without --autostart: the create
+row's ls, and the autostart rows, must go red, and outside's first,
+which restarts the pod the autostart row started.
 
 `--broker-not-ready` makes the broker's unit Type=simple, so nothing
 waits for its socket: the first request after each start of the broker,
@@ -582,11 +593,12 @@ def credential_rows(secret):
     return added.returncode == 0
 
 
-def create_rows():
+def create_rows(autostart):
     say("create")
     made = box("create", BOX, "--policy", str(POLICY),
                "--mount", str(PROJECT),
-               "--mount", f"{READONLY}:{READONLY_AT}:ro", timeout=300)
+               "--mount", f"{READONLY}:{READONLY_AT}:ro",
+               *(["--autostart"] if autostart else []), timeout=300)
     missing = [str(p) for p in LAID_OUT if not p.exists()]
     row("create: it laid out every file docs/BOX.md lists",
         made.returncode == 0 and not missing,
@@ -595,9 +607,9 @@ def create_rows():
     running = {k: v for k, v in states().items() if v != "inactive"}
     mine = listed()
     row("create: nothing started, and ls lists the box inactive on the "
-        "default image",
+        "default image, started at login",
         not running and not exists("pod")
-        and mine == [BOX, "inactive", IMAGE],
+        and mine == [BOX, "inactive", IMAGE, "autostart"],
         f"not inactive: {running}; pod: {exists('pod')}; ls: {mine}")
     return made.returncode == 0
 
@@ -1390,6 +1402,26 @@ def stop_rows():
     start_row("stop: after enter, the first request was inspected", seen)
 
 
+def autostart_rows():
+    """What the manager does at login, or at boot for a lingering user, is
+    start default.target; it is started here the same way, the box
+    stopped, and it is the manager that starts the box."""
+    say("autostart")
+    wanted = show(SERVICE, "WantedBy").split()
+    box("stop", BOX)
+    before = len(starts())
+    run(["systemctl", "--user", "start", "default.target"], check=False,
+        timeout=180)
+    seen = await_start(before)
+    now, found = states(), tables(infra_pid())
+    row("autostart: the manager's start of default.target starts the "
+        "stopped box, with the rules",
+        "default.target" in wanted and now["workload"] == "active"
+        and RULES <= found,
+        f"WantedBy={wanted}; units {now}; {sorted(found) or 'no tables'}")
+    start_row("autostart: and its first request was inspected", seen)
+
+
 def outside_rows():
     say("outside systemd (podman pod restart)")
     pid, before = infra_pid(), len(starts())
@@ -1454,6 +1486,13 @@ def rm_rows(tag):
         f"{KEPT} in the home: {(BOX_HOME / KEPT).exists()}; record: "
         f"{recorded} -> {RECORD.exists()}; said {removed.stdout.split()}")
     made = box("create", BOX, "--policy", str(PLAIN_POLICY))
+    run(["systemctl", "--user", "start", "default.target"], check=False,
+        timeout=180)
+    now = states()
+    row("rm: a box made without --autostart, default.target does not "
+        "start",
+        made.returncode == 0 and set(now.values()) == {"inactive"},
+        f"units {now}")
     got = box("enter", BOX, "--", "cat", f"{INSIDE}/{KEPT}")
     broker = (UNITS / BROKER_SERVICE).exists()
     row("rm: create again, with a policy naming no credential, finds the "
@@ -1518,6 +1557,7 @@ def probe(args, tag, secret):
     record_rows(args.without_reopen)
     restart_rows(args.restarts, tag)
     stop_rows()
+    autostart_rows()
     outside_rows()
     rm_rows(tag)
 
@@ -1614,6 +1654,9 @@ def main():
                     help="make the rotation a rename that signals nothing; "
                          "the record's row that the next line is in a new "
                          "record must go red")
+    ap.add_argument("--without-autostart", action="store_true",
+                    help="make the box without --autostart; the create "
+                         "row's ls and the autostart rows must go red")
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
     args = ap.parse_args()
@@ -1637,7 +1680,8 @@ def main():
         riglib.lower_privileged_ports()
         riglib.write_hosts_entry(HOSTS_MARK)
         riglib.start_stub(secret)
-        if credential_rows(secret) and create_rows():
+        if credential_rows(secret) and \
+                create_rows(not args.without_autostart):
             probe(args, tag, secret)
     finally:
         teardown(args.keep)
@@ -1673,6 +1717,10 @@ def main():
         expected.append(
             "--without-reopen: the record's row that the next request's "
             "line is in a new record is expected red")
+    if args.without_autostart:
+        expected.append(
+            "--without-autostart: create's ls, the autostart rows and "
+            "outside's first are expected red")
     rc = riglib.report("; ".join(expected) or None)
     if rc:
         say(f"journal: journalctl --user -u '{UNIT}*' -b")

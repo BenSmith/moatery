@@ -239,6 +239,24 @@ class TestUnits(unittest.TestCase):
                             cwd="/", isatty=False)
         rotate.assert_called_once_with("agent", dirs=mock.ANY)
 
+    def test_only_an_autostarted_box_is_installed(self):
+        """The workload's unit, the one `enter` starts, so a login starts
+        the pod and the listeners the way `enter` would."""
+        for name, text in self.units.items():
+            with self.subTest(file=name):
+                self.assertNotIn("[Install]", text)
+        units = {p.name: t for p, t in render(
+            self.box, self.settings._replace(autostart=True),
+            None).items()}
+        for name, text in units.items():
+            with self.subTest(file=name, autostart=True):
+                self.assertEqual(
+                    _keys(text, "WantedBy"),
+                    ["default.target"]
+                    if name == "customs-box-agent.container" else [])
+                self.assertEqual(text.count("[Install]"),
+                                 name == "customs-box-agent.container")
+
     def test_the_pod_loads_the_rules_and_has_no_cgroup_or_host_names(self):
         self.assertEqual(_exec_words(self.pod, "ExecStartPost"),
                          [*self.settings.tool, "unit", "rules", "agent"])
@@ -850,14 +868,41 @@ class TestCommands(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _create(self, name="agent", host=None, policy=None, mounts=()):
+    def _create(self, name="agent", host=None, policy=None, mounts=(),
+                autostart=False):
         host = host or FakeHost(self.home)
         box = commands.create(
             name, policy or self.policy, "img", list(mounts),
             dirs=self.dirs, tool=("/py", "/cb"), python="/py",
             libexec="/lx", pythonpath=None, uid=1000, gid=1000,
-            cwd=self.home, environ=self.env, runner=host)
+            cwd=self.home, environ=self.env, autostart=autostart,
+            runner=host)
         return box, host
+
+    def test_autostart_is_kept_and_rendered(self):
+        """Kept in box.json, since `policy` and `credential add` write the
+        units again; a box.json from before it was a setting reads as
+        off."""
+        box, _ = self._create(autostart=True)
+        self.assertTrue(
+            Settings.from_json(box.settings.read_text()).autostart)
+        self.assertIn("WantedBy=default.target",
+                      box.container_file.read_text())
+        rows = commands.ls(dirs=self.dirs, runner=FakeHost(self.home))
+        self.assertEqual(rows[0][3:], ("autostart",))
+        doc = json.loads(box.settings.read_text())
+        del doc["autostart"]
+        self.assertFalse(Settings.from_json(json.dumps(doc)).autostart)
+
+    def test_the_command_line_hands_autostart_on(self):
+        from customs_box import cli
+        for words, want in ((["--autostart"], True), ([], False)):
+            args = parse(["create", "agent", "--policy", "p", *words])
+            with mock.patch.object(cli, "create") as create, \
+                    mock.patch("sys.stdout"):
+                cli.run_command(args, tool=(), environ=self.env,
+                                cwd=self.home, isatty=False)
+            self.assertIs(create.call_args.kwargs["autostart"], want)
 
     def test_create_lays_the_box_out(self):
         box, host = self._create(mounts=["projects/p"])

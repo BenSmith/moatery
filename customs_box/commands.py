@@ -142,7 +142,8 @@ def _host_bundle():
 
 
 def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
-           libexec, pythonpath, uid, gid, cwd, environ, runner=run):
+           libexec, pythonpath, uid, gid, cwd, environ, autostart=False,
+           runner=run):
     box = _box(name, dirs)
     if box.config.exists() or any(p.exists() for p in box.unit_files):
         raise BoxError(f"box {name} exists")
@@ -167,7 +168,8 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
     settings = Settings(image=image, trust_path=trust_path,
                         home_path=home_path, uid=uid, gid=gid,
                         mounts=mounts, tool=tuple(tool), python=python,
-                        libexec=str(libexec), pythonpath=pythonpath)
+                        libexec=str(libexec), pythonpath=pythonpath,
+                        autostart=autostart)
     home_existed = box.home.exists()
     try:
         _lay_out(box, settings, broker, policy_path, host_bundle, environ,
@@ -369,7 +371,8 @@ def ls(*, dirs, runner=run):
     for box, settings in _boxes(dirs):
         state = runner(["systemctl", "--user", "is-active", box.service],
                        check=False).stdout.strip() or "unknown"
-        rows.append((box.name, state, settings.image))
+        rows.append((box.name, state, settings.image)
+                    + (("autostart",) if settings.autostart else ()))
     return rows
 
 

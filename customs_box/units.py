@@ -67,6 +67,7 @@ class Settings(NamedTuple):
     python: str
     libexec: str
     pythonpath: str | None
+    autostart: bool = False
 
     def to_json(self):
         doc = self._asdict()
@@ -194,6 +195,14 @@ RunInit=true
 {_environment(settings)}ExecStartPost=-{_exec_line(
     _tool(settings, "sudoers", box.name))}
 SuccessExitStatus=143
+""" + (_AUTOSTART if settings.autostart else "")
+
+
+# Started with the user's manager, at login or, lingering, at boot, the
+# way `enter` starts it: the pod and the listeners come first.
+_AUTOSTART = """
+[Install]
+WantedBy=default.target
 """
 
 

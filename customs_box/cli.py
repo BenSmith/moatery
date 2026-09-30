@@ -32,6 +32,9 @@ def build_parser():
     p.add_argument("--mount", action="append", default=[],
                    metavar="SRC[:DST][:ro]",
                    help="a host directory the box shares; repeatable")
+    p.add_argument("--autostart", action="store_true",
+                   help="start it with the user's session, and at boot "
+                        "if the user lingers")
     p = sub.add_parser("enter", usage="%(prog)s NAME [--root] "
                                       "[-- COMMAND...]",
                        help="start a box if it is stopped, and run a "
@@ -177,7 +180,7 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
                      or DEFAULT_LIBEXEC,
                      pythonpath=environ.get("PYTHONPATH") or None,
                      uid=os.getuid(), gid=os.getgid(), cwd=cwd,
-                     environ=environ)
+                     environ=environ, autostart=args.autostart)
         print(f"box {box.name} created; customs-box enter {box.name}")
     elif args.command == "enter":
         enter(args.name, args.argv, root=args.root, dirs=dirs,

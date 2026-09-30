@@ -64,6 +64,9 @@ The default image is Fedora's toolbox image (`fedora-toolbox:44`),
 which has git, Python, an ssh client and manual pages. Use `--image` to
 choose another.
 
+`--autostart` starts the box whenever you log in, and, with lingering
+on, when the host boots. Without it, a box starts at its first `enter`.
+
 `--mount` shares a host directory with the box. Repeat it for more
 directories. `SRC:DST` puts it at a different path inside, and a
 trailing `:ro` makes it read-only. Your home directory itself can't be
