@@ -37,6 +37,11 @@ THE ROWS
   quic      a UDP send to 443, HTTP/3's port, moves the egress chain's
             `quic` counter, which the silent row's port-9 send left at
             zero, and the drop counter with it.
+  h2        from inside, curl offering h2 is served over HTTP/1.1 and
+            answered 200; one opening with HTTP/2's preface on the
+            cleartext plane is answered 400 and leaves an `h2 preface`
+            note; an HTTPS query gets no records, a responder line and a
+            count under `https`.
   request   from inside, with the placeholder, the provider answers 200 and
             reports that the REAL key arrived; the container's environment
             holds only the placeholder; the inspector's record names the
@@ -60,12 +65,12 @@ THE ROWS
             stub distinguishes at all.
 
 `--without-rules` skips loading the netns rules and changes nothing else.
-The `premise`, `dns`, `silent`, `quic`, `request`, `neighbour`,
+The `premise`, `dns`, `silent`, `quic`, `h2`, `request`, `neighbour`,
 `unlisted` and `counters` rows must go red -- the inspector is never even
 activated, and with no egress chain the counters are absent -- and a run
 where they stay green is measuring nothing. `--without-dns-redirect` leaves the
 port-53 lines out of the redirect: the queries go to pasta's forwarder,
-which the egress chain drops, and `dns`, `request`, `neighbour`,
+which the egress chain drops, and `dns`, `h2`, `request`, `neighbour`,
 `unlisted` and `counters` must go red.
 `--broker-over-tcp` puts the broker on 127.129.0.1:8081 instead of the
 socket path, and the broker's no-TCP and other-uid rows must go red.
@@ -106,7 +111,10 @@ from riglib import (  # noqa
     PROVIDER, RESOLVE_PORT, RIG, STUB_CERT, UNLISTED, row, run, say,
 )
 from customs.egress_ca import ca_cert_path  # noqa
-from customs.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
+from customs.egress_record import (  # noqa
+    DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED, DROP_UNREADABLE_REQUEST,
+    NOTE_H2_PREFACE,
+)
 
 BROKER_ADDR = "127.129.0.1"
 BROKER_PORT = 8081
@@ -399,6 +407,47 @@ def chain_counter(pid, comment):
     return -1
 
 
+def h2_rows(pid, dns):
+    """HTTP/2 is refused without refusing its client: one that offers h2
+    is served HTTP/1.1, and what cannot be served is reported."""
+    say("h2")
+    rc, got, _, err = curl_in(
+        f"https://{PROVIDER}/v1/probe", "--http2", "-H",
+        f"Authorization: Bearer {PLACEHOLDER}",
+        "-w", "%{http_code} %{http_version}")
+    row("h2: a client offering h2 is served, over HTTP/1.1",
+        rc == 0 and got == "200 1.1", f"curl rc={rc} got={got!r} {err}")
+    # curl cannot read the HTTP/1.1 answer as the SETTINGS frame it
+    # expects, so the 400 is the record's to report.
+    before = journal("inspect").count(f"reason=\"{NOTE_H2_PREFACE}:")
+    seen = len(records())
+    rc, _, _, err = curl_in(f"http://{PROVIDER}/", "--http2-prior-knowledge")
+    after = journal("inspect").count(f"reason=\"{NOTE_H2_PREFACE}:")
+    refused = [r for r in records()[seen:] if r.get("plane") == "cleartext"]
+    row("h2: HTTP/2's preface is answered 400, and noted",
+        [(r.get("reason"), r.get("status")) for r in refused]
+        == [(DROP_UNREADABLE_REQUEST, 400)] and after == before + 1,
+        f"curl rc={rc} {err}; records {refused}; "
+        f"{NOTE_H2_PREFACE} notes {before} -> {after}")
+    # A fresh name nothing resolves: the provider's is in the host's hosts
+    # file, which pasta's forwarder answers with nodata too, and last
+    # run's line for it is still in the journal.
+    name = f"h2-{os.urandom(4).hex()}.exfil.test"
+    asked = time.time()
+    got = in_netns(pid, ["python3", "-c", riglib.DNS_LOOKUP, dns,
+                         name, "HTTPS", "udp"], check=False)
+    row("h2: an HTTPS query gets no records",
+        got.stdout.strip() == "nodata",
+        got.stdout.strip() or got.stderr.strip())
+    line = f"  {name} HTTPS -> nodata"
+    row("h2: the responder logged it",
+        line in journal("resolve").splitlines(), repr(line))
+    status = riglib.await_status(RESOLVE_STATUS.read_text, asked)
+    https = None if status is None else status.get("https")
+    row("h2: the responder counted it under https",
+        https is not None and https >= 1, f"https={https}")
+
+
 def probe(pid, dns, secret, over_tcp):
     say(f"premise (programs: {LIBEXEC})")
     caps = int(next(ln.split()[1] for ln in
@@ -436,6 +485,8 @@ def probe(pid, dns, secret, over_tcp):
         and dropped > moved,
         f"send={sent!r}, quic counter {before} -> {counted}, "
         f"dropped counter {moved} -> {dropped}")
+
+    h2_rows(pid, dns)
 
     say("request")
     before = journal("broker").count(" ok ")
@@ -542,6 +593,9 @@ def probe(pid, dns, secret, over_tcp):
         foreign = status.get("drop_reasons", {}).get(DROP_FOREIGN_CALLER)
         row("counters: nothing was dropped as a foreign caller",
             foreign == 0, f"{DROP_FOREIGN_CALLER!r}: {foreign}")
+        prefaces = status.get("notes", {}).get(NOTE_H2_PREFACE)
+        row("counters: the h2 preface was counted as a note",
+            prefaces == 1, f"notes={status.get('notes')}")
 
 
 # --- teardown ----------------------------------------------------------------

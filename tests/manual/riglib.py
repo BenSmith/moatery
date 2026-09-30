@@ -76,11 +76,11 @@ except OSError as exc:
 
 # One query, as the workload makes it: the first address answered,
 # "nodata", "rcode N", "timeout", or the error class. argv: server, name,
-# A or AAAA, udp or tcp.
+# A, AAAA or HTTPS, udp or tcp.
 DNS_LOOKUP = r"""
 import socket, struct, sys
 server, name, qtype, transport = sys.argv[1:5]
-t = 28 if qtype == "AAAA" else 1
+t = {"A": 1, "AAAA": 28, "HTTPS": 65}[qtype]
 q = (struct.pack("!6H", 0x5a18, 0x0100, 1, 0, 0, 0)
      + b"".join(bytes([len(x)]) + x.encode() for x in name.split("."))
      + b"\0" + struct.pack("!2H", t, 1))

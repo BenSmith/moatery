@@ -97,7 +97,10 @@ answered the same; the responder's status names the unlisted names and
 not the provider's. The container has no `--add-host`, so the request
 and unlisted rows resolve through the responder too. A filtered UDP
 send returns without error while the drop counter moves, and one to
-443 moves the `quic` counter too. The request (200;
+443 moves the `quic` counter too. HTTP/2: curl offering h2 gets 200
+over HTTP/1.1; HTTP/2's preface on the cleartext plane is recorded as
+refused with 400 and noted once; an HTTPS query gets no records, a
+responder line and a count under `https`. The request (200;
 the real key arrived; the container's environment holds
 the placeholder only; the broker's journal grew by one; the record says
 `forward` under the credential). The broker's address is unreachable
@@ -149,6 +152,17 @@ No defect in the responder. Three facts, two of them the rig's:
   The DNS rows await a write from after their queries.
 - pasta carries UDP over the loopback map in both directions, so the
   responder can sit on the host's `127.0.0.1` beside the inspector.
+
+**What it found, HTTP/2, 2026-09-30.** 33/33; `--without-rules` 8/31
+and `--without-dns-redirect` 11/31, the five `h2` rows red in both. No
+defect in the pair. Two in the rows as first written:
+
+- curl with `--http2-prior-knowledge` cannot read an HTTP/1.1 answer
+  and exits 16 with no status, so the 400 is read from the record.
+- the HTTPS query first asked for the provider's name, and without
+  rules two rows stayed green: pasta's forwarder answers it nodata from
+  the host's hosts file, and the previous run's responder line was
+  still in the journal. It asks for a fresh name now.
 
 ## shape1n_rig.py — shape 1 with the listeners in the container
 
