@@ -147,6 +147,12 @@ class TestEveryLineCarriesTheId(_Harness):
         conn.recv.return_value = b""
         listener._handle(conn, ("192.0.2.1", 1024),
                          _listener_with(CLEARTEXT_LOCAL))
+        # The serving ceiling is met in the connection's thread, after the
+        # caller is looked up.
+        deadline = time.monotonic() + 5
+        while ("rejected " not in out.getvalue()
+               and time.monotonic() < deadline):
+            time.sleep(0.01)
         self.assertIn("rejected ", out.getvalue())
         self.assertRegex(out.getvalue(), ID)
 
