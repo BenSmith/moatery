@@ -65,6 +65,12 @@ class TestQuadletExample(unittest.TestCase):
                 self.assertIn(name, _keys(work, "Requires"))
                 self.assertIn(name, _keys(work, "After"))
 
+    def test_the_pod_keeps_the_hosts_file_of_the_image(self):
+        """podman seeds a pod's hosts file from the host's otherwise, and
+        a name in it never reaches the responder."""
+        self.assertIn("--hosts-file=image",
+                      _keys(QUADLET / "example.pod", "PodmanArgs"))
+
     def test_the_listeners_are_bound_to_the_pod_and_notify(self):
         """As Type=simple a unit is started when forked, and the
         workload's first dial can find nothing bound."""

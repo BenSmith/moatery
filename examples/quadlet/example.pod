@@ -9,6 +9,10 @@
 # No pod cgroup: with one, every container's start asks systemd for the
 # pod's slice unless podman finds its directory at the path it assumes,
 # and a slice systemd already has fails that start.
+#
+# The image's hosts file, not one seeded from the host's: a name in it
+# is never asked of the responder, and is dialled at the host's address
+# for it.
 
 [Unit]
 Wants=customs-inspect-example.service customs-resolve-example.service
@@ -18,7 +22,7 @@ PodName=example
 Network=pasta
 UserNS=keep-id
 ExitPolicy=continue
-PodmanArgs=--share-parent=false
+PodmanArgs=--hosts-file=image --share-parent=false
 
 [Service]
 ExecStartPost=%h/.local/bin/customs-pod-netns rules example
