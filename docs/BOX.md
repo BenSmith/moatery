@@ -300,10 +300,13 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
 - `rm` leaves no unit, container or pod, nor the broker's socket, and
   keeps the home and the record, which `create` finds again; `rm --home`
   removes the home; `credential rm` is refused while a box names the
-  credential.
-
-With the policy commands the rig gains `allow` admitting a host, and a
-malformed edit refused while the running box keeps its listeners.
+  credential;
+- `log --refused` names a host the box was refused; `allow` lists it and
+  restarts the listeners and nothing else, and the host is dialled after;
+  a `policy` edit the loader refuses changes and restarts nothing; a
+  killed inspector is started again, and a stopped one leaves the
+  workload running until `enter` starts it; `log` follows a request as
+  it is made.
 
 Unit tests hold the generated units' dependencies to the chain above,
 each one broken on purpose once, and the refusals.

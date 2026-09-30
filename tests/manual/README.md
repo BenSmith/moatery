@@ -386,9 +386,10 @@ defect in the pair. Four facts, all in the guest half:
 
 ## box_rig.py — a customs box, through its command line
 
-`docs/BOX.md`: `customs-box credential add`, `create`, `enter`, `stop`
-and `rm`, the box's units run by the user's manager and quadlet, shape
-1n's rules and listeners in the pod's namespace, and the box's broker.
+`docs/BOX.md`: `customs-box credential add`, `create`, `enter`, `log`,
+`allow`, `policy`, `stop` and `rm`, the box's units run by the user's
+manager and quadlet, shape 1n's rules and listeners in the pod's
+namespace, and the box's broker.
 The tool is the checkout's `bin/customs-box`, or with
 `CUSTOMS_LIBEXEC=/usr/libexec/customs` the installed one.
 
@@ -396,6 +397,7 @@ The tool is the checkout's `bin/customs-box`, or with
 python3 tests/manual/box_rig.py                     # every row green
 python3 tests/manual/box_rig.py --without-rules     # must go red
 python3 tests/manual/box_rig.py --broker-not-ready  # must go red
+python3 tests/manual/box_rig.py --listeners-required  # must go red
 python3 tests/manual/box_rig.py --restarts 10       # more restarts of each
 ```
 
@@ -406,15 +408,18 @@ so its start has a window, and under `--broker-not-ready` its unit is
 Type=simple; the pod's rules load fails, for two rows, or is empty,
 under `--without-rules`; and the workload's `Exec=` is a script whose
 first act at every start is a request to the provider, with a nonce in
-its path, recorded in the box's home. That request is the window: the
-row for each start is the stub's log and the record naming its nonce.
+its path, recorded in the box's home, and under `--listeners-required`
+its unit `Requires=` both listeners, as it did before the policy loop.
+That request is the window: the row for each start is the stub's log and
+the record naming its nonce.
 The provider is brokered: the rig seals a key with `credential add`, the
 box holds a placeholder, and the stub answers 200 only to the sealed
 key, which only the broker has, and 401 to anything else.
 
 **Rows.** `credential add` seals the key, and neither file holds it. The
 files `create` lays out, and nothing started. The chain as the manager
-loaded it, the broker Type=notify and bound to nothing. A failing rules
+loaded it: the workload wants the listeners and requires neither, and the
+broker is Type=notify and bound to nothing. A failing rules
 load starts nothing: `enter` refuses, the workload's first act never
 happened, and `stop` leaves nothing active. The first request, brokered,
 at the first start, at every workload restart and pod restart, and
@@ -433,7 +438,14 @@ again. The premise that systemd will not start a broker stopped while
 it starts, and `enter` starting it anyway. `credential add` with a new
 key, which the stub now wants: the next request carries it, and the
 broker restarted while the inspector and the workload did not. The
-inspector's counters. A file outside the home is gone after a
+inspector's counters. The policy loop: `log --refused` counts the
+unlisted host's 403s and names it among the responder's unlisted names;
+`allow` lists it and restarts the listeners and nothing else, the host
+is then dialled and not refused, and `log --refused` stops listing it; a
+`policy` edit the loader refuses exits 1 and restarts nothing; the
+inspector killed is started again, and nothing else is; stopped, the
+workload runs on in its container, and `enter` starts it again; `log`
+follows a request just made. A file outside the home is gone after a
 restart. After `podman pod restart` the namespace has no rules and
 `enter` refuses it, and `stop` then `enter` serves it again. `credential
 rm` is refused while the box names the credential. `rm` leaves no unit,
@@ -504,6 +516,31 @@ A broker's start is about 1.5 s on the proving host, the decryption and
 the interpreter: as Type=simple, the first brokered request of every
 start that starts it is refused. A run takes two minutes,
 `--without-rules` four and a half.
+
+**The policy loop, 2026-09-30.** 87/88 at first: the row for a killed
+inspector wanted no new invocation at all, and the manager's start of
+the inspector is one; re-derived to the inspector's alone. Then 88/88,
+in 2m10s. `--listeners-required` 85/88, the three rows it names: with
+the workload requiring the listeners, `allow` replaced the workload's
+container, so did the manager's automatic start of the killed inspector,
+and stopping the inspector stopped the workload. `--without-rules`
+41/88; its loop row for what `allow` restarts is red because an earlier
+`enter`, refused, had left the broker stopped, and the inspector's
+restart starts it (`Wants=`). A request while the inspector is stopped
+gets curl's `000`, which is the listener's port refusing it: the rows
+claim only that the workload runs on and is not served, not that
+anything is blocked.
+
+`log --refused` on the run's own record, before `allow`:
+
+```
+refused, and refused by the policy now:
+       2  unlisted.test  (not allowlisted)
+       1  provider.test  (credential broker unreachable)
+names asked for that no list admits:
+       4  unlisted.test
+       1  aaaa-b0d94ce6.exfil.test
+```
 
 **The workspace, 2026-09-30: the user manager's alone.** A bare unit
 loading a sealed credential, `ExecStart=sleep infinity`, started with
