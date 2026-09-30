@@ -7,6 +7,10 @@
 # which the container has no path to and no other uid can enter.
 # Type=notify: started once the socket is listening, so the inspector,
 # ordered after it, finds it there.
+#
+# A stop or restart while the credential is being decrypted leaves the
+# user manager's workspace for it behind, and every start after fails on
+# it: README.md, "A stop while the broker starts".
 
 [Unit]
 Description=customs credential broker

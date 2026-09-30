@@ -161,11 +161,11 @@ As in examples/quadlet, with these differences:
   key. Its start takes as long as the decryption, over a second on the
   proving host. It is bound to nothing: a restart of the pod is a new
   namespace, which is nothing to the broker, and `stop` and `rm` stop it.
-- systemd leaves a credentialed unit's workspace behind when it stops
-  the unit while its credentials are being decrypted, and every start
-  after fails on it. `enter` and `credential add` stop a broker that is
-  not active, remove the workspace, and forget its failures before they
-  start it.
+- systemd's user manager leaves a credentialed unit's workspace behind
+  when it stops the unit while its credentials are being decrypted, and
+  every start after fails on it; the system manager's leaves nothing.
+  `enter` and `credential add` stop a broker that is not active, remove
+  the workspace, and forget its failures before they start it.
 - The bundle is mounted read-only over the image's own system bundle,
   found at `create`, and pointed at by `SSL_CERT_FILE`,
   `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO` and

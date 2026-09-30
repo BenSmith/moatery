@@ -103,6 +103,25 @@ sed "s/USER/$USER/" logrotate/customs.conf > ~/.config/customs/logrotate.conf
 systemctl --user enable --now customs-logrotate.timer
 ```
 
+## A stop while the broker starts
+
+A user manager prepares a unit's credentials in a directory of its own,
+`$XDG_RUNTIME_DIR/systemd/temporary-credentials/UNIT`, and moves them
+into place. A stop or restart of the broker while its credential is
+being decrypted, which can take over a second, leaves the directory
+behind, and every start after fails on it (`Failed to set up
+credentials: File exists`) until it is removed:
+
+```
+d=$XDG_RUNTIME_DIR/systemd/temporary-credentials/customs-broker.service
+chmod -R u+rwX "$d" && rm -rf "$d"
+systemctl --user reset-failed customs-broker.service
+systemctl --user start customs-broker.service
+```
+
+The system manager decrypts into a mount that nothing else sees, and
+leaves nothing behind.
+
 ## Sandboxing
 
 The units carry no sandboxing directives. In a user unit most of them

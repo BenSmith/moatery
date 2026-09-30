@@ -504,3 +504,16 @@ A broker's start is about 1.5 s on the proving host, the decryption and
 the interpreter: as Type=simple, the first brokered request of every
 start that starts it is refused. A run takes two minutes,
 `--without-rules` four and a half.
+
+**The workspace, 2026-09-30: the user manager's alone.** A bare unit
+loading a sealed credential, `ExecStart=sleep infinity`, started with
+`--no-block` and stopped 0.05, 0.2, 0.4, 0.7 and 1.0 s into its 1.3 s
+start, then started again, on systemd 259.9. As a system unit with
+`DynamicUser=` (a credential sealed by `systemd-creds encrypt`), 5/5
+left no workspace and started again; as a user unit, 5/5 left
+`temporary-credentials/UNIT` and failed the next start. The system
+manager decrypts into a tmpfs it mounts only once it is filled, and
+falls back to the directory a killed start leaves only when it may not
+mount one (`setup_credentials_plain_dir`, `src/core/exec-credential.c`,
+the same on systemd's main branch). workloadctl's credentialed units,
+all system units, are not exposed; `examples/systemd`'s broker is.
