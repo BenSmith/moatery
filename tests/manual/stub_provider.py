@@ -13,16 +13,23 @@ the far side, rather than any 200 at all.
 
 TLS, because both programs refuse a plaintext upstream and are right to;
 the leg that carries the real credential is the one this exercises.
+
+`/slow/N/...`, with the key, is a download that takes a while: N chunks of
+SLOW_CHUNK bytes, chunk i all byte i % 256, SLOW_PAUSE seconds apart, so
+something can happen while it runs.
 """
 import http.server
 import json
 import os
 import ssl
 import sys
+import time
 
 PORT = int(sys.argv[1])
 CERT, KEY = sys.argv[2], sys.argv[3]
 SECRET = os.environ["STUB_SECRET"]
+SLOW_CHUNK = 64 * 1024
+SLOW_PAUSE = 0.1
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -38,6 +45,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _reply(self):
         got = self.headers.get("authorization", "")
         status = 200 if got == f"Bearer {SECRET}" else 401
+        parts = self.path.split("/")
+        if status == 200 and parts[1:2] == ["slow"] and parts[2:3] \
+                and parts[2].isdigit():
+            self._slow(int(parts[2]))
+            return
         body = json.dumps({"path": self.path, "authorization": got,
                            "status": status}).encode()
         self.send_response(status)
@@ -45,6 +57,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _slow(self, chunks):
+        self.send_response(200)
+        self.send_header("content-type", "application/octet-stream")
+        self.send_header("content-length", str(chunks * SLOW_CHUNK))
+        self.end_headers()
+        for i in range(chunks):
+            self.wfile.write(bytes([i % 256]) * SLOW_CHUNK)
+            self.wfile.flush()
+            time.sleep(SLOW_PAUSE)
 
     do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _reply
 

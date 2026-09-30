@@ -398,12 +398,14 @@ python3 tests/manual/box_rig.py                     # every row green
 python3 tests/manual/box_rig.py --without-rules     # must go red
 python3 tests/manual/box_rig.py --broker-not-ready  # must go red
 python3 tests/manual/box_rig.py --listeners-required  # must go red
+python3 tests/manual/box_rig.py --without-reload    # must go red
 python3 tests/manual/box_rig.py --restarts 10       # more restarts of each
 ```
 
 The fixture is riglib's, and four drop-ins beside the units `create`
 writes, removed before `rm`: the inspector and the broker trust the
-stub's certificate; the broker's interpreter sleeps 3 s before it runs,
+stub's certificate, and under `--without-reload` the inspector's unit
+has no `ExecReload=`; the broker's interpreter sleeps 3 s before it runs,
 so its start has a window, and under `--broker-not-ready` its unit is
 Type=simple; the pod's rules load fails, for two rows, or is empty,
 under `--without-rules`; and the workload's `Exec=` is a script whose
@@ -414,7 +416,9 @@ That request is the window: the row for each start is the stub's log and
 the record naming its nonce.
 The provider is brokered: the rig seals a key with `credential add`, the
 box holds a placeholder, and the stub answers 200 only to the sealed
-key, which only the broker has, and 401 to anything else.
+key, which only the broker has, and 401 to anything else. Its
+`/slow/N/` path, with the key, is a download of N 64 KiB chunks 0.1 s
+apart, long enough for an `allow` to land in it.
 
 **Rows.** `credential add` seals the key, and neither file holds it. The
 files `create` lays out, and nothing started. The chain as the manager
@@ -440,16 +444,21 @@ key, which the stub now wants: the next request carries it, and the
 broker restarted while the inspector and the workload did not. The
 inspector's counters. The policy loop: `log --refused` counts the
 unlisted host's 403s and names it among the responder's unlisted names;
-`allow` lists it and restarts the listeners and nothing else, the host
-is then dialled and not refused, and `log --refused` stops listing it; a
-`policy` edit the loader refuses exits 1 and restarts nothing; one
-dropping the credential stops the broker and removes its unit, and the
-provider is reached unbrokered (the stub's 401), and one naming it again
-brings the broker back and the provider is served; the
-inspector killed is started again, and nothing else is; stopped, the
-workload runs on in its container, and `enter` starts it again; `log`
-follows a request just made. A file outside the home is gone after a
-restart. After `podman pod restart` the namespace has no rules and
+`allow` lists it and reloads the listeners, restarting nothing, and the
+inspector's status file names the new document; the host is then
+dialled and not refused, and `log --refused` stops listing it; a
+download through the inspector, begun before an `allow` and still
+running when it returns, finishes whole, every byte in order; a
+`policy` edit the loader refuses exits 1 and restarts nothing, and at a
+terminal (a pty) asks, opens the editor again, and applies the second
+document, reloading the listeners; one dropping the credential stops
+the broker and removes its unit, and the provider is reached unbrokered
+(the stub's 401), and one naming it again brings the broker back and
+the provider is served; the inspector killed is started again, and
+nothing else is; stopped, the workload runs on in its container, and
+`enter` starts it again; `log` follows a request just made, and SIGINT,
+which is Ctrl-C, ends it with status 0 and no traceback. A file outside
+the home is gone after a restart. After `podman pod restart` the namespace has no rules and
 `enter` refuses it, and `stop` then `enter` serves it again. `credential
 rm` is refused while the box names the credential. `rm` leaves no unit,
 pod or container, nor the broker's socket, and keeps the home and the
@@ -536,6 +545,32 @@ restart starts it (`Wants=`). A request while the inspector is stopped
 gets curl's `000`, which is the listener's port refusing it: the rows
 claim only that the workload runs on and is not served, not that
 anything is blocked.
+
+**The policy reload, 2026-09-30.** 97/97 in about 2m30s. The download,
+5 MiB over 8 s through the inspector and the broker, had begun when
+`allow` ran, was still running when it returned, and finished whole;
+nothing restarted. `--without-reload` 92/97, the five it names: `allow`
+waited out the reload, restarted the inspector, and said so ("since it
+did not take the reload"), and the download ended at curl's `(56)
+unexpected eof`, the cut the reload exists to avoid; the status file
+row stays green, since the restarted inspector reads the new document
+at its start. `--listeners-required` 94/97, the three it names; `allow`
+no longer reaches the workload under it, since it restarts nothing.
+`--without-rules` 46/97: every row that makes a request or reads one
+back, and the killed inspector's, whose restart starts the broker an
+earlier refused `enter` left stopped (`Wants=`); the reload's own rows,
+the terminal's edit and Ctrl-C stay green, since none needs the rules.
+`--broker-not-ready` 89/97, the eight it names; a first run gave 80/97:
+the stop while the broker starts left its credential workspace behind,
+its restarts hit the start limit on it, and it stayed down from
+`enter` through the loop, where before `allow`'s restart of the
+inspector had started it again (`Wants=`). The rerun is the one
+recorded.
+
+The rig had not reached the re-edit prompt or Ctrl-C before: every
+command ran with its standard input on `/dev/null`, so `policy` never
+saw a terminal and took the refusal's non-interactive path, and `log`
+was ended with SIGTERM, not SIGINT.
 
 `log --refused` on the run's own record, before `allow`:
 

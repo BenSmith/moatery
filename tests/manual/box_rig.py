@@ -9,7 +9,8 @@ the proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/box_rig.py [--keep] [--without-rules]
                                     [--broker-not-ready]
-                                    [--listeners-required] [--restarts N]
+                                    [--listeners-required]
+                                    [--without-reload] [--restarts N]
 
 The tool is the checkout's bin/customs-box running the checkout's
 programs, or, with CUSTOMS_LIBEXEC=/usr/libexec/customs, the installed
@@ -19,7 +20,7 @@ Beside the units `create` writes, the rig writes four drop-ins, and
 removes them before `rm`:
 
   inspector SSL_CERT_FILE names the stub's certificate, which no system
-            store holds.
+            store holds; with --without-reload, an empty ExecReload=.
   broker    the same, and a PYTHONPATH whose sitecustomize sleeps 3 s, so
             the broker's start has a window a request can fall in; with
             --broker-not-ready, Type=simple.
@@ -93,19 +94,23 @@ THE ROWS
   counters  every caller was named and none dropped as foreign.
   loop      log --refused counts the unlisted host's 403s and names it
             among the responder's unlisted names; allow lists it, and
-            restarts the inspector and the responder and not the pod,
-            the workload's container or the broker; the host is then
-            dialled (a 502, since the host has no address for it) and
-            not refused, and log --refused no longer lists it. policy
-            with an $EDITOR writing a document the loader refuses exits
-            1 with its reason, changes nothing and restarts nothing;
-            without the credential, the broker stops, its unit goes, and
-            the provider is reached unbrokered (the stub's 401); with it
-            again, the broker is back and the provider served. The
-            inspector killed is started again, and nothing else is.
-            Stopped, the workload runs on in the same container and its
-            request is not served; enter starts it again. log follows a
-            request just made. The provider is served after each.
+            reloads the listeners, restarting nothing, and the
+            inspector's status file names the new document; the host is
+            then dialled (a 502, since the host has no address for it)
+            and not refused, and log --refused no longer lists it. A
+            download through the inspector, begun before an allow and
+            still running when it returns, finishes whole. policy with
+            an $EDITOR writing a document the loader refuses exits 1
+            with its reason, changes nothing and restarts nothing; at a
+            terminal it asks, opens the editor again, and applies the
+            second document; without the credential, the broker stops,
+            its unit goes, and the provider is reached unbrokered (the
+            stub's 401); with it again, the broker is back and the
+            provider served. The inspector killed is started again, and
+            nothing else is. Stopped, the workload runs on in the same
+            container and its request is not served; enter starts it
+            again. log follows a request just made, and Ctrl-C ends it
+            with status 0. The provider is served after each.
   persist   after a workload restart, a file written outside the home is
             gone and one in it is there.
   restart   N workload restarts, then N pod restarts, each pod restart a
@@ -126,17 +131,28 @@ THE ROWS
 with no rules in its namespace: first, the premise that the rules are
 there, enter (which refuses) and every row through it, dns, silent,
 quic, ssh, listed, unlisted, root, the broker's requests, rotate, the
-loop's rows but allow's listing, the refused policy and the killed and
-stopped inspector's, restart, and each enter after a stop with its first
-request must go red. (The loop's restart row is red because enter left
-the broker stopped, and the inspector's restart starts it: Wants=.)
+loop's rows that make a request or read one back, the killed
+inspector's, and enter's, restart, and each enter after a stop with its
+first request must go red. (The killed inspector's row is red because an
+enter refused left the broker stopped, and the inspector's restart
+starts it: Wants=.)
 
 `--listeners-required` adds `Requires=` on both listeners to the
 workload's drop-in, as its unit had before the policy loop: the loop's
-rows that allow, and the manager's start of the inspector after it is
-killed, restart only the listeners, and that the workload runs on while
-the inspector is stopped, must go red. A required unit's automatic
-restart restarts the workload as well.
+rows that the manager's start of the inspector after it is killed
+restarts only the inspector, that the workload runs on while the
+inspector is stopped, and that it runs on through the policy edits that
+restart the inspector, must go red. A required unit's automatic restart
+restarts the workload as well.
+
+`--without-reload` empties the inspector's ExecReload=, so a reload
+of it fails and allow restarts it once the status file has not named
+the new document in time: the loop's rows that allow says the listeners
+reloaded and restarts nothing, that the download runs on through an
+allow and finishes whole, and that the policy edited at a terminal
+reloads the listeners, must go red. The restarted inspector reads the
+new document at its start, so the row that its status file names it
+after allow stays green.
 
 `--broker-not-ready` makes the broker's unit Type=simple, so nothing
 waits for its socket: the first request after each start of the broker,
@@ -147,10 +163,14 @@ starts, since a Type=simple unit is started when forked.
 """
 
 import argparse
+import hashlib
 import json
 import os
+import pty
 import re
+import select
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -165,6 +185,9 @@ from riglib import (  # noqa
     say,
 )
 from customs.egress_ca import ca_cert_path  # noqa
+from customs.inspect_document import (  # noqa
+    INSPECT_DIGEST_KEY, inspect_policy_digest,
+)
 from customs.egress_record import (  # noqa
     DROP_BROKER_UNREACHABLE, DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED,
     DROP_UNREACHABLE,
@@ -230,6 +253,17 @@ BAD_EDITOR = RIG / "box-bad-editor"
 # And two that write the rig's plain and brokered documents.
 PLAIN_EDITOR = RIG / "box-plain-editor"
 BROKERED_EDITOR = RIG / "box-brokered-editor"
+# And one that writes a refused document the first time and TTY_POLICY
+# the second, counting its runs in TTY_RUNS.
+TTY_EDITOR = RIG / "box-tty-editor"
+TTY_POLICY = RIG / "box-tty-policy.json"
+TTY_RUNS = RIG / "box-tty-runs"
+# A host allowed while a download runs, and one the terminal's edit adds.
+RELOAD_HOST = "customs-rig-reload.example"
+TTY_HOST = "customs-rig-tty.example"
+# The stub's /slow/N: N chunks of 64 KiB, 0.1 s apart (stub_provider.py).
+SLOW_CHUNKS = 80
+SLOW_BYTES = b"".join(bytes([i % 256]) * 65536 for i in range(SLOW_CHUNKS))
 FOLLOWED = RIG / "box-log-followed"
 SLOW = RIG / "box-slow"
 PROJECT = RIG / "box-project"
@@ -938,6 +972,117 @@ def provider_served(label):
     return served(path, got.stdout.strip())
 
 
+def policy_digest():
+    return inspect_policy_digest((CONFIG / "policy.json").read_text())
+
+
+def status_digest():
+    try:
+        return json.loads(STATUS.read_text()).get(INSPECT_DIGEST_KEY)
+    except (OSError, ValueError):
+        return None
+
+
+def download_rows():
+    say("loop: allow while a download runs")
+    path = f"/slow/{SLOW_CHUNKS}/{os.urandom(8).hex()}"
+    before = loop_invocations()
+    download = subprocess.Popen(
+        ["podman", "exec", "--user", USER, BOX, "bash", "-o", "pipefail",
+         "-c", f"curl -sSf --max-time 60 'https://{PROVIDER}{path}' "
+               "| sha256sum"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        # The stub logs a request as it answers it, before the body.
+        began = await_(lambda: stub_logged(path), 10)
+        allowed = box("allow", BOX, RELOAD_HOST)
+        running = download.poll() is None
+        out, err = download.communicate(timeout=60)
+    finally:
+        if download.poll() is None:
+            download.kill()
+            download.wait()
+    moved = sorted(short(u) for u in before
+                   if before[u] != loop_invocations()[u])
+    row("loop: allow while a download through the inspector runs: it had "
+        "begun, was still running when allow returned, and nothing "
+        "restarted", began and running and allowed.returncode == 0
+        and moved == [],
+        f"begun {bool(began)}, running {running}; allow "
+        f"rc={allowed.returncode} {allowed.stdout.strip()!r}; restarted: "
+        f"{moved}")
+    rec = await_(lambda: record_for(path), 5)
+    whole = out.split()[:1] == [hashlib.sha256(SLOW_BYTES).hexdigest()]
+    row("loop: and the download finished whole, every byte in order, and "
+        "the record says forward 200",
+        download.returncode == 0 and whole and rec is not None
+        and rec.get("decision") == "forward" and rec.get("status") == 200,
+        f"rc={download.returncode} {err.strip()[-160:]!r}; whole {whole}; "
+        "record: " + (f"{rec.get('decision')} {rec.get('status')}"
+                      if rec else "none"))
+
+
+def at_terminal(argv, env, answer, prompt, seconds=60):
+    """argv run with a terminal for its standard streams, `answer` typed
+    once `prompt` is shown. Returns (exit status, what it wrote)."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        try:
+            os.execvpe(argv[0], argv, env)
+        finally:
+            os._exit(127)
+    said, typed = b"", False
+    deadline = time.monotonic() + seconds
+    try:
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([fd], [], [], 0.5)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            said += chunk
+            if not typed and prompt.encode() in said:
+                os.write(fd, answer.encode())
+                typed = True
+    finally:
+        os.close(fd)
+    done, status = os.waitpid(pid, os.WNOHANG)
+    if not done:
+        os.kill(pid, signal.SIGKILL)
+        _, status = os.waitpid(pid, 0)
+        return None, said.decode(errors="replace")
+    return os.waitstatus_to_exitcode(status), said.decode(errors="replace")
+
+
+def terminal_rows():
+    say("loop: policy at a terminal")
+    doc = json.loads((CONFIG / "policy.json").read_text())
+    doc["hosts"] = [*doc.get("hosts", []), TTY_HOST]
+    TTY_POLICY.write_text(json.dumps(doc, indent=2) + "\n")
+    TTY_RUNS.unlink(missing_ok=True)
+    code, said = at_terminal(
+        [*TOOL, "policy", BOX],
+        {**TOOL_ENV, "EDITOR": str(TTY_EDITOR), "VISUAL": ""},
+        "y\n", "edit it again? [Y/n]")
+    runs = len(TTY_RUNS.read_text().split()) if TTY_RUNS.exists() else 0
+    lines = [x for x in said.splitlines() if x.strip()]
+    row("loop: policy at a terminal: the refused document is named and "
+        "the editor opened again on asking, and the second is applied",
+        code == 0 and "'hosts'" in said and runs == 2
+        and (CONFIG / "policy.json").read_text() == TTY_POLICY.read_text(),
+        f"status {code}; editor ran {runs} time(s); {lines[-3:]}")
+    enforced = status_digest()
+    row("loop: and the listeners reloaded: the command says so, and the "
+        "inspector's status file names it",
+        "its inspector and responder reloaded" in said
+        and enforced == policy_digest(),
+        f"{lines[-1:]}; {enforced} for {policy_digest()}")
+
+
 def loop_rows():
     say("loop: log, allow and policy on the running box")
     # The responder counts a name at the query and writes its status on a
@@ -957,19 +1102,21 @@ def loop_rows():
     before, started = loop_invocations(), container_started()
     allowed = box("allow", BOX, UNLISTED)
     doc = json.loads((CONFIG / "policy.json").read_text())
-    row("loop: allow lists the host and says the listeners restarted",
+    row("loop: allow lists the host and says the listeners reloaded",
         allowed.returncode == 0 and UNLISTED in doc.get("hosts", [])
-        and "restarted" in allowed.stdout,
+        and "its inspector and responder reloaded" in allowed.stdout,
         f"rc={allowed.returncode} {allowed.stdout.strip()!r} "
         f"{allowed.stderr.strip()[-200:]}; hosts: {doc.get('hosts')}")
     after = loop_invocations()
     moved = sorted(short(u) for u in before if before[u] != after[u])
     same = container_started() == started
-    row("loop: the inspector and the responder restarted, and the pod, the "
-        "workload and the broker did not",
-        moved == ["inspect", "resolve"] and same and started != "",
+    row("loop: nothing restarted: not the listeners, the pod, the workload "
+        "or the broker", moved == [] and same and started != "",
         f"restarted: {moved}; the workload's container "
         f"{'the same' if same else 'replaced'}")
+    enforced = status_digest()
+    row("loop: the inspector's status file names the new document's digest",
+        enforced == policy_digest(), f"{enforced} for {policy_digest()}")
     n = len(refusals())
     got = exec_in([*CURL, f"https://{UNLISTED}/"])
     new = await_(lambda: refusals()[n:], 5)
@@ -983,8 +1130,9 @@ def loop_rows():
     row("loop: log --refused no longer lists it as not allowlisted",
         rc == 0 and not refused_for(lines, UNLISTED, DROP_NOT_ALLOWLISTED),
         f"rc={rc} {err} {lines}")
-    row("loop: the provider is served after the restart",
+    row("loop: the provider is served after the reload",
         *provider_served("loop-allowed"))
+    download_rows()
 
     say("loop: a policy that does not load")
     text = (CONFIG / "policy.json").read_text()
@@ -1002,6 +1150,7 @@ def loop_rows():
     row("loop: and the running box keeps its listeners: none restarted, "
         "and the provider is served", moved == [] and ok,
         f"restarted: {moved}; {detail}")
+    terminal_rows()
 
     say("loop: a listener that dies")
     before, started = loop_invocations(), container_started()
@@ -1054,13 +1203,23 @@ def loop_rows():
             line = await_(lambda: next(
                 (x for x in FOLLOWED.read_text().splitlines() if path in x),
                 None), 10)
+            follower.send_signal(signal.SIGINT)
+            try:
+                code = follower.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                code = None
         finally:
-            follower.terminate()
-            follower.wait(timeout=10)
+            if follower.poll() is None:
+                follower.kill()
+                follower.wait(timeout=10)
     row("loop: log follows the record: the request just made is a line, "
         "forwarded under the credential",
         line is not None and " forward 200 " in line
         and f"[{CREDENTIAL}]" in line, f"{line!r}")
+    tail = FOLLOWED.read_text()
+    row("loop: Ctrl-C ends log with status 0, and no traceback",
+        code == 0 and "Traceback" not in tail,
+        f"status {code}; {tail.strip().splitlines()[-1:]}")
 
     say("loop: policy drops the credential, then names it again")
     started = container_started()
@@ -1075,8 +1234,8 @@ def loop_rows():
         and show(INSPECT_SERVICE, "ActiveState") == "active",
         f"rc={edited.returncode} {edited.stdout.strip()!r} "
         f"{edited.stderr.strip()[-160:]!r}; broker {broker}, its unit "
-        f"{'there' if (UNITS / BROKER_SERVICE).exists() else 'gone'}; --broker in the "
-        f"inspector's command: {'--broker' in inspect}")
+        f"{'there' if (UNITS / BROKER_SERVICE).exists() else 'gone'}; "
+        f"--broker in the inspector's command: {'--broker' in inspect}")
     path = f"/loop-plain/{os.urandom(8).hex()}"
     got = exec_in([*CURL, f"https://{PROVIDER}{path}"])
     rec = await_(lambda: record_for(path), 5)
@@ -1244,7 +1403,10 @@ def rm_rows(tag):
 def probe(args, tag, secret):
     chain_rows()
     write_drop_in("inspect",
-                  f"[Service]\nEnvironment=SSL_CERT_FILE={riglib.STUB_CERT}\n")
+                  f"[Service]\nEnvironment=SSL_CERT_FILE={riglib.STUB_CERT}\n"
+                  + ("ExecReload=\n" if args.without_reload else ""))
+    if args.without_reload:
+        say("  the inspector's unit has no ExecReload=, as asked")
     pythonpath = ":".join([str(SLOW), *PROGRAM_ENV.values()])
     write_drop_in("broker",
                   f"[Service]\nEnvironment=SSL_CERT_FILE={riglib.STUB_CERT}\n"
@@ -1313,6 +1475,13 @@ def material():
     PLAIN_POLICY.write_text(json.dumps({"hosts": [PROVIDER]}) + "\n")
     BAD_EDITOR.write_text("#!/bin/sh\nprintf '{\"hosts\": \"x\"}' > \"$1\"\n")
     BAD_EDITOR.chmod(0o755)
+    TTY_EDITOR.write_text(
+        "#!/bin/sh\n"
+        f"echo run >> '{TTY_RUNS}'\n"
+        f"if [ \"$(wc -l < '{TTY_RUNS}')\" -eq 1 ]; then\n"
+        "  printf '{\"hosts\": \"x\"}' > \"$1\"\n"
+        f"else\n  cp '{TTY_POLICY}' \"$1\"\nfi\n")
+    TTY_EDITOR.chmod(0o755)
     for editor, document in ((PLAIN_EDITOR, PLAIN_POLICY),
                              (BROKERED_EDITOR, POLICY)):
         editor.write_text(f"#!/bin/sh\ncp '{document}' \"$1\"\n")
@@ -1361,6 +1530,10 @@ def main():
                     help="make the workload Requires= the listeners again; "
                          "the loop's rows that no restart or stop of a "
                          "listener reaches the workload must go red")
+    ap.add_argument("--without-reload", action="store_true",
+                    help="empty the inspector's ExecReload=; the loop's "
+                         "rows that a new policy restarts nothing must go "
+                         "red")
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
     args = ap.parse_args()
@@ -1394,8 +1567,8 @@ def main():
         expected.append(
             "--without-rules: first, premise's rules, enter and every row "
             "through it, dns, silent, quic, ssh, listed, unlisted, root, the "
-            "broker's requests, rotate, the loop's but allow's listing, "
-            "the refused policy and the killed and stopped inspector's, "
+            "broker's requests, rotate, the loop's that make a request "
+            "or read one back, the killed inspector's and enter's, "
             "restart, and each enter after a stop are expected red")
     if args.broker_not_ready:
         expected.append(
@@ -1405,10 +1578,16 @@ def main():
             "again, and each enter after a stop are expected red")
     if args.listeners_required:
         expected.append(
-            "--listeners-required: the loop's rows that allow, and the "
-            "inspector's start after it is killed, restart nothing but the "
-            "listeners, and that the workload runs on while the inspector "
-            "is stopped, are expected red")
+            "--listeners-required: the loop's rows that the inspector's "
+            "start after it is killed restarts nothing else, and that the "
+            "workload runs on while the inspector is stopped and through "
+            "the policy edits that restart it, are expected red")
+    if args.without_reload:
+        expected.append(
+            "--without-reload: the loop's rows that allow says the "
+            "listeners reloaded and restarts nothing, the download running "
+            "on and finishing whole, and the terminal's edit reloading the "
+            "listeners are expected red")
     rc = riglib.report("; ".join(expected) or None)
     if rc:
         say(f"journal: journalctl --user -u '{UNIT}*' -b")

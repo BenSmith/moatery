@@ -216,9 +216,9 @@ inspector `Wants=` the broker and starts after it is listening.
 
 Nothing `Requires=` a listener: a restart of a required unit restarts
 what requires it, and the inspector's restart would restart the
-workload. A listener that is not running leaves the rules sending the workload's
-connections to a port nothing listens on, which refuses them; one that
-dies is started again (`Restart=on-failure`).
+workload. A listener that is not running leaves the rules sending the
+workload's connections to a port nothing listens on, which refuses
+them; one that dies is started again (`Restart=on-failure`).
 
 ## Refused
 
