@@ -442,7 +442,10 @@ inspector's counters. The policy loop: `log --refused` counts the
 unlisted host's 403s and names it among the responder's unlisted names;
 `allow` lists it and restarts the listeners and nothing else, the host
 is then dialled and not refused, and `log --refused` stops listing it; a
-`policy` edit the loader refuses exits 1 and restarts nothing; the
+`policy` edit the loader refuses exits 1 and restarts nothing; one
+dropping the credential stops the broker and removes its unit, and the
+provider is reached unbrokered (the stub's 401), and one naming it again
+brings the broker back and the provider is served; the
 inspector killed is started again, and nothing else is; stopped, the
 workload runs on in its container, and `enter` starts it again; `log`
 follows a request just made. A file outside the home is gone after a
@@ -520,11 +523,13 @@ start that starts it is refused. A run takes two minutes,
 **The policy loop, 2026-09-30.** 87/88 at first: the row for a killed
 inspector wanted no new invocation at all, and the manager's start of
 the inspector is one; re-derived to the inspector's alone. Then 88/88,
-in 2m10s. `--listeners-required` 85/88, the three rows it names: with
+in 2m10s, and with the rows for a policy that drops the credential and
+names it again, 91/91 in 2m17s. `--listeners-required` 85/88, the three rows it names: with
 the workload requiring the listeners, `allow` replaced the workload's
 container, so did the manager's automatic start of the killed inspector,
-and stopping the inspector stopped the workload. `--without-rules`
-41/88; its loop row for what `allow` restarts is red because an earlier
+and stopping the inspector stopped the workload. `--broker-not-ready`
+83/91, the eight it names, the loop's request after the broker is named
+again among them. `--without-rules` 41/88; its loop row for what `allow` restarts is red because an earlier
 `enter`, refused, had left the broker stopped, and the inspector's
 restart starts it (`Wants=`). A request while the inspector is stopped
 gets curl's `000`, which is the listener's port refusing it: the rows

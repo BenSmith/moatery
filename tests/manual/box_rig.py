@@ -98,7 +98,10 @@ THE ROWS
             dialled (a 502, since the host has no address for it) and
             not refused, and log --refused no longer lists it. policy
             with an $EDITOR writing a document the loader refuses exits
-            1 with its reason, changes nothing and restarts nothing. The
+            1 with its reason, changes nothing and restarts nothing;
+            without the credential, the broker stops, its unit goes, and
+            the provider is reached unbrokered (the stub's 401); with it
+            again, the broker is back and the provider served. The
             inspector killed is started again, and nothing else is.
             Stopped, the workload runs on in the same container and its
             request is not served; enter starts it again. log follows a
@@ -137,8 +140,9 @@ restart restarts the workload as well.
 
 `--broker-not-ready` makes the broker's unit Type=simple, so nothing
 waits for its socket: the first request after each start of the broker,
-at the first start, each enter that starts it again, rotate, and each
-enter after a stop, must go red; and the premise of a stop while it
+at the first start, each enter that starts it again, rotate, the loop's
+once policy names the credential again, and each enter after a stop,
+must go red; and the premise of a stop while it
 starts, since a Type=simple unit is started when forked.
 """
 
@@ -223,6 +227,9 @@ POLICY = RIG / "box-policy.json"
 PLAIN_POLICY = RIG / "box-plain-policy.json"
 # $EDITOR for `customs-box policy`: writes a document the loader refuses.
 BAD_EDITOR = RIG / "box-bad-editor"
+# And two that write the rig's plain and brokered documents.
+PLAIN_EDITOR = RIG / "box-plain-editor"
+BROKERED_EDITOR = RIG / "box-brokered-editor"
 FOLLOWED = RIG / "box-log-followed"
 SLOW = RIG / "box-slow"
 PROJECT = RIG / "box-project"
@@ -1055,6 +1062,44 @@ def loop_rows():
         line is not None and " forward 200 " in line
         and f"[{CREDENTIAL}]" in line, f"{line!r}")
 
+    say("loop: policy drops the credential, then names it again")
+    started = container_started()
+    edited = box("policy", BOX, env={"EDITOR": str(PLAIN_EDITOR),
+                                     "VISUAL": ""})
+    broker = show(BROKER_SERVICE, "ActiveState")
+    inspect = show(INSPECT_SERVICE, "ExecStart")
+    row("loop: policy without the credential: the broker is stopped and its "
+        "unit gone, and the inspector restarted without it",
+        edited.returncode == 0 and broker == "inactive"
+        and not (UNITS / BROKER_SERVICE).exists() and "--broker" not in inspect
+        and show(INSPECT_SERVICE, "ActiveState") == "active",
+        f"rc={edited.returncode} {edited.stdout.strip()!r} "
+        f"{edited.stderr.strip()[-160:]!r}; broker {broker}, its unit "
+        f"{'there' if (UNITS / BROKER_SERVICE).exists() else 'gone'}; --broker in the "
+        f"inspector's command: {'--broker' in inspect}")
+    path = f"/loop-plain/{os.urandom(8).hex()}"
+    got = exec_in([*CURL, f"https://{PROVIDER}{path}"])
+    rec = await_(lambda: record_for(path), 5)
+    row("loop: the provider is reached unbrokered now: the stub's 401 to "
+        "the placeholder, and the record names no credential",
+        got.stdout.strip() == "401" and rec is not None
+        and rec.get("decision") == "forward" and rec.get("status") == 401
+        and rec.get("credential") is None,
+        f"http={got.stdout.strip()!r}; record: "
+        + (f"{rec.get('decision')} {rec.get('status')} "
+           f"{rec.get('credential')}" if rec else "none"))
+    edited = box("policy", BOX, env={"EDITOR": str(BROKERED_EDITOR),
+                                     "VISUAL": ""})
+    ok, detail = provider_served("loop-brokered")
+    same = container_started() == started
+    row("loop: policy naming it again: the broker is back, and the provider "
+        "is served; the workload ran on in the same container throughout",
+        edited.returncode == 0 and ok and same
+        and show(BROKER_SERVICE, "ActiveState") == "active",
+        f"rc={edited.returncode} {edited.stdout.strip()!r} "
+        f"{edited.stderr.strip()[-160:]!r}; {detail}; container "
+        f"{'the same' if same else 'replaced'}")
+
 
 def restart_rows(count, tag):
     say("persist, and workload restarts")
@@ -1268,6 +1313,10 @@ def material():
     PLAIN_POLICY.write_text(json.dumps({"hosts": [PROVIDER]}) + "\n")
     BAD_EDITOR.write_text("#!/bin/sh\nprintf '{\"hosts\": \"x\"}' > \"$1\"\n")
     BAD_EDITOR.chmod(0o755)
+    for editor, document in ((PLAIN_EDITOR, PLAIN_POLICY),
+                             (BROKERED_EDITOR, POLICY)):
+        editor.write_text(f"#!/bin/sh\ncp '{document}' \"$1\"\n")
+        editor.chmod(0o755)
     SLOW.mkdir(parents=True, exist_ok=True)
     (SLOW / "sitecustomize.py").write_text(SITECUSTOMIZE)
     tag = os.urandom(4).hex()
@@ -1352,7 +1401,8 @@ def main():
         expected.append(
             "--broker-not-ready: first, the premise of a stop while the "
             "broker starts, each enter that starts it again, rotate's "
-            "request, and each enter after a stop are expected red")
+            "request, the loop's request once policy names the credential "
+            "again, and each enter after a stop are expected red")
     if args.listeners_required:
         expected.append(
             "--listeners-required: the loop's rows that allow, and the "
