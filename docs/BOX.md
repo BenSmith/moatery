@@ -46,17 +46,17 @@ daemon-reload`. Nothing starts. The image defaults to
 `registry.fedoraproject.org/fedora-toolbox:44`, Fedora's own, which has
 the git, Python, ssh client and manual pages `fedora:44` leaves out.
 
-**enter** starts the workload's unit if it is inactive, which starts,
-in order, the pod, the rules, the broker and the listeners, and the
+**enter** starts the workload's unit if it is inactive, which starts, in
+order, the pod, the rules, the broker and the listeners, and the
 workload. It then checks that the pod's namespace holds both customs
-tables, and refuses if it does not, before `podman exec -it` as the
-user (or uid 0 with `--root`). A listener that is not running is started
+tables, and refuses if it does not, before `podman exec -it` as the user
+(or uid 0 with `--root`). A listener that is not running is started
 again, and so is a box's broker. If one does not start, `enter` says so
 and enters anyway: without the inspector the workload's connections are
-refused, without the responder its names do not resolve, and without
-the broker a request with its credentials is refused, not sent without. The working directory is the
-host's current one if that is inside a mount, and the box's home
-otherwise.
+refused, without the responder its names do not resolve, and without the
+broker a request with its credentials is refused, not sent without. The
+working directory is the host's current one if that is inside a mount,
+and the box's home otherwise.
 
 **stop** stops the pod's unit, and the broker's; everything bound to
 the pod stops too.
