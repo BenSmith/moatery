@@ -14,7 +14,8 @@ import ssl
 from .egress_record import (
     DROP_BROKER_UNREACHABLE, DROP_CLIENT_CERT, DROP_MISDIRECTED,
     DROP_MISDIRECTED_LISTED, DROP_NOT_ALLOWLISTED, DROP_NOT_PERMITTED,
-    DROP_RELAY_FAILED, DROP_TIMED_OUT, DROP_UNREADABLE_REQUEST, Record,
+    DROP_RELAY_FAILED, DROP_TIMED_OUT, DROP_UNREADABLE_REQUEST,
+    NOTE_H2_PREFACE, NOTE_H2C, Record,
 )
 from .egress_relay import relay
 from . import egress_relay
@@ -34,6 +35,9 @@ from .inspect_scope import quoted
 # sends one; without a bound an origin could hold the connection with
 # interim heads forever.
 INTERIM_MAX = 32
+
+# The start of HTTP/2's connection preface, which is a request line.
+H2_PREFACE = b"PRI * HTTP/2.0\r\n"
 
 
 class _ClientCertDemanded(Exception):
@@ -111,6 +115,8 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
     try:
         req = parse_request(head, scheme)
     except RequestUnreadable as exc:
+        if head.startswith(H2_PREFACE):
+            _note_preface(insp, where, pinned_host)
         insp.drop(where, DROP_UNREADABLE_REQUEST, exc, rec=rec, answered=400)
         send_response(conn, 400, "Bad Request", close=True)
         return False
@@ -210,6 +216,12 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
         insp.counters.record_forward()
         rec.set(decision="forward")
         insp.log(f"forward {where} host={req.host} method={req.method}")
+        if req.withheld:
+            insp.note(where, NOTE_H2C,
+                      f"the request offered Upgrade: {req.withheld} and "
+                      f"went up without it, as HTTP/1.1: HTTP/2's frames "
+                      f"would end the per-request check",
+                      host=req.host)
         keep = _relay_response(insp, up, client, conn, req, where, rec)
         if credential and rec.fields.get("status") in (401, 403):
             insp.counters.record_credential_unauthorized()
@@ -234,6 +246,19 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
                 up.sock.close()
             except OSError:
                 pass
+
+
+def _note_preface(insp, where, pinned_host):
+    if pinned_host is None:
+        detail = ("the client opened with HTTP/2's preface, prior "
+                  "knowledge, and was answered 400: this relay speaks "
+                  "HTTP/1.1 alone")
+    else:
+        detail = (f"the client opened with HTTP/2's preface though the "
+                  f"handshake selected no h2, and was answered 400: "
+                  f"{pinned_host} is served HTTP/1.1 alone. A client that "
+                  f"speaks only h2 needs {pinned_host} spliced")
+    insp.note(where, NOTE_H2_PREFACE, detail, host=pinned_host)
 
 
 def _relay_response(insp, up, client, conn, req, where="", rec=None):

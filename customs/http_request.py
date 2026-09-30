@@ -29,6 +29,8 @@ class Request(NamedTuple):
     wants_close: bool
     # The Upgrade value to re-emit; "" for an ordinary request.
     upgrade: str = ""
+    # An Upgrade value offered and not carried.
+    withheld: str = ""
 
     @property
     def path(self) -> str:
@@ -56,21 +58,21 @@ _UPGRADE_REFUSED = frozenset(("h2", "h2c"))
 
 
 def _upgrade_offer(headers, tokens, version):
-    """The Upgrade value to forward, or "" for a request that is not one.
+    """(the Upgrade value to forward, the value withheld), "" for none.
 
-    "" also for an upgrade not carried, and for HTTP/1.0: the request then
-    goes up as the ordinary request it also is, and the origin declines to
-    switch, as RFC 9110 defines.
+    An upgrade not carried is withheld, and one under HTTP/1.0 is ignored:
+    the request then goes up as the ordinary request it also is, and the
+    origin declines to switch, as RFC 9110 defines.
     """
     if version != "HTTP/1.1" or "upgrade" not in tokens:
-        return ""
+        return "", ""
     offered = [v.strip() for v in _get_all(headers, "upgrade") if v.strip()]
     joined = ", ".join(offered)
     for entry in joined.split(","):
         name = entry.strip().split("/", 1)[0].strip().lower()
         if name in _UPGRADE_REFUSED:
-            return ""
-    return joined
+            return "", joined
+    return joined, ""
 
 
 def parse_request(head, scheme=SCHEME_HTTP):
@@ -110,12 +112,12 @@ def parse_request(head, scheme=SCHEME_HTTP):
         raise RequestUnreadable(
             f"Expect {', '.join(expects)!r} is an expectation this relay "
             "cannot honour")
+    upgrade, withheld = _upgrade_offer(headers, tokens, version)
     return Request(
         method=method, target=target, version=version, authority=host,
         host=host, headers=headers, framing=request_framing(headers),
         expects_continue=bool(expects) and version == "HTTP/1.1",
-        wants_close=wants_close,
-        upgrade=_upgrade_offer(headers, tokens, version))
+        wants_close=wants_close, upgrade=upgrade, withheld=withheld)
 
 
 def rebuild_request(req):

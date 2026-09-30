@@ -2666,6 +2666,54 @@ class TestCleartextAuthorisation(unittest.TestCase):
         self.assertIn(b"400", got)
 
 
+class TestHttp2IsNoted(_CleartextRig):
+    """Neither is refused for being HTTP/2: the preface is a request this
+    relay cannot read, and an h2c offer is declined as HTTP defines. The
+    note is what tells the operator the client wanted HTTP/2."""
+
+    def _notes(self, log):
+        return [line for line in log.splitlines()
+                if line.startswith("note ")]
+
+    def test_the_preface_is_answered_400_and_noted(self):
+        log, got, ups = self._run(
+            ["a.example"], b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+        self.assertEqual(ups, [])
+        assert_bare_refusal(self, got, 400, "Bad Request")
+        note, = self._notes(log)
+        self.assertIn('reason="h2 preface: ', note)
+        self.assertIn("unreadable request", log)
+
+    def test_an_h2c_offer_goes_up_without_it_and_is_noted(self):
+        log, got, ups = self._run(
+            ["a.example"],
+            b"GET / HTTP/1.1\r\nHost: a.example\r\n"
+            b"Upgrade: h2c\r\nConnection: Upgrade, HTTP2-Settings\r\n"
+            b"HTTP2-Settings: AAMAAABkAAQCAAAAAAIAAAAA\r\n\r\n", [_OK])
+        self.assertIn(b"200 OK", got)
+        self.assertNotIn(b"Upgrade:", ups[0][1])
+        note, = self._notes(log)
+        self.assertIn("host=a.example", note)
+        self.assertIn('reason="h2c withheld: ', note)
+
+    def test_an_upgrade_carried_is_not_noted(self):
+        log, _, ups = self._run(
+            ["a.example"],
+            b"GET / HTTP/1.1\r\nHost: a.example\r\n"
+            b"Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n", [_OK])
+        self.assertIn(b"Upgrade: websocket", ups[0][1])
+        self.assertEqual(self._notes(log), [])
+
+    def test_an_h2c_offer_to_a_refused_host_is_not_noted(self):
+        """Nothing went up, so nothing was withheld from it."""
+        log, _, ups = self._run(
+            ["a.example"],
+            b"GET / HTTP/1.1\r\nHost: b.example\r\n"
+            b"Upgrade: h2c\r\nConnection: Upgrade\r\n\r\n")
+        self.assertEqual(ups, [])
+        self.assertEqual(self._notes(log), [])
+
+
 class TestCleartextFraming(unittest.TestCase):
     """Every case here is a request-smuggling class, and every one of them is
     REFUSED rather than resolved. Where two readings of a message are possible

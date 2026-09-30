@@ -96,7 +96,8 @@ are steps 4 and 5 of shape 1 in [DESIGN.md](../docs/DESIGN.md).
   reason for every refusal and every 502, and a line per query. A
   connection's line carries the protocols its client offered (`alpn=`),
   and a `note` line reports what refuses nothing by itself: a hello
-  carrying ECH, and a client offering h2 alone. The status file counts
+  carrying ECH, a client offering h2 alone, one opening with HTTP/2's
+  preface, and an `Upgrade: h2c` withheld. The status file counts
   notes by kind under `notes`, and offered protocols under
   `alpn_offered`.
 

@@ -1007,7 +1007,7 @@ class TestUpgradesAreRelayedAfterThePolicyCheck(TerminationCase):
         mod = _mod()
         origin = _Origin(self.origin_pem)
         self.addCleanup(origin.close)
-        listener, _out = self._listener(mod, origin)
+        listener, out = self._listener(mod, origin)
         response, _error = self._exchange(
             listener, origin,
             request=b"GET / HTTP/1.1\r\nHost: localhost\r\n"
@@ -1017,6 +1017,8 @@ class TestUpgradesAreRelayedAfterThePolicyCheck(TerminationCase):
         upstream = origin.requests[0]
         self.assertNotIn(b"Upgrade:", upstream)
         self.assertNotIn(b"Connection: upgrade", upstream)
+        self.assertIn('reason="h2c withheld: ', out.getvalue())
+        self.assertEqual(listener.status()["notes"]["h2c withheld"], 1)
 
 
 class TestARedirectOffTheAllowlistIsNamedWhereBothNamesAreKnown(
@@ -1653,6 +1655,27 @@ class TestBothLegsAreHttp11(TerminationCase):
         self.assertIn('reason="h2 only: ', note)
         self.assertIn("splice localhost", note)
         self.assertEqual(listener.status()["notes"]["h2 only"], 1)
+
+    def test_a_guest_opening_with_the_h2_preface_is_noted(self):
+        """What a client that ignores the ALPN outcome sends. It is answered
+        400, and the note names the host to splice."""
+        mod = _mod()
+        origin = _Origin(self.origin_pem)
+        self.addCleanup(origin.close)
+        listener, out = self._listener(mod, origin)
+        ctx = self._guest_context()
+        ctx.set_alpn_protocols(["h2"])
+        response, _error = self._exchange(
+            listener, origin, guest_ctx=ctx,
+            request=b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+        self.assertIn(b"400", response)
+        self.assertEqual(origin.requests, [])
+        preface, = [line for line in out.getvalue().splitlines()
+                    if line.startswith("note ") and "h2 preface" in line]
+        self.assertIn("host=localhost", preface)
+        self.assertIn("localhost spliced", preface)
+        notes = listener.status()["notes"]
+        self.assertEqual((notes["h2 only"], notes["h2 preface"]), (1, 1))
 
     def test_an_origin_preferring_h2_is_asked_for_http11(self):
         mod = _mod()

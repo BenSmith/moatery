@@ -122,10 +122,16 @@ NOTE_ECH = "ECH"
 # A terminated connection whose client offered h2 and not http/1.1, so its
 # handshake selects no protocol: a gRPC client, most likely, that fails.
 NOTE_H2_ONLY = "h2 only"
+# A connection opening with HTTP/2's preface, which is answered 400.
+NOTE_H2_PREFACE = "h2 preface"
+# A request offering `Upgrade: h2c`, which goes up without the offer.
+NOTE_H2C = "h2c withheld"
 
 NOTE_KINDS = (
     NOTE_ECH,
     NOTE_H2_ONLY,
+    NOTE_H2_PREFACE,
+    NOTE_H2C,
 )
 
 
