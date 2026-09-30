@@ -17,6 +17,8 @@ from .resolve_wire import (
     RCODE_FORMERR,
     RCODE_SERVFAIL,
     TCP_MAX,
+    TYPE_HTTPS,
+    TYPE_SVCB,
     UDP_BUDGET,
     Malformed,
     NotAQuery,
@@ -54,6 +56,9 @@ class Counters:
     closed either way, since every name is answered here and nothing is
     asked onward, so a rising count is evidence that something in the
     workload is trying, never that anything left.
+
+    `https` counts HTTPS and SVCB questions, each answered empty: a
+    client asking one would use HTTP/3 or ECH if the answer offered it.
     """
 
     def __init__(self, top_n: int = STATUS_TOP_N):
@@ -66,6 +71,7 @@ class Counters:
         self.nodata = 0
         self.unlisted = 0
         self.malformed = 0
+        self.https = 0
         # Bounded: the keys are names the workload chose, and this is the
         # map a name-encoding workload is trying to fill.
         self.unlisted_names = BoundedCounts(top_n)
@@ -83,7 +89,7 @@ class Counters:
                 self.unlisted += 1
                 self.unlisted_names.add(name or ".")
 
-    def record_nodata(self) -> None:
+    def record_nodata(self, qtype: int) -> None:
         """A question that was never about an address.
 
         Not classified against the lists: an HTTPS query usually names a
@@ -92,6 +98,8 @@ class Counters:
         """
         with self._lock:
             self.nodata += 1
+            if qtype in (TYPE_SVCB, TYPE_HTTPS):
+                self.https += 1
 
     def record_malformed(self) -> None:
         with self._lock:
@@ -106,6 +114,7 @@ class Counters:
                     "nodata": self.nodata,
                     "malformed": self.malformed,
                 },
+                "https": self.https,
                 "unlisted": self.unlisted,
                 "unlisted_names": self.unlisted_names.snapshot(),
             }

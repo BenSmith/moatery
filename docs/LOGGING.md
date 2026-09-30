@@ -145,12 +145,25 @@ program may rely on. Those most read by hand:
 
 ## The responder
 
-customs-resolve writes no line per query, only its warnings and the
-malformed queries it answers. Its status file counts
-what it answered, and `unlisted` counts the queries for names no list
-admits, with the first twenty in `unlisted_names`. A rising `unlisted`
-is evidence that something is trying, never that anything left: nothing
-is asked onward. Some are only lookups a tool made and did not need.
+customs-resolve writes a line per query, with the name, the type and
+what it was answered:
+
+```
+  api.example A -> synthesised: 1 record(s)
+  api.example HTTPS -> nodata
+```
+
+Only A and AAAA are answered; every other type gets an empty answer.
+Its status file counts what it answered. `unlisted` counts the queries
+for names no list admits, with the first twenty in `unlisted_names`. A
+rising `unlisted` is evidence that something is trying, never that
+anything left: nothing is asked onward. Some are only lookups a tool
+made and did not need.
+
+`https` counts the HTTPS and SVCB queries. A client asks one to learn
+whether a host offers HTTP/3 or ECH, and the empty answer tells it
+neither is offered. Browsers ask before connecting, so a count here is
+normal: it measures the clients that would use HTTP/3 if they could.
 
 ## What is not seen
 
@@ -170,6 +183,7 @@ journalctl --user -u customs-inspect | grep ' note '
 journalctl --user -u customs-inspect | grep 'id=5c0e81a2f4d3'
 jq -c 'select(.decision == "drop")' requests.log
 jq '{suspects, notes, drop_reasons}' status.json
+jq '{unlisted, https, unlisted_names}' resolve-status.json
 ```
 
 For a box, `customs-box log NAME` follows its record, and

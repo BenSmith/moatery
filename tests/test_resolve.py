@@ -42,6 +42,7 @@ TYPE_A = 1
 TYPE_AAAA = 28
 TYPE_MX = 15
 TYPE_TXT = 16
+TYPE_SVCB = 64
 TYPE_HTTPS = 65
 CLASS_IN = 1
 CLASS_CH = 3
@@ -988,6 +989,26 @@ class TestCounters(unittest.TestCase):
         snap = self.counters.snapshot()
         self.assertEqual(snap["queries"]["nodata"], 1)
         self.assertEqual(snap["unlisted"], 0)
+
+    def test_https_and_svcb_are_counted_apart(self):
+        """The one sign in-process of a client that would take HTTP/3 or
+        ECH if offered: QUIC itself is dropped in the kernel."""
+        self.answer("a.example", TYPE_HTTPS)
+        self.answer("_dns.a.example", TYPE_SVCB)
+        self.answer("a.example", TYPE_MX)
+        snap = self.counters.snapshot()
+        self.assertEqual(snap["https"], 2)
+        self.assertEqual(snap["queries"]["nodata"], 3)
+
+    def test_a_nodata_question_is_logged_with_its_type(self):
+        self.logged.clear()
+        self.answer("a.example", TYPE_HTTPS)
+        self.answer("a.example", 99)
+        self.answer("version.bind", TYPE_TXT, qclass=CLASS_CH)
+        self.assertEqual(self.logged, [
+            "  a.example HTTPS -> nodata",
+            "  a.example TYPE99 -> nodata",
+            "  version.bind TXT CLASS3 -> nodata"])
 
     def test_an_aaaa_with_no_v6_address_is_nodata(self):
         policy = _policy(address6=None, admits=_admits("allowed.example"))

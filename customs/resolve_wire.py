@@ -27,7 +27,14 @@ RCODE_NOTIMP = 4
 
 TYPE_A = 1
 TYPE_AAAA = 28
+TYPE_SVCB = 64
+TYPE_HTTPS = 65
 CLASS_IN = 1
+
+# How a log line names a question's type; any other is TYPEn (RFC 3597).
+TYPE_NAMES = {TYPE_A: "A", 2: "NS", 5: "CNAME", 6: "SOA", 12: "PTR",
+              15: "MX", 16: "TXT", TYPE_AAAA: "AAAA", 33: "SRV",
+              TYPE_SVCB: "SVCB", TYPE_HTTPS: "HTTPS", 255: "ANY"}
 
 HEADER = struct.Struct("!HHHHHH")
 HEADER_LEN = HEADER.size
@@ -147,7 +154,8 @@ def build_answer(query, policy, budget=None, counters=None):
         # NODATA: NOERROR, the question echoed, no records. HTTPS, SVCB,
         # TXT, PTR, MX, SRV and a CHAOS-class version.bind land here.
         if counters is not None:
-            counters.record_nodata()
+            counters.record_nodata(qtype)
+        log(f"  {name or '.'} {type_name(qtype, qclass)} -> nodata")
         return HEADER.pack(ident, base | RCODE_NOERROR, 1, 0, 0, 0) + question
 
     addresses, source = policy.answers(name, qtype)
@@ -170,12 +178,17 @@ def build_answer(query, policy, budget=None, counters=None):
 
     if counters is not None:
         counters.record_answer(name, source, count, policy.on_a_list(name))
-    log(f"  {name or '.'} {'AAAA' if qtype == TYPE_AAAA else 'A'} -> "
+    log(f"  {name or '.'} {type_name(qtype, qclass)} -> "
         f"{source}: {count} record(s)"
         + (" (truncated; retry over TCP)" if truncated else ""))
     flags_out = base | RCODE_NOERROR | (FLAG_TC if truncated else 0)
     return (HEADER.pack(ident, flags_out, 1, count, 0, 0)
             + question + bytes(records))
+
+
+def type_name(qtype, qclass=CLASS_IN):
+    text = TYPE_NAMES.get(qtype, f"TYPE{qtype}")
+    return text if qclass == CLASS_IN else f"{text} CLASS{qclass}"
 
 
 def error_response(query, rcode):

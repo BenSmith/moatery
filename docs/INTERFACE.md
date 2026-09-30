@@ -92,6 +92,7 @@ queries.synthesised         A/AAAA answered with --address/--address6
 queries.static              A/AAAA for a --static name
 queries.nodata              every other type, and an AAAA with no v6
 queries.malformed           queries that were not answerable DNS
+https                       HTTPS and SVCB, of queries.nodata
 unlisted                    A/AAAA for a name on no list and not static
 unlisted_names              {name: count}, bounded
 written_at                  when the file was written
