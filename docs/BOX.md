@@ -52,9 +52,10 @@ in order, the pod, the rules, the broker and the listeners, and the
 workload. It then checks that the pod's namespace holds both customs
 tables, and refuses if it does not, before `podman exec -it` as the
 user (or uid 0 with `--root`). A box with a broker has it started again
-if it had stopped, and is told if it does not start: a request with its
-credentials is then refused, not sent without. The working directory is
-the host's current one if that is inside a mount, and the box's home
+if it had stopped. If it does not start, `enter` says so and enters
+anyway: a request with its credentials is then refused, not sent
+without, and the rest of the box works. The working directory is the
+host's current one if that is inside a mount, and the box's home
 otherwise.
 
 **stop** stops the pod's unit, and the broker's; everything bound to
@@ -99,10 +100,13 @@ filesystem does not, and neither does a `dnf install`.
 terminal without echo, and seals it to this user and host
 (`systemd-creds --user encrypt`). Beside it, it records the hosts, the
 variable, the header and format (the broker's defaults are `x-api-key`
-and `{secret}`), and a generated placeholder. All of it is checked by
-the broker's own `build_profiles` with the real secret first, so a key
-the broker would refuse is refused here. A credential is sealed once
-and serves every box whose policy names it.
+and `{secret}`), and a placeholder. `--auth-header` and `--auth-format`
+are the broker's own flags, so its refusals name the flag that was
+given. The placeholder is always generated, never given: it is written
+into the box's units and environment, where nothing secret belongs. All
+of it is checked by the broker's own `build_profiles` with the real
+secret first, so a key the broker would refuse is refused here. A
+credential is sealed once and serves every box whose policy names it.
 
 Adding an ID that exists replaces it: the secret, and whichever of the
 hosts, variable, header and format are given; the placeholder stays.
