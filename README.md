@@ -70,6 +70,8 @@ flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
 - [docs/BOX-GUIDE.md](docs/BOX-GUIDE.md): customs-box, long-lived
   inspected containers for command-line work, as a user's guide;
   [docs/BOX.md](docs/BOX.md) is its reference.
+- [docs/LOGGING.md](docs/LOGGING.md): what the journal, the record and
+  the status files report, and what to look for in them.
 - [docs/INTERFACE.md](docs/INTERFACE.md): what stays stable for a
   program that imports the modules or reads the inspector's status file.
 - [examples/](examples/): user units, a logrotate configuration, and the

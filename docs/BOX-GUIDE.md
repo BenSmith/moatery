@@ -128,7 +128,10 @@ customs-box log work
 ```
 
 It starts from the last twenty lines and keeps following. Press Ctrl-C
-to stop. The record is rotated at 32 MiB, and the four before it are
+to stop. A line ending `suspect` is a refusal no ordinary client
+causes, such as something other than TLS on the HTTPS port; it needs no
+change to the policy, but is worth a look. [LOGGING.md](LOGGING.md)
+lists every reason. The record is rotated at 32 MiB, and the four before it are
 kept beside it.
 
 **See what is still refused.** `log --refused` sums up, by host and

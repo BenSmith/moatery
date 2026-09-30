@@ -20,6 +20,7 @@ import unittest
 from pathlib import Path
 
 from customs.egress_mint import mint_ca
+from customs.egress_record import DROP_REASONS, NOTE_KINDS, SUSPECT_REASONS
 from customs.inspect_document import VmPolicyEntry
 from customs.inspect_listener import Listener, build_minter
 from customs.inspect_policy import Policy
@@ -28,6 +29,7 @@ from customs.resolve_serve import Counters, emit_status
 from tests import REPO_ROOT
 
 INTERFACE = Path(REPO_ROOT) / "docs" / "INTERFACE.md"
+LOGGING = Path(REPO_ROOT) / "docs" / "LOGGING.md"
 
 
 def _block(heading):
@@ -149,6 +151,40 @@ class TestPublishedResolverStatusPaths(unittest.TestCase):
         doc = json.loads(status.read_text())
         self.assertEqual(doc["queries"]["static"], 1)
         _assert_paths(self, doc, status_paths(self.HEADING))
+
+
+class TestLoggingDocument(unittest.TestCase):
+    """docs/LOGGING.md is where an operator looks a reason up, so a reason
+    it lacks is one they cannot, and a suspect mark it misplaces sends
+    them after the wrong thing."""
+
+    def _rows(self):
+        """{reason: row text} from the refusals table, a row naming several
+        reasons giving each the row."""
+        section = LOGGING.read_text().split("### Refusals\n", 1)[1]
+        section = section.split("\n### ", 1)[0]
+        rows = {}
+        for line in section.splitlines():
+            if not line.startswith("| `"):
+                continue
+            first = line.split(" | ", 1)[0]
+            for reason in re.findall(r"`([^`]+)`", first):
+                rows[reason] = line
+        return rows
+
+    def test_every_reason_is_in_the_table_and_no_other(self):
+        self.assertEqual(set(self._rows()), set(DROP_REASONS))
+
+    def test_the_suspect_reasons_are_the_ones_marked(self):
+        marked = {reason for reason, row in self._rows().items()
+                  if "(suspect)" in row}
+        self.assertEqual(marked, set(SUSPECT_REASONS))
+
+    def test_every_note_kind_is_described(self):
+        section = LOGGING.read_text().split("### Notes\n", 1)[1]
+        section = section.split("\n## ", 1)[0]
+        self.assertEqual(set(re.findall(r"^- `([^`]+)`:", section, re.M)),
+                         set(NOTE_KINDS))
 
 
 if __name__ == "__main__":
