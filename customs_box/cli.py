@@ -45,7 +45,7 @@ def build_parser():
                         "policy still refuses, and the names asked for "
                         "that no list admits")
     p = sub.add_parser("allow", help="let a box reach a host, or a method "
-                                     "or path on it; its listeners restart")
+                                     "or path on it; its listeners reload")
     p.add_argument("name")
     p.add_argument("host")
     p.add_argument("--method", action="append", default=[],
@@ -55,7 +55,7 @@ def build_parser():
                    help="a path pattern the host is allowed, where * "
                         "matches / too; repeatable")
     p = sub.add_parser("policy", help="edit a box's policy in $EDITOR; its "
-                                      "listeners restart")
+                                      "listeners reload")
     p.add_argument("name")
     p = sub.add_parser("stop", help="stop a box")
     p.add_argument("name")

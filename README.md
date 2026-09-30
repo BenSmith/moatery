@@ -67,6 +67,9 @@ flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
   container, with the inspector's listeners on the host or in the
   container; a sidecar in a pod; a VM; and what the host has to do
   that customs does not (private addresses among it).
+- [docs/BOX-GUIDE.md](docs/BOX-GUIDE.md): customs-box, long-lived
+  inspected containers for command-line work, as a user's guide;
+  [docs/BOX.md](docs/BOX.md) is its reference.
 - [docs/INTERFACE.md](docs/INTERFACE.md): what stays stable for a
   program that imports the modules or reads the inspector's status file.
 - [examples/](examples/): user units, a logrotate configuration, and the

@@ -9,7 +9,8 @@ responder's listeners bound in that namespace, and the workload started
 after them.
 
 The commands are built, and a rig proves them on a real host (below);
-the packaging is designed, not built.
+the packaging is designed, not built. [BOX-GUIDE.md](BOX-GUIDE.md) is
+the user's guide; this is the reference.
 
 ## What a box is for
 
