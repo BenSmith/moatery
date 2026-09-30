@@ -658,12 +658,16 @@ boundary the rules hang on.
 
 ## What customs does not do, on purpose
 
-It allocates no uid, writes no units, loads no rules, installs nothing in
-the workload, and keeps no guest's clock. It mints the CA only when told
-to (`customs-mint-ca`, or the sidecar's first start).
+The programs allocate no uid, write no units, load no rules, install
+nothing in the workload, and keep no guest's clock. They mint the CA
+only when told to (`customs-mint-ca`, or the sidecar's first start).
 Those are host management: they depend on how a host is laid out, and
-whoever lays it out does them. `tests/test_closure.py` holds both
+whoever lays it out does them. `tests/test_closure.py` holds the
 programs to importing nothing that knows what a workload is.
+
+`customs-box` is one such layout, shipped in the same RPM: it writes a
+box's units and loads its rules ([BOX.md](BOX.md)). It stands beside the
+programs; they never import it.
 
 ## Proving it
 

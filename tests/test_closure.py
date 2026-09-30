@@ -21,6 +21,7 @@ callers in that namespace's socket table.
 """
 
 import ast
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -34,6 +35,9 @@ MINT_CA = Path(REPO_ROOT) / "libexec" / "customs-mint-ca"
 NETNS_LISTEN = Path(REPO_ROOT) / "libexec" / "customs-netns-listen"
 RESOLVER = Path(REPO_ROOT) / "libexec" / "customs-resolve"
 SIDECAR = Path(REPO_ROOT) / "container" / "customs-sidecar"
+BOX_LIB = Path(REPO_ROOT) / "customs_box"
+BOX = Path(REPO_ROOT) / "bin" / "customs-box"
+SPEC = Path(REPO_ROOT) / "rpm" / "customs.spec"
 
 BROKER_FLAGS = frozenset({
     "--name", "--listen", "--caller-uid", "--host",
@@ -201,6 +205,105 @@ class TestThePackageIsTheClosure(unittest.TestCase):
         self.assertEqual(sorted(shared), ["peer_identity"])
 
 
+def _box_imports(path):
+    """(customs_box modules, customs modules, other top-level names) one
+    file of the box's imports."""
+    box, lib, other = set(), set(), set()
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level == 1 and not module:
+                box |= {alias.name for alias in node.names}
+            elif node.level == 1:
+                box.add(module.split(".")[0])
+            elif module.startswith("customs_box."):
+                box.add(module.split(".")[1])
+            elif module.startswith("customs."):
+                lib.add(module.split(".")[1])
+            else:
+                other.add(module.split(".")[0])
+        elif isinstance(node, ast.Import):
+            other |= {alias.name.split(".")[0] for alias in node.names}
+    return box, lib, other
+
+
+class TestTheBoxStandsBeside(unittest.TestCase):
+    """customs-box is a host layout over the programs. It may import the
+    package; nothing in the package or the programs imports it."""
+
+    def _closure(self):
+        mods = {p.stem: p for p in BOX_LIB.glob("*.py")
+                if p.stem != "__init__"}
+        seen, lib, other = set(), set(), set()
+        todo = [BOX]
+        while todo:
+            box, used, rest = _box_imports(todo.pop())
+            lib |= used
+            other |= rest
+            for name in box - seen:
+                seen.add(name)
+                todo.append(mods[name])
+        return mods, seen, lib, other
+
+    def test_every_box_module_is_reachable_from_customs_box(self):
+        mods, seen, _, _ = self._closure()
+        self.assertEqual(sorted(set(mods) - seen), [])
+
+    def test_it_reaches_only_the_package_and_the_stdlib(self):
+        _, _, lib, other = self._closure()
+        self.assertLessEqual(lib, set(_lib_modules()))
+        self.assertTrue(lib)
+        self.assertEqual(sorted(other - set(sys.stdlib_module_names)), [])
+
+    def test_no_program_imports_it(self):
+        mods = _lib_modules()
+        files = ([BROKER, INSPECTOR, MINT_CA, NETNS_LISTEN, RESOLVER]
+                 + list(mods.values()))
+        holders = sorted(f.name for f in files
+                         if "customs_box" in _imports(f))
+        self.assertEqual(holders, [])
+
+
+class TestTheRpmCarriesEverything(unittest.TestCase):
+    """What the checkout has that ships, the spec installs and lists. A
+    program left out builds a green RPM that lacks it."""
+
+    @staticmethod
+    def _files():
+        return SPEC.read_text().split("\n%files\n", 1)[1].splitlines()
+
+    def test_every_package_is_installed(self):
+        spec = SPEC.read_text()
+        loop = re.search(r"^for pkg in (.*); do$", spec, re.M)
+        self.assertEqual(set(loop.group(1).split()),
+                         {"customs", "customs_box"})
+        for pkg in ("customs", "customs_box"):
+            self.assertIn(f"%{{python3_sitelib}}/{pkg}/", self._files())
+
+    @staticmethod
+    def _programs(where):
+        return sorted(p for p in (Path(REPO_ROOT) / where).iterdir()
+                      if p.is_file())
+
+    def test_every_program_is_installed_listed_and_run(self):
+        spec = SPEC.read_text()
+        programs = {p.name for p in self._programs("libexec")}
+        # The install loop and the %check loop.
+        loops = re.findall(r"^for f in ((?:[^;\n]|\\\n)*); do$", spec,
+                           re.M)
+        self.assertEqual(len(loops), 2)
+        for loop in loops:
+            self.assertEqual(set(loop.replace("\\", " ").split()),
+                             programs)
+        for name in programs:
+            self.assertIn(f"%{{_libexecdir}}/customs/{name}", self._files())
+        for path in self._programs("bin"):
+            with self.subTest(program=path.name):
+                self.assertIn(f"%{{_bindir}}/{path.name}", self._files())
+                self.assertIn(f"%{{buildroot}}%{{_bindir}}/{path.name} "
+                              f"--help", spec)
+
+
 class TestNothingKnowsWhatAWorkloadIs(unittest.TestCase):
 
     def _sources(self):
@@ -287,7 +390,9 @@ class TestNoProgramWritesBytecode(unittest.TestCase):
     @staticmethod
     def _first_lib_import(tree):
         for i, node in enumerate(tree.body):
-            if _package_module(node):
+            if _package_module(node) or (
+                    isinstance(node, ast.ImportFrom) and node.module
+                    and node.module.startswith("customs_box")):
                 return i
         return None
 
@@ -301,7 +406,7 @@ class TestNoProgramWritesBytecode(unittest.TestCase):
 
     def test_every_program_turns_bytecode_off_first(self):
         for path in (BROKER, INSPECTOR, MINT_CA, NETNS_LISTEN, RESOLVER,
-                     SIDECAR):
+                     SIDECAR, BOX):
             with self.subTest(program=path.name):
                 tree = ast.parse(path.read_text())
                 first = self._first_lib_import(tree)

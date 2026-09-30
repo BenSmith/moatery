@@ -93,8 +93,9 @@ container shapes.
 
 Building the RPM takes `just`, `rpmbuild` (rpm-build) and
 python3-rpm-macros: `just rpm` builds from the checkout into
-`rpmbuild/RPMS/`, with the programs in `/usr/libexec/customs/` and the
-`customs` package in site-packages.
+`rpmbuild/RPMS/`, with the programs in `/usr/libexec/customs/`,
+`customs-box` in `/usr/bin/`, and the `customs` and `customs_box`
+packages in site-packages.
 `just rpm-image` builds and tests it in a container, into
 `localhost/customs-rpm:VERSION`, an image holding `/customs.rpm` alone,
 for another image's build to copy; a tag `vVERSION` on the forge pushes

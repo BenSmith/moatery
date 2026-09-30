@@ -31,6 +31,8 @@ allow-list; customs-broker attaches the real key to the requests the
 inspector hands it; customs-resolve answers the workload's DNS and asks
 no one. customs-mint-ca makes the CA, and customs-netns-listen binds
 the listeners inside a rootless container's network namespace.
+customs-box runs long-lived, inspected containers for command-line
+work, each a quadlet pod with the programs in its namespace.
 
 %prep
 # Built from a checkout: _sourcedir is the repository root.
@@ -38,10 +40,14 @@ the listeners inside a rootless container's network namespace.
 %install
 # The package where Python looks, so the programs and anything else may
 # import it; the programs in their own directory.
-install -dm 0755 %{buildroot}%{python3_sitelib}/customs
-for f in %{_sourcedir}/customs/*.py; do
-    install -pm 0644 "$f" %{buildroot}%{python3_sitelib}/customs/
+for pkg in customs customs_box; do
+    install -dm 0755 %{buildroot}%{python3_sitelib}/$pkg
+    for f in %{_sourcedir}/$pkg/*.py; do
+        install -pm 0644 "$f" %{buildroot}%{python3_sitelib}/$pkg/
+    done
 done
+install -Dpm 0755 %{_sourcedir}/bin/customs-box \
+    %{buildroot}%{_bindir}/customs-box
 install -dm 0755 %{buildroot}%{_libexecdir}/customs
 for f in customs-broker customs-inspect customs-mint-ca \
         customs-netns-listen customs-resolve; do
@@ -62,10 +68,14 @@ for f in customs-broker customs-inspect customs-mint-ca \
     PYTHONPATH=%{buildroot}%{python3_sitelib} \
         %{buildroot}%{_libexecdir}/customs/$f --help >/dev/null
 done
+PYTHONPATH=%{buildroot}%{python3_sitelib} \
+    %{buildroot}%{_bindir}/customs-box --help >/dev/null
 
 %files
 %license %{_datadir}/licenses/customs/LICENSE
 %{python3_sitelib}/customs/
+%{python3_sitelib}/customs_box/
+%{_bindir}/customs-box
 %dir %{_libexecdir}/customs
 %{_libexecdir}/customs/customs-broker
 %{_libexecdir}/customs/customs-inspect

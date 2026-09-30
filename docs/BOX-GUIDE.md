@@ -17,10 +17,11 @@ You need, on the host:
 - Python 3.14 and OpenSSL 3.5 or later;
 - podman 5.0 or later, with pasta, and nftables;
 - systemd 256 or later;
-- the customs programs, from the customs RPM.
+- the customs RPM, which carries `customs-box` and the programs it
+  runs.
 
-The RPM does not carry `customs-box` yet. Until it does, run it from a
-checkout of this repository, pointing it at the checkout's programs:
+To run it from a checkout of this repository instead, point it at the
+checkout's programs:
 
 ```
 export PYTHONPATH=~/src/customs CUSTOMS_LIBEXEC=~/src/customs/libexec

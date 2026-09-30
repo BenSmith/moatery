@@ -8,9 +8,9 @@ namespace and loads the rules when it starts, the inspector's and the
 responder's listeners bound in that namespace, and the workload started
 after them.
 
-The commands are built, and a rig proves them on a real host (below);
-the packaging is designed, not built. [BOX-GUIDE.md](BOX-GUIDE.md) is
-the user's guide; this is the reference.
+The commands are built, the customs RPM carries them, and a rig proves
+them on a real host (below). [BOX-GUIDE.md](BOX-GUIDE.md) is the user's
+guide; this is the reference.
 
 ## What a box is for
 
@@ -281,7 +281,8 @@ Its code is its own package, `customs_box`, beside `customs`; the
 programs never import it, and `tests/test_closure.py` holds them to that
 unchanged. It may import `customs` (the policy loader). The customs RPM
 carries it, `/usr/bin/customs-box` and the package beside `customs` in
-site-packages; there is no separate package.
+site-packages; there is no separate package. `tests/test_closure.py`
+holds the RPM's spec to installing both packages and every program.
 
 ## Requirements
 
@@ -334,5 +335,3 @@ each one broken on purpose once, and the refusals.
 ## Open
 
 - Starting boxes at login (`create --autostart`).
-- DESIGN.md: "What customs does not do" to say the programs do not,
-  once the RPM carries customs-box.
