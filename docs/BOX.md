@@ -92,13 +92,17 @@ host the workload reaches has to be listed.
   at the command and not a box whose inspector will not start. A policy
   that names a credential for the first time gains a broker, and one that
   names none loses it: the box's units are written again. Then, if they
-  are running, the inspector and the responder restart, and not the
-  workload: nothing requires them. The policy is read at start
-  ([POLICY.md](POLICY.md)). The restart binds again in the same
-  namespace; a connection in the gap is refused, not let through, and one
-  open at the restart is cut. A stopped box has the policy from its next
-  start; a running workload has a new credential's variable from its
-  next start.
+  are running, the inspector and the responder are reloaded
+  ([POLICY.md](POLICY.md)): a request already relaying finishes, and
+  the next is decided against the new document. Nothing is cut, and
+  the command waits until the inspector's status file names the new
+  document. The inspector is restarted instead when its unit changed,
+  which a broker gained or lost does, when `tls` changed, or when it
+  did not take the reload; a restart binds again in the same namespace,
+  a connection in the gap is refused, not let through, and one open is
+  cut. The command says which it did. A stopped box has the policy from
+  its next start; a running workload has a new credential's variable
+  from its next start.
 
 Package installs inside a box are the hard case: a mirror list spreads
 over many hosts, and the install does not outlive a stop (next
@@ -211,8 +215,8 @@ a restart of the pod brings them back into its new namespace. The
 inspector `Wants=` the broker and starts after it is listening.
 
 Nothing `Requires=` a listener: a restart of a required unit restarts
-what requires it, and a new policy would restart the workload. A
-listener that is not running leaves the rules sending the workload's
+what requires it, and the inspector's restart would restart the
+workload. A listener that is not running leaves the rules sending the workload's
 connections to a port nothing listens on, which refuses them; one that
 dies is started again (`Restart=on-failure`).
 
@@ -302,7 +306,8 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
   removes the home; `credential rm` is refused while a box names the
   credential;
 - `log --refused` names a host the box was refused; `allow` lists it and
-  restarts the listeners and nothing else, and the host is dialled after;
+  reloads the listeners, a download running through it finishing whole,
+  and the host is dialled after;
   a `policy` edit the loader refuses changes and restarts nothing; a
   killed inspector is started again, and a stopped one leaves the
   workload running until `enter` starts it; `log` follows a request as

@@ -21,6 +21,7 @@ from unittest import mock
 from tests import REPO_ROOT, load_script
 from tests.test_quadlet_example import _ruleset
 
+from customs.inspect_document import INSPECT_DIGEST_KEY, inspect_policy_digest
 from customs.inspect_policy import load_policy
 from customs_box import commands, document, netns, record
 from customs_box.cli import main, parse
@@ -200,6 +201,23 @@ class TestUnits(unittest.TestCase):
             self.assertIn(self.box.pod_service, _keys(text, "After"))
             self.assertEqual(_keys(text, "Type"), ["notify"])
             self.assertEqual(_keys(text, "Restart"), ["on-failure"])
+
+    def test_a_listener_reload_is_the_signal_its_program_reads_again_on(self):
+        """ExecReload= sends the main process, the program the launcher
+        execs, the signal the inspector and the responder read the policy
+        again on; the examples' units send the same."""
+        units = [self.inspect, self.resolve] + [
+            (REPO_ROOT / "examples" / d / f).read_text()
+            for d, f in (("systemd", "customs-inspect.service"),
+                         ("systemd", "customs-resolve.service"),
+                         ("quadlet", "customs-inspect-example.service"),
+                         ("quadlet", "customs-resolve-example.service"))]
+        for text in units:
+            self.assertEqual(_keys(text, "ExecReload"),
+                             ["kill", "-USR1", "$MAINPID"])
+        for program in ("customs-inspect", "customs-resolve"):
+            self.assertIn("signal.signal(signal.SIGUSR1, lambda",
+                          (REPO_ROOT / "libexec" / program).read_text())
 
     def test_the_pod_loads_the_rules_and_has_no_cgroup_or_host_names(self):
         self.assertEqual(_exec_words(self.pod, "ExecStartPost"),
@@ -680,7 +698,8 @@ class FakeHost:
 
     def __init__(self, state_root, rules=True, load_state="loaded",
                  unshare=True, broker=True, broker_state="active",
-                 listeners=True, listener_state="active"):
+                 listeners=True, listener_state="active", dirs=None,
+                 reloads=True):
         self.calls = []
         self.inputs = []
         self.state_root = state_root
@@ -691,6 +710,10 @@ class FakeHost:
         self.broker_state = broker_state
         self.listeners = listeners
         self.listener_state = listener_state
+        # With the dirs, a reload of an inspector writes the digest of its
+        # box's policy to its status file, as the inspector does.
+        self.dirs = dirs
+        self.reloads = reloads
 
     def __call__(self, argv, *, input=None, check=True, env=None):
         self.calls.append(argv)
@@ -715,6 +738,14 @@ class FakeHost:
                 argv[:3] == ["systemctl", "--user", "start"] and argv[-1]
                 .endswith(("-inspect.service", "-resolve.service"))):
             code = 0 if self.listeners else 1
+        elif argv[:3] == ["systemctl", "--user", "reload"] and \
+                argv[-1].endswith("-inspect.service"):
+            if self.dirs and self.reloads:
+                box = Box(argv[-1].removeprefix("customs-box-")
+                          .removesuffix("-inspect.service"), self.dirs)
+                box.status.write_text(json.dumps({
+                    INSPECT_DIGEST_KEY:
+                        inspect_policy_digest(box.policy.read_text())}))
         elif "customs-mint-ca" in line:
             ca = Path(argv[argv.index("--state-dir") + 1]) / "ca.pem"
             ca.write_text("BOX CA\n")
@@ -1093,18 +1124,26 @@ class TestCommands(unittest.TestCase):
         return [c for c in host.calls if c[:3] == ["systemctl", "--user",
                                                    "try-restart"]]
 
-    def test_allow_restarts_the_listeners_and_never_the_workload(self):
+    def _reloads(self, host):
+        return [c[-1] for c in host.calls
+                if c[:3] == ["systemctl", "--user", "reload"]]
+
+    def _host(self, **kwargs):
+        return FakeHost(self.home, dirs=self.dirs, **kwargs)
+
+    def test_allow_reloads_the_listeners_and_restarts_nothing(self):
         box, _ = self._create()
-        host = FakeHost(self.home)
+        host = self._host()
         self.assertEqual(commands.allow("agent", "Example.com", methods=[],
                                         paths=[], dirs=self.dirs,
-                                        runner=host), (True, False))
+                                        runner=host, pause=self.fail),
+                         commands.Applied(True))
         self.assertIn("example.com", json.loads(box.policy.read_text())[
             "hosts"])
         self.assertEqual(box.policy.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(self._restarts(host), [[
-            "systemctl", "--user", "try-restart", box.inspect_service,
-            box.resolve_service]])
+        self.assertEqual(self._reloads(host), [box.resolve_service,
+                                               box.inspect_service])
+        self.assertEqual(self._restarts(host), [])
         for argv in host.calls:
             self.assertNotIn(box.service, argv)
             self.assertNotIn(box.pod_service, argv)
@@ -1113,12 +1152,44 @@ class TestCommands(unittest.TestCase):
 
     def test_allow_on_a_stopped_box_applies_from_its_next_start(self):
         box, _ = self._create()
-        host = FakeHost(self.home, listener_state="inactive")
+        host = self._host(listener_state="inactive")
         self.assertEqual(commands.allow("agent", "example.com", methods=[],
                                         paths=[], dirs=self.dirs,
-                                        runner=host), (False, False))
+                                        runner=host),
+                         commands.Applied(False))
         self.assertIn("example.com", box.policy.read_text())
         self.assertEqual(self._restarts(host), [])
+        self.assertEqual(self._reloads(host), [])
+
+    def test_an_inspector_that_does_not_take_the_reload_is_restarted(self):
+        """Its status file names the document it enforces; one that still
+        names the old after the wait is restarted, and read at start."""
+        box, _ = self._create()
+        host, waits = self._host(reloads=False), []
+        self.assertEqual(commands.allow("agent", "example.com", methods=[],
+                                        paths=[], dirs=self.dirs,
+                                        runner=host, pause=waits.append),
+                         commands.Applied(True,
+                                          "it did not take the reload"))
+        self.assertEqual(sum(waits), commands._RELOAD_WAIT)
+        self.assertLess(
+            host.calls.index(["systemctl", "--user", "reload",
+                              box.inspect_service]),
+            host.calls.index(["systemctl", "--user", "try-restart",
+                              box.inspect_service]))
+
+    def test_a_change_of_tls_restarts_the_inspector(self):
+        """The minter was built for the `tls` it started with, so the
+        inspector refuses to reload into another."""
+        box, _ = self._create()
+        host = self._host()
+        self.assertEqual(
+            self._edit(self._editor('{"tls": "splice", "hosts": []}')[0],
+                       host=host),
+            commands.Applied(True, '"tls" changed'))
+        self.assertEqual(self._reloads(host), [box.resolve_service])
+        self.assertEqual(self._restarts(host), [[
+            "systemctl", "--user", "try-restart", box.inspect_service]])
 
     def test_an_allow_allowed_already_or_refused_changes_nothing(self):
         box, _ = self._create()
@@ -1148,23 +1219,23 @@ class TestCommands(unittest.TestCase):
     def _edit(self, edit, *, isatty=False, ask=None, host=None, env=None):
         return commands.edit_policy(
             "agent", dirs=self.dirs, environ=env or self.env, isatty=isatty,
-            runner=host or FakeHost(self.home), edit=edit,
-            ask=ask or self.fail)
+            runner=host or self._host(), edit=edit,
+            ask=ask or self.fail, pause=self.fail)
 
     def test_policy_opens_a_copy_in_the_editor_and_applies_it(self):
         box, _ = self._create()
         edit, runs = self._editor('{"hosts": ["example.com"]}')
-        host = FakeHost(self.home)
+        host = self._host()
         self.assertEqual(self._edit(edit, host=host,
                                     env={**self.env,
                                          "EDITOR": "code --wait"}),
-                         (True, False))
+                         commands.Applied(True))
         (argv,) = runs
         self.assertEqual(argv[:2], ["code", "--wait"])
         self.assertNotEqual(Path(argv[-1]), box.policy)
         self.assertEqual(box.policy.read_text(),
                          '{"hosts": ["example.com"]}')
-        self.assertEqual(len(self._restarts(host)), 1)
+        self.assertEqual(len(self._reloads(host)), 2)
         self.assertIsNone(self._edit(self._editor(None)[0]))
 
     def test_a_policy_that_does_not_load_changes_nothing(self):
@@ -1209,13 +1280,14 @@ class TestCommands(unittest.TestCase):
 
     def test_a_policy_naming_a_credential_gains_a_broker_and_loses_it(self):
         """Its units are written again, the broker started before the
-        listeners restart, and the workload told of its new variable."""
+        inspector restarts with its new --broker, and the workload told of
+        its new variable."""
         self._add()
         box, _ = self._create()
         brokered = self._brokered().read_text()
-        host = FakeHost(self.home)
+        host = self._host()
         self.assertEqual(self._edit(self._editor(brokered)[0], host=host),
-                         (True, False))
+                         commands.Applied(True, "its broker is new"))
         self.assertTrue(box.broker_file.is_file())
         self.assertIn(f"unix:{box.broker_socket}",
                       box.inspect_file.read_text())
@@ -1225,8 +1297,11 @@ class TestCommands(unittest.TestCase):
         (restart,) = self._restarts(host)
         self.assertLess(host.calls.index(reload), host.calls.index(start))
         self.assertLess(host.calls.index(start), host.calls.index(restart))
-        host = FakeHost(self.home)
-        self._edit(self._editor('{"hosts": ["pypi.org"]}')[0], host=host)
+        host = self._host()
+        self.assertEqual(
+            self._edit(self._editor('{"hosts": ["pypi.org"]}')[0],
+                       host=host),
+            commands.Applied(True, "its broker is gone"))
         self.assertFalse(box.broker_file.exists())
         self.assertNotIn("--broker", box.inspect_file.read_text())
         self.assertIn(["systemctl", "--user", "stop", box.broker_service],
@@ -1278,13 +1353,20 @@ class TestCommands(unittest.TestCase):
         self.assertEqual((args.name, args.host, args.method, args.path),
                          ("agent", "api.x", ["GET", "post"], ["/v1/*"]))
         self.assertTrue(parse(["log", "agent", "--refused"]).refused)
-        with mock.patch.object(cli, "allow", return_value=(True, False)), \
-                mock.patch("sys.stdout") as out:
-            cli.run_command(args, tool=(), environ=self.env, cwd=self.home,
-                            isatty=False)
-        said = "".join(c.args[0] for c in out.write.call_args_list)
-        self.assertIn("box agent: api.x allowed; its inspector and "
-                      "responder restarted", said)
+        for applied, words in (
+                (commands.Applied(True),
+                 "api.x allowed; its inspector and responder reloaded"),
+                (commands.Applied(True, '"tls" changed'),
+                 'its inspector restarted, since "tls" changed, and its '
+                 'responder reloaded'),
+                (commands.Applied(False),
+                 "it applies from the box's next start")):
+            with mock.patch.object(cli, "allow", return_value=applied), \
+                    mock.patch("sys.stdout") as out:
+                cli.run_command(args, tool=(), environ=self.env,
+                                cwd=self.home, isatty=False)
+            said = "".join(c.args[0] for c in out.write.call_args_list)
+            self.assertIn(words, said)
         with mock.patch.object(cli, "refused", return_value=(
                 [(3, "evil.example", "not allowlisted", "")], [])), \
                 mock.patch("sys.stdout") as out:

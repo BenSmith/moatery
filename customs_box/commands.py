@@ -9,9 +9,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 from customs.broker_profiles import (BROKER_DEFAULT_AUTH_FORMAT,
                                      BROKER_DEFAULT_AUTH_HEADER)
+from customs.inspect_document import (INSPECT_DIGEST_KEY,
+                                      inspect_policy_digest)
 from customs.inspect_policy import load_policy
 
 from . import credentials, document, record
@@ -384,7 +387,8 @@ def refused(name, *, dirs):
             record.unlisted(box.resolve_status, policy))
 
 
-def allow(name, host, *, methods, paths, dirs, runner=run):
+def allow(name, host, *, methods, paths, dirs, runner=run,
+          pause=time.sleep):
     """Widen the box's policy for HOST and apply it. None if the policy
     allows it already."""
     box, settings = _existing(name, dirs)
@@ -397,11 +401,11 @@ def allow(name, host, *, methods, paths, dirs, runner=run):
     if doc is None:
         return None
     staged, broker = _checked(box, document.dumps(doc), dirs)
-    return _apply_policy(box, settings, staged, broker, runner)
+    return _apply_policy(box, settings, staged, broker, runner, pause)
 
 
 def edit_policy(name, *, dirs, environ, isatty, runner=run,
-                edit=subprocess.run, ask=input):
+                edit=subprocess.run, ask=input, pause=time.sleep):
     """Open a copy of the box's policy in the user's editor, and apply it
     once it loads. A copy that does not is opened again, if there is a
     terminal to ask on. None if it came back unchanged."""
@@ -432,7 +436,7 @@ def edit_policy(name, *, dirs, environ, isatty, runner=run,
                     raise BoxError("the policy is unchanged") from None
     finally:
         draft.unlink(missing_ok=True)
-    return _apply_policy(box, settings, staged, broker, runner)
+    return _apply_policy(box, settings, staged, broker, runner, pause)
 
 
 def _private(path, text):
@@ -461,18 +465,41 @@ def _checked(box, text, dirs):
     return staged, broker
 
 
-def _apply_policy(box, settings, staged, broker, runner):
+# How long a reload has to show in the inspector's status file, which it
+# rewrites as soon as it has read the policy.
+_RELOAD_WAIT = 5.0
+_RELOAD_POLL = 0.1
+
+
+class Applied(NamedTuple):
+    """What a new policy did to a box. `restarted` is why its inspector
+    was restarted rather than reloaded, or None; `moved`, whether the
+    workload's unit changed while it ran, which it has from its next
+    start."""
+    running: bool
+    restarted: str | None = None
+    moved: bool = False
+
+
+def _apply_policy(box, settings, staged, broker, runner, pause):
     """Put a checked policy in place, with the units its broker needs, and
-    restart the listeners if they are running: they read it at start.
-    Returns whether they were, and whether the workload's unit changed
-    while it ran, which it has from its next start."""
+    have the listeners read it if they are running: a reload, which cuts
+    no connection, unless the inspector's unit or its `tls` changed."""
     units = render(box, settings, broker)
     changed = {path for path, text in units.items()
                if not path.exists() or path.read_text() != text}
     gone = {path for path in box.unit_files
             if path not in units and path.exists()}
-    running = any(_state(unit, runner) in ("active", "activating")
-                  for unit, _what, _effect in _listeners(box))
+    states = {unit: _state(unit, runner)
+              for unit, _what, _effect in _listeners(box)}
+    running = any(state in ("active", "activating")
+                  for state in states.values())
+    text = staged.read_text()
+    restart = None
+    if box.inspect_file in changed:
+        restart = "its broker is " + ("new" if broker else "gone")
+    elif _tls(box.policy) != _tls(staged):
+        restart = '"tls" changed'
     if box.broker_file in gone:
         runner(["systemctl", "--user", "stop", box.broker_service],
                check=False)
@@ -482,27 +509,62 @@ def _apply_policy(box, settings, staged, broker, runner):
         _write_units(box, settings, broker)
         runner(["systemctl", "--user", "daemon-reload"])
     if not running:
-        return False, False
+        return Applied(False)
     broker_failed = False
     if broker and box.broker_file in changed:
         _reset_broker(box, runner)
         broker_failed = runner(
             ["systemctl", "--user", "start", box.broker_service],
             check=False).returncode != 0
-    try:
-        runner(["systemctl", "--user", "try-restart", box.inspect_service,
-                box.resolve_service])
-    except CommandFailed as exc:
-        raise BoxError(f"box {box.name}'s policy is replaced, but its "
-                       f"listeners did not start again ({exc}); see "
-                       f"journalctl --user -u '{box.unit}-*'") from None
+    # One activating reads the file when it has started.
+    if states[box.resolve_service] == "active":
+        runner(["systemctl", "--user", "reload", box.resolve_service],
+               check=False)
+    if restart is None and states[box.inspect_service] == "active":
+        runner(["systemctl", "--user", "reload", box.inspect_service],
+               check=False)
+        if not _enforcing(box, inspect_policy_digest(text), pause):
+            restart = "it did not take the reload"
+    if restart is not None:
+        try:
+            runner(["systemctl", "--user", "try-restart",
+                    box.inspect_service])
+        except CommandFailed as exc:
+            raise BoxError(f"box {box.name}'s policy is replaced, but its "
+                           f"inspector did not start again ({exc}); see "
+                           f"journalctl --user -u {box.inspect_service}"
+                           ) from None
     if broker_failed:
         raise BoxError(f"box {box.name}'s policy is replaced, but its broker "
                        "did not start, and requests with its credentials "
                        "are refused; see journalctl --user -u "
                        f"{box.broker_service}")
-    return True, (box.container_file in changed
-                  and _state(box.service, runner) == "active")
+    return Applied(True, restart,
+                   box.container_file in changed
+                   and _state(box.service, runner) == "active")
+
+
+def _tls(path):
+    """The document's `tls`, or None for one that does not load, which
+    the inspector refuses to reload into and _enforcing catches."""
+    try:
+        return load_policy(path).tls
+    except (OSError, ValueError):
+        return None
+
+
+def _enforcing(box, digest, pause):
+    """Whether the inspector's status file names the digest, within
+    _RELOAD_WAIT."""
+    for _ in range(round(_RELOAD_WAIT / _RELOAD_POLL)):
+        try:
+            doc = json.loads(box.status.read_text())
+        except (OSError, ValueError):
+            doc = None
+        if isinstance(doc, dict) and doc.get(INSPECT_DIGEST_KEY) == digest:
+            return True
+        pause(_RELOAD_POLL)
+    return False
 
 
 def _naming(credential, dirs):

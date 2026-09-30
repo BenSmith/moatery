@@ -136,12 +136,16 @@ def _applied(name, what, unchanged, applied):
     if applied is None:
         print(f"box {name}: {unchanged}")
         return
-    running, moved = applied
-    print(f"box {name}: {what}; "
-          + ("its inspector and responder restarted" if running
-             else "it applies from the box's next start")
+    if not applied.running:
+        listeners = "it applies from the box's next start"
+    elif applied.restarted:
+        listeners = (f"its inspector restarted, since {applied.restarted}, "
+                     "and its responder reloaded")
+    else:
+        listeners = "its inspector and responder reloaded"
+    print(f"box {name}: {what}; {listeners}"
           + ("; the workload has its new variables from its next start"
-             if moved else ""))
+             if applied.moved else ""))
 
 
 def print_refused(name, rows, names):

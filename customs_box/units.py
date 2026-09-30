@@ -12,9 +12,10 @@ the namespace: a restart of the pod does not restart it, and `stop`
 stops it.
 
 Nothing Requires= a listener, whose restart would restart what does:
-a new policy restarts the listeners and not the workload. Without them
+a listener that fails is restarted, and not the workload. Without them
 the rules send the workload's connections to ports nothing listens on,
-which refuse them.
+which refuse them. A new policy reloads the listeners, which restarts
+nothing.
 """
 
 import json
@@ -200,7 +201,8 @@ def _listener_unit(box, settings, what, argv, broker=None):
     wants = f"Wants={box.broker_service}\n" if broker else ""
     return f"""\
 # customs box {box.name}: the {what}, its listeners bound in the pod's
-# namespace. Type=notify: started once they are bound.
+# namespace. Type=notify: started once they are bound. A reload reads
+# the policy again and cuts no connection.
 
 [Unit]
 Description=customs box {box.name}: {what}
@@ -211,6 +213,7 @@ BindsTo={box.pod_service}
 Type=notify
 {_environment(settings)}ExecStart={_exec_line(
     _tool(settings, "exec", box.name, "--", *argv))}
+ExecReload=kill -USR1 $MAINPID
 Restart=on-failure
 """
 
