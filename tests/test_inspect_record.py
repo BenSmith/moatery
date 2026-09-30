@@ -30,8 +30,8 @@ from pathlib import Path
 from customs import egress_record
 from customs.egress_plane import CLEARTEXT, TLS, plane_for_port
 from customs.egress_record import (
-    DROP_NO_NAME,
     DROP_NOT_ALLOWLISTED,
+    DROP_NOT_TLS,
     DROP_UNREADABLE_REQUEST,
     LOG_ID_FIELD,
     LOG_REQ_FIELD,
@@ -690,7 +690,7 @@ class TestTheConnectionLevelRecords(_Records):
         self.assertIsNone(rec["status"])
         self.assertIsNone(rec[LOG_REQ_FIELD])
 
-    def test_a_hello_with_no_name_is_recorded(self):
+    def test_an_unreadable_hello_is_recorded(self):
         listener, _out = self._tls_listener(Policy(tls="splice", hosts=()))
         ours, guest = self._pair()
         guest.sendall(b"\x16\x03\x01\x00\x05rubbish")
@@ -700,7 +700,7 @@ class TestTheConnectionLevelRecords(_Records):
         records = self._records()
         self.assertEqual(len(records), 1, records)
         self.assertEqual(records[0]["decision"], "drop")
-        self.assertEqual(records[0]["reason"], DROP_NO_NAME)
+        self.assertEqual(records[0]["reason"], DROP_NOT_TLS)
         self.assertIsNone(records[0]["host"])
 
 

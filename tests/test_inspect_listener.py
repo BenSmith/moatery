@@ -1802,16 +1802,39 @@ class TestTlsPlane(unittest.TestCase):
         serve_tls(listener.inspection, conn, _where("tls"))
         miss = out.getvalue()
 
-        self.assertIn("no readable name", unreadable)
+        self.assertIn('reason="not TLS', unreadable)
+        self.assertIn("suspect=yes", unreadable)
         self.assertIn("not allowlisted", miss)
         self.assertNotIn("not allowlisted", unreadable)
-        self.assertNotIn("no readable name", miss)
+        self.assertNotIn("not TLS", miss)
+        self.assertNotIn("suspect", miss)
 
-    def test_a_hello_with_no_name_is_a_no_readable_name_drop(self):
+    def test_a_hello_with_no_name_is_a_suspect_drop(self):
+        """A client given a name sends it. One that sends none reached an
+        address, which no list names."""
         _, listener, out = self._listener(["example.com"])
         conn, _ = self._client(_hello_bytes(server_name=None))
         serve_tls(listener.inspection, conn, _where("tls"))
-        self.assertIn("no readable name", out.getvalue())
+        self.assertIn('suspect=yes reason="no server name', out.getvalue())
+        self.assertEqual(listener.status()["suspects"], 1)
+
+    def test_a_hello_cut_short_is_not_suspect(self):
+        """A client that gave up, or a network that dropped it: closed
+        before the hello, or partway through it until the time ran out."""
+        for payload in (b"", _hello_bytes()[:20]):
+            with self.subTest(sent=len(payload)):
+                _, listener, out = self._listener(["example.com"])
+                conn, guest = self._client(payload)
+                guest.shutdown(socket.SHUT_WR)
+                conn.settimeout(0.3)
+                serve_tls(listener.inspection, conn, _where("tls"))
+                self.assertIn('reason="ClientHello incomplete',
+                              out.getvalue())
+                self.assertNotIn("suspect", out.getvalue())
+                status = listener.status()
+                self.assertEqual(
+                    status["drop_reasons"]["ClientHello incomplete"], 1)
+                self.assertEqual(status["suspects"], 0)
 
     def test_an_unlisted_name_never_reaches_an_upstream(self):
         """The drop is the point: a connection that got as far as dialling
@@ -2067,7 +2090,7 @@ class TestLogInjection(unittest.TestCase):
         serve_tls(listener.inspection, ours, _where("tls"))
         lines = out.getvalue().splitlines()
         self.assertEqual(len(lines), 1, lines)
-        self.assertIn("no readable name", lines[0])
+        self.assertIn('suspect=yes reason="malformed ClientHello', lines[0])
         self.assertNotIn("splice", lines[0])
 
     def test_the_refusal_does_not_quote_the_name_it_refuses(self):
@@ -2110,7 +2133,7 @@ class TestLogInjection(unittest.TestCase):
         guest.sendall(_hello_bytes(server_name=self._field_forged))
         ours.settimeout(2.0)
         serve_tls(listener.inspection, ours, _where("tls"))
-        self.assertIn("no readable name", out.getvalue())
+        self.assertIn("malformed ClientHello", out.getvalue())
         self.assertNotIn("allowed", out.getvalue())
 
     def test_every_character_no_name_has_is_refused(self):
@@ -4003,7 +4026,7 @@ class TestCounters(unittest.TestCase):
         _, listener, _ = self._listener()
         reasons = listener.status()["drop_reasons"]
         self.assertIn("not allowlisted", reasons)
-        self.assertIn("no readable name", reasons)
+        self.assertIn("not TLS", reasons)
         self.assertIn("internal destination", reasons)
         self.assertTrue(all(v == 0 for v in reasons.values()))
 
@@ -4013,7 +4036,7 @@ class TestCounters(unittest.TestCase):
         _, listener, _ = self._listener()
         c = listener.inspection.counters
         c.record_drop("not allowlisted", "a.example")
-        c.record_drop("no readable name")
+        c.record_drop("not TLS")
         c.record_drop("connection ceiling reached")
         snap = listener.status()
         self.assertEqual(snap["dispositions"]["dropped"], 3)
@@ -4778,9 +4801,11 @@ class TestCallerIdentity(unittest.TestCase):
         listener, conn, log = self._handled(mod, self.OWN_UID + 1)
         self.assertIn(DROP_FOREIGN_CALLER, log)
         self.assertIn("rejected", log)
+        self.assertIn("suspect=yes", log)
         conn.close.assert_called()
         snap = listener.status()
         self.assertEqual(snap["drop_reasons"][DROP_FOREIGN_CALLER], 1)
+        self.assertEqual(snap["suspects"], 1)
         self.assertEqual(snap["dispositions"]["dropped"], 1)
 
     def test_the_workloads_own_uid_is_admitted(self):

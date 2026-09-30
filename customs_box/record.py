@@ -9,7 +9,9 @@ import shutil
 import time
 from collections import Counter
 
-from customs.egress_record import DROP_NOT_ALLOWLISTED, DROP_NOT_PERMITTED
+from customs.egress_record import (
+    DROP_NOT_ALLOWLISTED, DROP_NOT_PERMITTED, SUSPECT_REASONS,
+)
 
 # How far back the first lines are looked for: a line is under a
 # kilobyte.
@@ -95,6 +97,8 @@ def format_line(doc):
             f"{'-' if status is None else status:>3}  {what:<7} {where}")
     if doc.get("reason"):
         text += f"  ({doc['reason']})"
+    if doc.get("reason") in SUSPECT_REASONS:
+        text += "  suspect"
     if doc.get("credential"):
         text += f"  [{doc['credential']}]"
     return text

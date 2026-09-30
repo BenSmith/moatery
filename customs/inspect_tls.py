@@ -23,8 +23,9 @@ from .egress_mint import MintFailed, MintThrottled
 from .egress_plane import TLS
 from .egress_record import (
     DROP_ECH_SPLICED, DROP_MINT_FAILED, DROP_NOT_ALLOWLISTED, DROP_NOT_HTTP,
-    DROP_NOT_HTTP_POLICY, DROP_NO_NAME, DROP_RELAY_FAILED, DROP_THROTTLED,
-    NOTE_ECH, NOTE_H2_ONLY, Record,
+    DROP_HELLO_INCOMPLETE, DROP_HELLO_MALFORMED, DROP_NOT_HTTP_POLICY,
+    DROP_NOT_TLS, DROP_NO_SNI, DROP_RELAY_FAILED, DROP_THROTTLED, NOTE_ECH,
+    NOTE_H2_ONLY, Record,
 )
 from .egress_relay import relay
 from . import egress_relay
@@ -35,7 +36,10 @@ from .http_framing import (
 from .http_target import SCHEME_HTTPS
 from . import inspect_http
 from .inspect_scope import quoted
-from .tls_hello import TLS_EXT_ECH, HelloUnreadable, read_client_hello
+from .tls_hello import (
+    TLS_EXT_ECH, HelloIncomplete, HelloNotTls, HelloUnreadable,
+    read_client_hello,
+)
 
 
 def serve_tls(insp, conn, where):
@@ -52,7 +56,13 @@ def serve_tls(insp, conn, where):
     try:
         hello = read_client_hello(conn)
     except HelloUnreadable as exc:
-        insp.drop(where, DROP_NO_NAME, exc, mode="terminate")
+        if isinstance(exc, HelloNotTls):
+            reason = DROP_NOT_TLS
+        elif isinstance(exc, HelloIncomplete):
+            reason = DROP_HELLO_INCOMPLETE
+        else:
+            reason = DROP_HELLO_MALFORMED
+        insp.drop(where, reason, exc, mode="terminate")
         return
     if TLS_EXT_ECH in hello.extensions:
         insp.note(where, NOTE_ECH,
@@ -66,7 +76,7 @@ def serve_tls(insp, conn, where):
         # Before the drop: a hello that withholds SNI and carries ECH is the
         # tripwire's strongest signal.
         insp.counters.record_hello(hello, False)
-        insp.drop(where, DROP_NO_NAME,
+        insp.drop(where, DROP_NO_SNI,
                   "the ClientHello carries no server_name extension",
                   mode="terminate")
         return

@@ -9,7 +9,7 @@ and the status file belong to the process (customs/inspect_listener.py).
 import json
 import sys
 
-from .egress_record import Record, RequestLog
+from .egress_record import SUSPECT_REASONS, Record, RequestLog
 from .egress_upstream import Upstream
 from .inspect_counters import Counters
 from .inspect_policy import Policy
@@ -78,6 +78,8 @@ class Inspection:
             line.set(decision="drop", reason=reason, status=answered)
             line.emit()
         text = reason if detail is None else f"{reason}: {detail}"
+        if reason in SUSPECT_REASONS:
+            fields["suspect"] = "yes"
         named = "".join(f" {k}={v}" for k, v in
                         ((("host", host),) + tuple(fields.items()))
                         if v is not None)

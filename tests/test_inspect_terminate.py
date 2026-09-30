@@ -720,6 +720,8 @@ class TestTheHostHeaderIsPinnedToTheServerName(TerminationCase):
             status["per_host"][
                 "host does not match the server name (allowlisted)"],
             {"other.example": 1})
+        self.assertNotIn("suspect", out.getvalue())
+        self.assertEqual(status["suspects"], 0)
 
     def test_a_name_on_no_list_inside_the_session_is_the_other_figure(self):
         """Same refusal, same 421, different figure.
@@ -753,8 +755,9 @@ class TestTheHostHeaderIsPinnedToTheServerName(TerminationCase):
         # no bound on how many it invents. The log line carries it.
         self.assertNotIn("host does not match the server name",
                          status["per_host"])
-        self.assertIn("host=evil.example", out.getvalue())
+        self.assertIn("host=evil.example suspect=yes", out.getvalue())
         self.assertNotIn("(allowlisted)", out.getvalue())
+        self.assertEqual(status["suspects"], 1)
 
     def test_neither_binding_figure_is_a_policy_denial(self):
         """`not allowlisted` and `not permitted by policy` stay at zero

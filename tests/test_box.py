@@ -21,6 +21,7 @@ from unittest import mock
 from tests import REPO_ROOT, load_script
 from tests.test_quadlet_example import _ruleset
 
+from customs.egress_record import DROP_MISDIRECTED
 from customs.inspect_document import INSPECT_DIGEST_KEY, inspect_policy_digest
 from customs.inspect_policy import load_policy
 from customs_box import commands, document, netns, record
@@ -683,6 +684,12 @@ class TestRecordReading(unittest.TestCase):
                                      reason="not allowlisted")),
             "2026-09-30T01:02:03.456Z  drop    403  terminate "
             "evil.example  (not allowlisted)")
+        self.assertEqual(
+            record.format_line(_line(host="evil.example", decision="drop",
+                                     status=421, method="GET", path="/",
+                                     reason=DROP_MISDIRECTED)),
+            "2026-09-30T01:02:03.456Z  drop    421  GET     evil.example/  "
+            "(host does not match the server name)  suspect")
 
     def test_the_refusals_the_policy_still_makes(self):
         """A refusal the policy no longer makes is not one to act on."""
@@ -696,11 +703,11 @@ class TestRecordReading(unittest.TestCase):
                   reason="not permitted by policy"),
             _line(host="api.y", method="GET", path="/p", decision="drop",
                   reason="not permitted by policy"),
-            _line(host=None, decision="drop", reason="no readable name"),
+            _line(host=None, decision="drop", reason="not TLS"),
             _line(host="pypi.org", decision="forward", status=200)]
         self.assertEqual(record.refusals(docs, policy), [
             (3, "evil.example", "not allowlisted", ""),
-            (1, "-", "no readable name", ""),
+            (1, "-", "not TLS", ""),
             (1, "api.y", "not permitted by policy", "POST /p")])
 
     def test_the_names_no_list_admits(self):

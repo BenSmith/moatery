@@ -54,6 +54,7 @@ dispositions.terminated     connections terminated
 dispositions.forwarded      requests forwarded
 dispositions.dropped        refused; drop_reasons sums to it
 drop_reasons                {reason: count}, every DROP_REASONS key
+suspects                    of those, the SUSPECT_REASONS
 per_host                    {reason: {host: count}}, bounded
 per_host_totals             {reason: count}
 concurrency.open            connections held now

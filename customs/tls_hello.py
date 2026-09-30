@@ -51,8 +51,18 @@ class HelloUnreadable(Exception):
     """The first bytes are not a ClientHello this can read a name out of.
 
     Counted apart from a name that is not allowlisted: something that is not
-    TLS on the TLS port is the tunnelling signature.
+    TLS on the TLS port is the tunnelling signature. This class itself is a
+    hello that arrived and does not parse.
     """
+
+
+class HelloNotTls(HelloUnreadable):
+    """The first bytes are not a handshake record opening a ClientHello."""
+
+
+class HelloIncomplete(HelloUnreadable):
+    """The ClientHello did not arrive whole: the peer closed, the read
+    failed, or the time ran out."""
 
 
 class ClientHello(NamedTuple):
@@ -194,7 +204,7 @@ def read_client_hello(conn, max_bytes=CLIENTHELLO_MAX):
     while True:
         raw = _peek_at_least(conn, raw, pos + 5, max_bytes, deadline)
         if raw[pos] != TLS_HANDSHAKE:
-            raise HelloUnreadable(
+            raise HelloNotTls(
                 f"record type 0x{raw[pos]:02x} is not a TLS handshake record")
         length = int.from_bytes(raw[pos + 3:pos + 5], "big")
         raw = _peek_at_least(conn, raw, pos + 5 + length, max_bytes, deadline)
@@ -202,7 +212,7 @@ def read_client_hello(conn, max_bytes=CLIENTHELLO_MAX):
         pos += 5 + length
         if want is None and len(body) >= 4:
             if body[0] != TLS_CLIENT_HELLO:
-                raise HelloUnreadable(
+                raise HelloNotTls(
                     f"handshake type 0x{body[0]:02x} is not a ClientHello")
             want = int.from_bytes(body[1:4], "big")
         if want is not None and len(body) >= 4 + want:
@@ -223,12 +233,12 @@ def _peek_at_least(conn, raw, n, max_bytes, deadline):
         try:
             chunk = conn.recv(n, socket.MSG_PEEK | socket.MSG_WAITALL)
         except OSError as exc:
-            raise HelloUnreadable(f"read failed: {exc}") from None
+            raise HelloIncomplete(f"read failed: {exc}") from None
         if not chunk:
-            raise HelloUnreadable("the connection closed mid-ClientHello")
+            raise HelloIncomplete("the connection closed mid-ClientHello")
         if len(chunk) <= len(raw):
             if deadline is not None and time.monotonic() >= deadline:
-                raise HelloUnreadable(
+                raise HelloIncomplete(
                     "the ClientHello did not arrive whole in time")
             time.sleep(PEEK_POLL)
             continue

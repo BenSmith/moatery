@@ -9,7 +9,7 @@ import threading
 from .inspect_document import TLS_DEFAULT
 from .egress_record import (
     DROP_INTERNAL, DROP_REASONS, DROP_UNCLASSIFIED, NOTE_ECH, NOTE_KINDS,
-    PER_HOST_REASONS,
+    PER_HOST_REASONS, SUSPECT_REASONS,
 )
 from .egress_status import STATUS_TOP_N, BoundedCounts
 from .tls_hello import TLS_EXT_ECH
@@ -27,8 +27,9 @@ class Counters:
     `dispositions` is not one unit: a TLS decision is per connection
     (`spliced`, `terminated`) and a cleartext or terminated one per request
     (`forwarded`); `dropped` is whichever was refused. `drop_reasons` sums
-    to `dropped` exactly. `bumped` is how a refusal was delivered, not a
-    decision, so it stands outside `dispositions`.
+    to `dropped` exactly, and `suspects` is its SUSPECT_REASONS part.
+    `bumped` is how a refusal was delivered, not a decision, so it stands
+    outside `dispositions`.
 
     The per-host maps are bounded, since their keys can come from the guest;
     `per_host_totals` stays exact.
@@ -151,6 +152,7 @@ class Counters:
             return {
                 "dispositions": dict(self.dispositions),
                 "drop_reasons": reasons,
+                "suspects": sum(reasons[r] for r in SUSPECT_REASONS),
                 "ech": {"seen": self.notes[NOTE_ECH],
                         "alarm": self.ech_alarm},
                 "notes": dict(self.notes),

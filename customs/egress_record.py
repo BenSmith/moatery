@@ -34,7 +34,13 @@ def format_endpoint(addr):
 # to validate against: the guest is told only the status, so `reason` is the
 # only place one refusal is told from another.
 DROP_NOT_ALLOWLISTED = "not allowlisted"
-DROP_NO_NAME = "no readable name"
+# A ClientHello that could not be read, three ways: the bytes are not
+# TLS, they are and do not parse, or they stopped arriving. And one read
+# whole that names no server.
+DROP_NOT_TLS = "not TLS"
+DROP_HELLO_MALFORMED = "malformed ClientHello"
+DROP_HELLO_INCOMPLETE = "ClientHello incomplete"
+DROP_NO_SNI = "no server name"
 DROP_UNREADABLE_REQUEST = "unreadable request"
 DROP_UNREACHABLE = "upstream unreachable"
 DROP_INTERNAL = "internal destination"
@@ -69,7 +75,10 @@ DROP_ECH_SPLICED = "ECH on a spliced connection"
 
 DROP_REASONS = (
     DROP_NOT_ALLOWLISTED,
-    DROP_NO_NAME,
+    DROP_NOT_TLS,
+    DROP_HELLO_MALFORMED,
+    DROP_HELLO_INCOMPLETE,
+    DROP_NO_SNI,
     DROP_UNREADABLE_REQUEST,
     DROP_UNREACHABLE,
     DROP_INTERNAL,
@@ -105,6 +114,20 @@ PER_HOST_REASONS = (
     DROP_NOT_HTTP,
     DROP_NOT_HTTP_POLICY,
     DROP_ECH_SPLICED,
+)
+
+# The reasons that no client following its own configuration produces,
+# so each is worth a look whatever the policy says: something other than
+# TLS on the TLS port, a hello no TLS library writes, a connection to an
+# address rather than a name, a session reused for a name on no list, a
+# caller that is not this workload. The journal marks each `suspect=yes`
+# and the status file sums them as `suspects`.
+SUSPECT_REASONS = (
+    DROP_NOT_TLS,
+    DROP_HELLO_MALFORMED,
+    DROP_NO_SNI,
+    DROP_MISDIRECTED,
+    DROP_FOREIGN_CALLER,
 )
 
 # Where a drop whose reason is not in DROP_REASONS is counted, and shown
