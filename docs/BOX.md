@@ -8,9 +8,8 @@ namespace and loads the rules when it starts, the inspector's and the
 responder's listeners bound in that namespace, and the workload started
 after them.
 
-`create`, `enter`, `stop`, `rm`, `ls` and the credentials are built, and
-a rig proves them on a real host (below); the policy commands and the
-packaging are designed, not built.
+The commands are built, and a rig proves them on a real host (below);
+the packaging is designed, not built.
 
 ## What a box is for
 
@@ -51,10 +50,11 @@ the git, Python, ssh client and manual pages `fedora:44` leaves out.
 in order, the pod, the rules, the broker and the listeners, and the
 workload. It then checks that the pod's namespace holds both customs
 tables, and refuses if it does not, before `podman exec -it` as the
-user (or uid 0 with `--root`). A box with a broker has it started again
-if it had stopped. If it does not start, `enter` says so and enters
-anyway: a request with its credentials is then refused, not sent
-without, and the rest of the box works. The working directory is the
+user (or uid 0 with `--root`). A listener that is not running is started
+again, and so is a box's broker. If one does not start, `enter` says so
+and enters anyway: without the inspector the workload's connections are
+refused, without the responder its names do not resolve, and without
+the broker a request with its credentials is refused, not sent without. The working directory is the
 host's current one if that is inside a mount, and the box's home
 otherwise.
 
@@ -68,19 +68,37 @@ and its record stay unless `--home`.
 The command line is simple. The policy is where the effort goes: every
 host the workload reaches has to be listed.
 
-- **log** tails the box's record. With `--refused` it prints the lines
-  whose decision is `drop`, grouped by host and reason, and the
-  responder's `unlisted_names`: the hosts the workload asked for and was
-  refused.
-- **allow** adds HOST to `hosts`, or, with `--method` or `--path`, a
-  policy entry for it. **policy** opens the document in `$EDITOR`.
+- **log** follows the box's record, one line per request or refused
+  connection, from its last twenty, and on into the next file when it is
+  rotated. With `--refused` it prints instead the lines whose decision is
+  `drop`, counted by host and reason, with the method and path of a
+  request the entries refused; and the responder's `unlisted_names`, the
+  names the workload asked for that no list admits. Both leave out what
+  the policy now lets through.
+- **allow** only widens. A host no list names goes into `hosts`, or,
+  with `--method` or `--path`, into an entry of its own. A host `hosts`
+  admits is left alone: an entry for it would confine it to the entry. A
+  host entries govern takes another entry, since `hosts` is not
+  consulted for it, and so needs `--method` or `--path`; if it is
+  brokered, `--path`, or its key would go with every request. HOST is a
+  name; a pattern is written with `policy`.
+- **policy** opens a copy of the document in `$VISUAL`, `$EDITOR` or
+  `vi`. A copy that comes back unchanged changes nothing; one that does
+  not load is refused, and opened again if there is a terminal to ask
+  on.
 - Either checks the edited document with the inspector's own loader
-  (`customs.inspect_policy.load_policy`) before it replaces the file, so
-  a mistake is an error at the command and not a box whose inspector
-  will not start. Then it restarts the box's inspector and responder.
-  The policy is read at start ([POLICY.md](POLICY.md)). The restart
-  binds again in the same namespace, and a connection in the gap is
-  refused, not let through.
+  (`customs.inspect_policy.load_policy`), and its credentials as
+  `create` does, before it replaces the file, so a mistake is an error
+  at the command and not a box whose inspector will not start. A policy
+  that names a credential for the first time gains a broker, and one that
+  names none loses it: the box's units are written again. Then, if they
+  are running, the inspector and the responder restart, and not the
+  workload: nothing requires them. The policy is read at start
+  ([POLICY.md](POLICY.md)). The restart binds again in the same
+  namespace; a connection in the gap is refused, not let through, and one
+  open at the restart is cut. A stopped box has the policy from its next
+  start; a running workload has a new credential's variable from its
+  next start.
 
 Package installs inside a box are the hard case: a mirror list spreads
 over many hosts, and the install does not outlive a stop (next
@@ -185,12 +203,18 @@ As in examples/quadlet, with these differences:
 - No `[Install]`: a box runs from `enter` to `stop`.
 
 What starts what: `enter` starts `customs-box-NAME.service`, which
-`Requires=` and is `After=` the inspector and the responder; they are
+`Wants=` and is `After=` the inspector and the responder; they are
 `BindsTo=` and `After=` the pod, whose unit is active only once its
 `ExecStartPost=` has loaded the rules. A rules load that fails fails
 the pod, and nothing after it starts. The pod `Wants=` the listeners, so
 a restart of the pod brings them back into its new namespace. The
 inspector `Wants=` the broker and starts after it is listening.
+
+Nothing `Requires=` a listener: a restart of a required unit restarts
+what requires it, and a new policy would restart the workload. A
+listener that is not running leaves the rules sending the workload's
+connections to a port nothing listens on, which refuses them; one that
+dies is started again (`Restart=on-failure`).
 
 ## Refused
 

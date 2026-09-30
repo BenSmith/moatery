@@ -15,6 +15,9 @@ Usage:
   customs-box create NAME --policy FILE [--image IMAGE]
                      [--mount SRC[:DST][:ro]]...
   customs-box enter NAME [--root] [-- COMMAND...]
+  customs-box log NAME [--refused]
+  customs-box allow NAME HOST [--method M]... [--path P]...
+  customs-box policy NAME
   customs-box stop NAME
   customs-box rm NAME [--home]
   customs-box ls

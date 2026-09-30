@@ -5,14 +5,15 @@ import getpass
 import os
 import sys
 
-from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, BoxError, create,
-                       credential_add, credential_ls, credential_rm, enter,
-                       ls, rm, stop, unit_exec, unit_rules, unit_sudoers)
+from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, BoxError, allow,
+                       create, credential_add, credential_ls, credential_rm,
+                       edit_policy, enter, log, ls, refused, rm, stop,
+                       unit_exec, unit_rules, unit_sudoers)
 from .netns import NetnsError
 from .paths import user_dirs
 from .process import CommandFailed
 
-PUBLIC = "{create,enter,stop,rm,ls,credential}"
+PUBLIC = "{create,enter,log,allow,policy,stop,rm,ls,credential}"
 
 
 def build_parser():
@@ -37,6 +38,25 @@ def build_parser():
                             "command in it, a shell by default")
     p.add_argument("name")
     p.add_argument("--root", action="store_true", help="as uid 0")
+    p = sub.add_parser("log", help="follow a box's record")
+    p.add_argument("name")
+    p.add_argument("--refused", action="store_true",
+                   help="instead, what the record holds that the box's "
+                        "policy still refuses, and the names asked for "
+                        "that no list admits")
+    p = sub.add_parser("allow", help="let a box reach a host, or a method "
+                                     "or path on it; its listeners restart")
+    p.add_argument("name")
+    p.add_argument("host")
+    p.add_argument("--method", action="append", default=[],
+                   help="a method the host is allowed; repeatable")
+    p.add_argument("--path", action="append", default=[],
+                   metavar="PATTERN",
+                   help="a path pattern the host is allowed, where * "
+                        "matches / too; repeatable")
+    p = sub.add_parser("policy", help="edit a box's policy in $EDITOR; its "
+                                      "listeners restart")
+    p.add_argument("name")
     p = sub.add_parser("stop", help="stop a box")
     p.add_argument("name")
     p = sub.add_parser("rm", help="stop a box and remove it; its home "
@@ -112,6 +132,37 @@ def run_credential(args, *, dirs, stdin):
         credential_rm(args.id, dirs=dirs)
 
 
+def _applied(name, what, unchanged, applied):
+    if applied is None:
+        print(f"box {name}: {unchanged}")
+        return
+    running, moved = applied
+    print(f"box {name}: {what}; "
+          + ("its inspector and responder restarted" if running
+             else "it applies from the box's next start")
+          + ("; the workload has its new variables from its next start"
+             if moved else ""))
+
+
+def print_refused(name, rows, names):
+    if not rows and not names:
+        print(f"box {name}: its policy refuses nothing its record or its "
+              "responder holds")
+        return
+    if rows:
+        width = max(len(host) for _n, host, _reason, _req in rows)
+        print("refused, and refused by the policy now:")
+        for n, host, reason, request in rows:
+            print(f"  {n:>6}  {host:<{width}}  "
+                  + (f"{request}  " if request else "") + f"({reason})")
+    if names:
+        print("names asked for that no list admits:")
+        for n, host in names:
+            print(f"  {n:>6}  {host}")
+    print(f"to allow one: customs-box allow {name} HOST "
+          "[--method M]... [--path P]...")
+
+
 def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
     dirs = user_dirs(environ)
     if args.command == "create":
@@ -126,6 +177,23 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
     elif args.command == "enter":
         enter(args.name, args.argv, root=args.root, dirs=dirs,
               cwd=cwd, environ=environ, isatty=isatty)
+    elif args.command == "log" and args.refused:
+        print_refused(args.name, *refused(args.name, dirs=dirs))
+    elif args.command == "log":
+        try:
+            log(args.name, dirs=dirs,
+                write=lambda line: print(line, flush=True))
+        except KeyboardInterrupt:
+            pass
+    elif args.command == "allow":
+        _applied(args.name, f"{args.host} allowed",
+                 "its policy allows that already",
+                 allow(args.name, args.host, methods=args.method,
+                       paths=args.path, dirs=dirs))
+    elif args.command == "policy":
+        _applied(args.name, "policy replaced", "policy unchanged",
+                 edit_policy(args.name, dirs=dirs, environ=environ,
+                             isatty=isatty))
     elif args.command == "stop":
         stop(args.name, dirs=dirs)
     elif args.command == "rm":

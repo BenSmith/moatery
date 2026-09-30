@@ -1,17 +1,22 @@
 """What each command does. The command line is cli's; everything here
 takes its inputs as arguments, so the tests can hand them in."""
 
+import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path, PurePosixPath
 
 from customs.broker_profiles import (BROKER_DEFAULT_AUTH_FORMAT,
                                      BROKER_DEFAULT_AUTH_HEADER)
 from customs.inspect_policy import load_policy
 
-from . import credentials
+from . import credentials, document, record
 from .credentials import CredentialError, brokering, describe
+from .document import AllowRefused
 from .mounts import MountRefused, parse_mount, refuse
 from .netns import exec_with_pid, load_rules, pod_pid, rules_loaded
 from .paths import Box, boxes_root, credentials_root, described, sealed, \
@@ -251,9 +256,22 @@ def _login_shell(box, user, environ, runner):
     return [shell or "/bin/sh", "-l"]
 
 
-def _broker_state(box, runner):
-    return runner(["systemctl", "--user", "is-active", box.broker_service],
+def _state(unit, runner):
+    return runner(["systemctl", "--user", "is-active", unit],
                   check=False).stdout.strip()
+
+
+def _broker_state(box, runner):
+    return _state(box.broker_service, runner)
+
+
+def _listeners(box):
+    """Each listener's unit, and what the box's workload finds while it
+    is not running."""
+    return ((box.inspect_service, "inspector",
+             "its connections are refused"),
+            (box.resolve_service, "responder",
+             "its names do not resolve"))
 
 
 def _remove_tree(path):
@@ -299,6 +317,15 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
         raise BoxError(f"box {name}'s namespace has no customs rules: its "
                        "pod was started outside systemd. customs-box stop "
                        f"{name}, then enter it again")
+    # Nothing requires them, so the workload starts without them.
+    for unit, what, effect in _listeners(box):
+        if _state(unit, runner) == "active":
+            continue
+        runner(["systemctl", "--user", "reset-failed", unit], check=False)
+        if runner(["systemctl", "--user", "start", unit],
+                  check=False).returncode != 0:
+            warn(f"box {name}'s {what} did not start, and {effect} until "
+                 f"it does; see journalctl --user -u {unit}")
     # Started again if it stopped; without it, a request with one of its
     # credentials is refused, not sent without.
     if box.broker_file.exists() and runner(
@@ -341,6 +368,141 @@ def ls(*, dirs, runner=run):
                        check=False).stdout.strip() or "unknown"
         rows.append((box.name, state, settings.image))
     return rows
+
+
+def log(name, *, dirs, write=print, pause=time.sleep):
+    box, _settings = _existing(name, dirs)
+    record.follow(box.record, write, pause=pause)
+
+
+def refused(name, *, dirs):
+    """The refusals in the box's record its policy would still make, and
+    the names its workload asked for that no list admits."""
+    box, _settings = _existing(name, dirs)
+    policy = _policy(box.policy)
+    return (record.refusals(record.lines(box.record), policy),
+            record.unlisted(box.resolve_status, policy))
+
+
+def allow(name, host, *, methods, paths, dirs, runner=run):
+    """Widen the box's policy for HOST and apply it. None if the policy
+    allows it already."""
+    box, settings = _existing(name, dirs)
+    policy = _policy(box.policy)
+    try:
+        doc = document.allow(json.loads(box.policy.read_text()), policy,
+                             document.host_name(host), methods, paths)
+    except AllowRefused as exc:
+        raise BoxError(f"allow: {exc}") from None
+    if doc is None:
+        return None
+    staged, broker = _checked(box, document.dumps(doc), dirs)
+    return _apply_policy(box, settings, staged, broker, runner)
+
+
+def edit_policy(name, *, dirs, environ, isatty, runner=run,
+                edit=subprocess.run, ask=input):
+    """Open a copy of the box's policy in the user's editor, and apply it
+    once it loads. A copy that does not is opened again, if there is a
+    terminal to ask on. None if it came back unchanged."""
+    box, settings = _existing(name, dirs)
+    editor = shlex.split(environ.get("VISUAL") or environ.get("EDITOR")
+                         or "vi")
+    original = box.policy.read_text()
+    draft = box.config / ".policy.json.edit"
+    _private(draft, original)
+    try:
+        while True:
+            done = edit([*editor, str(draft)])
+            if done.returncode != 0:
+                raise BoxError(f"{editor[0]} exited {done.returncode}; the "
+                               "policy is unchanged")
+            text = draft.read_text()
+            if text == original:
+                return None
+            try:
+                staged, broker = _checked(box, text, dirs)
+                break
+            except BoxError as exc:
+                if not isatty:
+                    raise
+                _warn(str(exc))
+                if ask("edit it again? [Y/n] ").strip().lower() in ("n",
+                                                                    "no"):
+                    raise BoxError("the policy is unchanged") from None
+    finally:
+        draft.unlink(missing_ok=True)
+    return _apply_policy(box, settings, staged, broker, runner)
+
+
+def _private(path, text):
+    """Written as the user's alone from its creation."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(text)
+    os.chmod(path, 0o600)
+
+
+def _checked(box, text, dirs):
+    """The text staged beside the policy, loaded as the inspector will
+    load it, and the broker it gives the box; or raise, staging nothing."""
+    staged = box.config / ".policy.json.new"
+    try:
+        _private(staged, text)
+        try:
+            policy = load_policy(staged)
+        except (OSError, ValueError) as exc:
+            raise BoxError("policy: " + str(exc).replace(
+                f"{staged}: ", "")) from None
+        broker = _broker(policy, dirs)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+    return staged, broker
+
+
+def _apply_policy(box, settings, staged, broker, runner):
+    """Put a checked policy in place, with the units its broker needs, and
+    restart the listeners if they are running: they read it at start.
+    Returns whether they were, and whether the workload's unit changed
+    while it ran, which it has from its next start."""
+    units = render(box, settings, broker)
+    changed = {path for path, text in units.items()
+               if not path.exists() or path.read_text() != text}
+    gone = {path for path in box.unit_files
+            if path not in units and path.exists()}
+    running = any(_state(unit, runner) in ("active", "activating")
+                  for unit, _what, _effect in _listeners(box))
+    if box.broker_file in gone:
+        runner(["systemctl", "--user", "stop", box.broker_service],
+               check=False)
+        _clear_broker(box, runner)
+    os.replace(staged, box.policy)
+    if changed or gone:
+        _write_units(box, settings, broker)
+        runner(["systemctl", "--user", "daemon-reload"])
+    if not running:
+        return False, False
+    broker_failed = False
+    if broker and box.broker_file in changed:
+        _reset_broker(box, runner)
+        broker_failed = runner(
+            ["systemctl", "--user", "start", box.broker_service],
+            check=False).returncode != 0
+    try:
+        runner(["systemctl", "--user", "try-restart", box.inspect_service,
+                box.resolve_service])
+    except CommandFailed as exc:
+        raise BoxError(f"box {box.name}'s policy is replaced, but its "
+                       f"listeners did not start again ({exc}); see "
+                       f"journalctl --user -u '{box.unit}-*'") from None
+    if broker_failed:
+        raise BoxError(f"box {box.name}'s policy is replaced, but its broker "
+                       "did not start, and requests with its credentials "
+                       "are refused; see journalctl --user -u "
+                       f"{box.broker_service}")
+    return True, (box.container_file in changed
+                  and _state(box.service, runner) == "active")
 
 
 def _naming(credential, dirs):

@@ -22,7 +22,7 @@ from tests import REPO_ROOT, load_script
 from tests.test_quadlet_example import _ruleset
 
 from customs.inspect_policy import load_policy
-from customs_box import commands, netns
+from customs_box import commands, document, netns, record
 from customs_box.cli import main, parse
 from customs_box.credentials import (Broker, Credential, CredentialError,
                                      brokering, describe)
@@ -178,21 +178,28 @@ class TestUnits(unittest.TestCase):
                     with self.subTest(file=name, key=key, unit=unit):
                         self.assertIn(unit, self.box.services)
 
-    def test_the_pod_starts_the_listeners_and_the_workload_needs_them(self):
+    def test_the_pod_starts_the_listeners_and_the_workload_waits(self):
+        """Wants=, not Requires=: a new policy restarts the listeners, and
+        a restart of a unit the workload required would restart it."""
         for unit in (self.box.inspect_service, self.box.resolve_service):
             with self.subTest(unit=unit):
                 self.assertIn(unit, _keys(self.pod, "Wants"))
-                self.assertIn(unit, _keys(self.work, "Requires"))
+                self.assertIn(unit, _keys(self.work, "Wants"))
                 self.assertIn(unit, _keys(self.work, "After"))
+                for text in self.units.values():
+                    self.assertNotIn(unit, _keys(text, "Requires"))
+                    self.assertNotIn(unit, _keys(text, "BindsTo"))
         self.assertEqual(_keys(self.work, "Pod"), ["customs-box-agent.pod"])
 
     def test_the_listeners_are_bound_to_the_pod_and_notify(self):
         """As Type=simple a listener unit is started when forked, and the
-        workload's first dial can find nothing bound."""
+        workload's first dial can find nothing bound. One that dies is
+        started again, since nothing it serves would notice."""
         for text in (self.inspect, self.resolve):
             self.assertEqual(_keys(text, "BindsTo"), [self.box.pod_service])
             self.assertIn(self.box.pod_service, _keys(text, "After"))
             self.assertEqual(_keys(text, "Type"), ["notify"])
+            self.assertEqual(_keys(text, "Restart"), ["on-failure"])
 
     def test_the_pod_loads_the_rules_and_has_no_cgroup_or_host_names(self):
         self.assertEqual(_exec_words(self.pod, "ExecStartPost"),
@@ -507,11 +514,173 @@ class TestRules(unittest.TestCase):
             netns.exec_with_pid("agent", ["/py"], runner, None)
 
 
+class TestAllowDocument(unittest.TestCase):
+    """allow widens and never narrows: whatever the policy permitted, the
+    new one permits too, and it permits what was asked."""
+
+    DOC = {"tls": "inspect", "hosts": ["pypi.org", "*.github.com"],
+           "splice": [],
+           "policy": [{"host": "api.x", "methods": ["POST"],
+                       "paths": ["/v1/*"], "credential": "k"},
+                      {"host": "api.y", "methods": ["GET"]}]}
+
+    def _load(self, doc):
+        path = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (path / "p.json").write_text(document.dumps(doc))
+        return load_policy(path / "p.json")
+
+    def _allow(self, host, methods=(), paths=()):
+        before = self._load(self.DOC)
+        doc = document.allow(self.DOC, before, document.host_name(host),
+                             methods, paths)
+        if doc is None:
+            return None, before
+        after = self._load(doc)
+        for probe in (("pypi.org", "GET", "/x"), ("a.github.com", "PUT", "/"),
+                      ("api.x", "POST", "/v1/m"), ("api.y", "GET", "/z")):
+            with self.subTest(still=probe):
+                self.assertTrue(after.permits(*probe))
+        return doc, after
+
+    def test_a_new_host_is_listed(self):
+        doc, after = self._allow("Example.COM.")
+        self.assertEqual(doc["hosts"][-1], "example.com")
+        self.assertEqual(doc["policy"], self.DOC["policy"])
+        self.assertTrue(after.permits("example.com", "DELETE", "/any"))
+
+    def test_a_new_host_with_a_method_or_path_is_an_entry(self):
+        doc, after = self._allow("example.com", ["get"], ["/a/*"])
+        self.assertEqual(doc["policy"][-1], {"host": "example.com",
+                                             "methods": ["GET"],
+                                             "paths": ["/a/*"]})
+        self.assertTrue(after.permits("example.com", "GET", "/a/b"))
+        self.assertFalse(after.permits("example.com", "POST", "/a/b"))
+
+    def test_a_listed_host_is_allowed_already(self):
+        """An entry for it would restrict it to the entry."""
+        for host, methods in (("pypi.org", ()), ("pypi.org", ["POST"]),
+                              ("a.github.com", ())):
+            with self.subTest(host=host, methods=methods):
+                self.assertIsNone(self._allow(host, methods)[0])
+
+    def test_a_governed_host_takes_another_entry_and_not_hosts(self):
+        doc, after = self._allow("api.y", ["POST"], ["/up"])
+        self.assertEqual(doc["hosts"], self.DOC["hosts"])
+        self.assertTrue(after.permits("api.y", "POST", "/up"))
+        self.assertFalse(after.permits("api.y", "POST", "/down"))
+        with self.assertRaisesRegex(document.AllowRefused, "--method"):
+            self._allow("api.y")
+        self.assertIsNone(self._allow("api.y", ["get"])[0])
+
+    def test_a_brokered_host_takes_paths_or_nothing(self):
+        """Its key is sent with every request an entry for it permits."""
+        with self.assertRaisesRegex(document.AllowRefused,
+                                    "brokered with k"):
+            self._allow("api.x", ["GET"])
+        doc, after = self._allow("api.x", ["GET"], ["/v1/models"])
+        self.assertTrue(after.permits("api.x", "GET", "/v1/models"))
+        self.assertEqual(after.credential_for("api.x"), "k")
+
+    def test_what_is_not_a_name_or_a_path(self):
+        for host in ("*.example.com", "a b", "", "ex[am]ple.com"):
+            with self.subTest(host=host), \
+                    self.assertRaises(document.AllowRefused):
+                document.host_name(host)
+        with self.assertRaisesRegex(document.AllowRefused, "begins with /"):
+            self._allow("example.com", paths=["v1/x"])
+
+
+def _line(**fields):
+    doc = dict.fromkeys(("ts", "host", "method", "path", "decision",
+                         "reason", "status", "credential"))
+    doc.update(ts="2026-09-30T01:02:03.456Z", mode="terminate", **fields)
+    return doc
+
+
+class TestRecordReading(unittest.TestCase):
+    def test_a_line_as_a_person_reads_it(self):
+        self.assertEqual(
+            record.format_line(_line(host="api.x", method="POST",
+                                     path="/v1/m", decision="forward",
+                                     status=200, credential="k")),
+            "2026-09-30T01:02:03.456Z  forward 200  POST    api.x/v1/m  [k]")
+        self.assertEqual(
+            record.format_line(_line(host="evil.example", decision="drop",
+                                     status=403,
+                                     reason="not allowlisted")),
+            "2026-09-30T01:02:03.456Z  drop    403  terminate "
+            "evil.example  (not allowlisted)")
+
+    def test_the_refusals_the_policy_still_makes(self):
+        """A refusal the policy no longer makes is not one to act on."""
+        policy = _policy(self, [{"host": "api.y", "methods": ["GET"]}],
+                         hosts=["now.listed"])
+        docs = [_line(host="evil.example", decision="drop",
+                      reason="not allowlisted")] * 3 + [
+            _line(host="now.listed", decision="drop",
+                  reason="not allowlisted"),
+            _line(host="api.y", method="POST", path="/p", decision="drop",
+                  reason="not permitted by policy"),
+            _line(host="api.y", method="GET", path="/p", decision="drop",
+                  reason="not permitted by policy"),
+            _line(host=None, decision="drop", reason="no readable name"),
+            _line(host="pypi.org", decision="forward", status=200)]
+        self.assertEqual(record.refusals(docs, policy), [
+            (3, "evil.example", "not allowlisted", ""),
+            (1, "-", "no readable name", ""),
+            (1, "api.y", "not permitted by policy", "POST /p")])
+
+    def test_the_names_no_list_admits(self):
+        policy = _policy(self, [], hosts=["pypi.org"])
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        status = tmp / "resolve-status.json"
+        self.assertEqual(record.unlisted(status, policy), [])
+        status.write_text(json.dumps({"unlisted_names": {
+            "a.example": 2, "pypi.org": 1, "b.example": 5}}))
+        self.assertEqual(record.unlisted(status, policy),
+                         [(5, "b.example"), (2, "a.example")])
+
+    def test_follow_shows_the_last_lines_then_new_ones_and_rotations(self):
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        path = tmp / "requests.log"
+        old = [_line(host=f"h{i}.example", decision="forward", status=200)
+               for i in range(5)]
+        path.write_text("".join(json.dumps(d) + "\n" for d in old))
+        seen, steps = [], []
+
+        def pause(_interval):
+            steps.append(len(seen))
+            if len(steps) == 1:
+                with path.open("a") as f:
+                    f.write(json.dumps(_line(host="new.example")) + "\n")
+                    f.write('{"half')
+            elif len(steps) == 2:
+                # Renamed away, and a new record already longer than the
+                # old one was when read.
+                path.rename(tmp / "requests.log.1")
+                path.write_text("".join(
+                    json.dumps(_line(host=f"r{i}.example")) + "\n"
+                    for i in range(9)))
+            elif len(steps) == 3:
+                # Truncated where it is.
+                path.write_text(json.dumps(_line(host="cut.example")) + "\n")
+            else:
+                raise KeyboardInterrupt
+
+        with self.assertRaises(KeyboardInterrupt):
+            record.follow(path, seen.append, last=2, pause=pause)
+        self.assertEqual([line.split()[4] for line in seen],
+                         ["h3.example", "h4.example", "new.example"]
+                         + [f"r{i}.example" for i in range(9)]
+                         + ["cut.example"])
+
+
 class FakeHost:
     """podman, systemctl and customs-mint-ca, as far as the commands ask."""
 
     def __init__(self, state_root, rules=True, load_state="loaded",
-                 unshare=True, broker=True, broker_state="active"):
+                 unshare=True, broker=True, broker_state="active",
+                 listeners=True, listener_state="active"):
         self.calls = []
         self.inputs = []
         self.state_root = state_root
@@ -520,6 +689,8 @@ class FakeHost:
         self.unshare = unshare
         self.broker = broker
         self.broker_state = broker_state
+        self.listeners = listeners
+        self.listener_state = listener_state
 
     def __call__(self, argv, *, input=None, check=True, env=None):
         self.calls.append(argv)
@@ -537,6 +708,13 @@ class FakeHost:
         elif argv[:3] == ["systemctl", "--user", "is-active"] and \
                 argv[-1].endswith("-broker.service"):
             out = self.broker_state + "\n"
+        elif argv[:3] == ["systemctl", "--user", "is-active"] and \
+                argv[-1].endswith(("-inspect.service", "-resolve.service")):
+            out = self.listener_state + "\n"
+        elif argv[:3] == ["systemctl", "--user", "try-restart"] or (
+                argv[:3] == ["systemctl", "--user", "start"] and argv[-1]
+                .endswith(("-inspect.service", "-resolve.service"))):
+            code = 0 if self.listeners else 1
         elif "customs-mint-ca" in line:
             ca = Path(argv[argv.index("--state-dir") + 1]) / "ca.pem"
             ca.write_text("BOX CA\n")
@@ -910,6 +1088,211 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("no box nosuch",
                       "".join(c.args[0] for c in err.write.call_args_list))
+
+    def _restarts(self, host):
+        return [c for c in host.calls if c[:3] == ["systemctl", "--user",
+                                                   "try-restart"]]
+
+    def test_allow_restarts_the_listeners_and_never_the_workload(self):
+        box, _ = self._create()
+        host = FakeHost(self.home)
+        self.assertEqual(commands.allow("agent", "Example.com", methods=[],
+                                        paths=[], dirs=self.dirs,
+                                        runner=host), (True, False))
+        self.assertIn("example.com", json.loads(box.policy.read_text())[
+            "hosts"])
+        self.assertEqual(box.policy.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self._restarts(host), [[
+            "systemctl", "--user", "try-restart", box.inspect_service,
+            box.resolve_service]])
+        for argv in host.calls:
+            self.assertNotIn(box.service, argv)
+            self.assertNotIn(box.pod_service, argv)
+        self.assertEqual(sorted(p.name for p in box.config.iterdir()),
+                         ["box.json", "bundle.pem", "policy.json"])
+
+    def test_allow_on_a_stopped_box_applies_from_its_next_start(self):
+        box, _ = self._create()
+        host = FakeHost(self.home, listener_state="inactive")
+        self.assertEqual(commands.allow("agent", "example.com", methods=[],
+                                        paths=[], dirs=self.dirs,
+                                        runner=host), (False, False))
+        self.assertIn("example.com", box.policy.read_text())
+        self.assertEqual(self._restarts(host), [])
+
+    def test_an_allow_allowed_already_or_refused_changes_nothing(self):
+        box, _ = self._create()
+        before = box.policy.read_text()
+        host = FakeHost(self.home)
+        self.assertIsNone(commands.allow("agent", "pypi.org", methods=[],
+                                         paths=[], dirs=self.dirs,
+                                         runner=host))
+        with self.assertRaisesRegex(commands.BoxError, "not a host name"):
+            commands.allow("agent", "*.x", methods=[], paths=[],
+                           dirs=self.dirs, runner=host)
+        self.assertEqual(box.policy.read_text(), before)
+        self.assertEqual(host.calls, [])
+
+    def _editor(self, *texts):
+        """An editor writing each text in turn, and what it was run as."""
+        texts, runs = list(texts), []
+
+        def edit(argv):
+            runs.append(argv)
+            text = texts.pop(0)
+            if text is not None:
+                Path(argv[-1]).write_text(text)
+            return subprocess.CompletedProcess(argv, 0)
+        return edit, runs
+
+    def _edit(self, edit, *, isatty=False, ask=None, host=None, env=None):
+        return commands.edit_policy(
+            "agent", dirs=self.dirs, environ=env or self.env, isatty=isatty,
+            runner=host or FakeHost(self.home), edit=edit,
+            ask=ask or self.fail)
+
+    def test_policy_opens_a_copy_in_the_editor_and_applies_it(self):
+        box, _ = self._create()
+        edit, runs = self._editor('{"hosts": ["example.com"]}')
+        host = FakeHost(self.home)
+        self.assertEqual(self._edit(edit, host=host,
+                                    env={**self.env,
+                                         "EDITOR": "code --wait"}),
+                         (True, False))
+        (argv,) = runs
+        self.assertEqual(argv[:2], ["code", "--wait"])
+        self.assertNotEqual(Path(argv[-1]), box.policy)
+        self.assertEqual(box.policy.read_text(),
+                         '{"hosts": ["example.com"]}')
+        self.assertEqual(len(self._restarts(host)), 1)
+        self.assertIsNone(self._edit(self._editor(None)[0]))
+
+    def test_a_policy_that_does_not_load_changes_nothing(self):
+        """Refused at the command, and not by an inspector that will not
+        start; the box keeps its listeners, and nothing is left beside
+        the policy."""
+        box, _ = self._create()
+        before = box.policy.read_text()
+        for bad, words in (('{"hosts": "x"}', "'hosts'"),
+                           ("{", "policy: Expecting"),
+                           ('{"policy": [{"host": "api.x", "paths": ["/*"],'
+                            ' "credential": "nosuch"}]}', "no credential")):
+            host = FakeHost(self.home)
+            with self.subTest(bad), \
+                    self.assertRaisesRegex(commands.BoxError, words):
+                self._edit(self._editor(bad)[0], host=host)
+            self.assertEqual(box.policy.read_text(), before)
+            self.assertEqual(host.calls, [])
+            self.assertNotIn(".policy.json.new", str(host.calls))
+        self.assertEqual(sorted(p.name for p in box.config.iterdir()),
+                         ["box.json", "bundle.pem", "policy.json"])
+        failing = lambda argv: subprocess.CompletedProcess(argv, 1)
+        with self.assertRaisesRegex(commands.BoxError, "exited 1"):
+            self._edit(failing)
+        self.assertEqual(box.policy.read_text(), before)
+
+    def test_at_a_terminal_a_policy_that_does_not_load_is_edited_again(self):
+        box, _ = self._create()
+        asked = []
+        edit, runs = self._editor('{"hosts": "x"}', '{"hosts": ["y.z"]}')
+        with mock.patch("sys.stderr"):
+            self._edit(edit, isatty=True,
+                       ask=lambda q: asked.append(q) or "")
+        self.assertEqual((len(runs), len(asked)), (2, 1))
+        self.assertIn("y.z", box.policy.read_text())
+        before = box.policy.read_text()
+        with mock.patch("sys.stderr"), \
+                self.assertRaisesRegex(commands.BoxError, "unchanged"):
+            self._edit(self._editor('{"hosts": "x"}')[0], isatty=True,
+                       ask=lambda q: "n")
+        self.assertEqual(box.policy.read_text(), before)
+
+    def test_a_policy_naming_a_credential_gains_a_broker_and_loses_it(self):
+        """Its units are written again, the broker started before the
+        listeners restart, and the workload told of its new variable."""
+        self._add()
+        box, _ = self._create()
+        brokered = self._brokered().read_text()
+        host = FakeHost(self.home)
+        self.assertEqual(self._edit(self._editor(brokered)[0], host=host),
+                         (True, False))
+        self.assertTrue(box.broker_file.is_file())
+        self.assertIn(f"unix:{box.broker_socket}",
+                      box.inspect_file.read_text())
+        self.assertIn("Environment=K=", box.container_file.read_text())
+        reload = ["systemctl", "--user", "daemon-reload"]
+        start = ["systemctl", "--user", "start", box.broker_service]
+        (restart,) = self._restarts(host)
+        self.assertLess(host.calls.index(reload), host.calls.index(start))
+        self.assertLess(host.calls.index(start), host.calls.index(restart))
+        host = FakeHost(self.home)
+        self._edit(self._editor('{"hosts": ["pypi.org"]}')[0], host=host)
+        self.assertFalse(box.broker_file.exists())
+        self.assertNotIn("--broker", box.inspect_file.read_text())
+        self.assertIn(["systemctl", "--user", "stop", box.broker_service],
+                      host.calls)
+
+    def test_enter_starts_a_listener_that_is_not_running(self):
+        """Nothing requires them, so the workload starts without them."""
+        self._create()
+        for works in (True, False):
+            host, ran, said = FakeHost(self.home, listener_state="failed",
+                                       listeners=works), [], []
+            commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                           cwd=self.home, environ=self.env, isatty=False,
+                           runner=host, execvp=lambda f, a: ran.append(a),
+                           warn=said.append)
+            with self.subTest(works=works):
+                for unit in ("customs-box-agent-inspect.service",
+                             "customs-box-agent-resolve.service"):
+                    self.assertLess(
+                        host.calls.index(["systemctl", "--user",
+                                          "reset-failed", unit]),
+                        host.calls.index(["systemctl", "--user", "start",
+                                          unit]))
+                self.assertEqual(len(ran), 1)
+                self.assertEqual(len(said), 0 if works else 2)
+        host = FakeHost(self.home)
+        commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                       cwd=self.home, environ=self.env, isatty=False,
+                       runner=host, execvp=lambda f, a: None,
+                       warn=self.fail)
+        self.assertNotIn("reset-failed", str(host.calls))
+
+    def test_log_refused_reads_the_record_against_the_policy(self):
+        box, _ = self._create()
+        box.record.write_text("".join(json.dumps(d) + "\n" for d in (
+            _line(host="pypi.org", decision="drop", reason="not allowlisted"),
+            _line(host="evil.example", decision="drop",
+                  reason="not allowlisted"))))
+        box.resolve_status.write_text(json.dumps(
+            {"unlisted_names": {"evil.example": 1}}))
+        self.assertEqual(commands.refused("agent", dirs=self.dirs),
+                         ([(1, "evil.example", "not allowlisted", "")],
+                          [(1, "evil.example")]))
+
+    def test_the_command_line_takes_the_policy_loop(self):
+        from customs_box import cli
+        args = parse(["allow", "agent", "api.x", "--method", "GET",
+                      "--method", "post", "--path", "/v1/*"])
+        self.assertEqual((args.name, args.host, args.method, args.path),
+                         ("agent", "api.x", ["GET", "post"], ["/v1/*"]))
+        self.assertTrue(parse(["log", "agent", "--refused"]).refused)
+        with mock.patch.object(cli, "allow", return_value=(True, False)), \
+                mock.patch("sys.stdout") as out:
+            cli.run_command(args, tool=(), environ=self.env, cwd=self.home,
+                            isatty=False)
+        said = "".join(c.args[0] for c in out.write.call_args_list)
+        self.assertIn("box agent: api.x allowed; its inspector and "
+                      "responder restarted", said)
+        with mock.patch.object(cli, "refused", return_value=(
+                [(3, "evil.example", "not allowlisted", "")], [])), \
+                mock.patch("sys.stdout") as out:
+            cli.run_command(parse(["log", "agent", "--refused"]), tool=(),
+                            environ=self.env, cwd=self.home, isatty=False)
+        said = "".join(c.args[0] for c in out.write.call_args_list)
+        self.assertIn("evil.example  (not allowlisted)", said)
+        self.assertIn("customs-box allow agent HOST", said)
 
 
 if __name__ == "__main__":

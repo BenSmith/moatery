@@ -2,14 +2,19 @@
 inspector, the responder and, if its policy names a credential, the
 broker for the user's manager.
 
-What starts what: `enter` starts the workload's unit, which Requires=
-and is After= the two listener units; they are BindsTo= and After= the
+What starts what: `enter` starts the workload's unit, which Wants= and
+is After= the two listener units; they are BindsTo= and After= the
 pod's, which is active only once its ExecStartPost= has loaded the
 rules. The pod Wants= the listeners, so a restart of the pod brings
 them back into its new namespace. The inspector Wants= and is After=
 the broker, which is ready once it is listening, and holds nothing of
 the namespace: a restart of the pod does not restart it, and `stop`
 stops it.
+
+Nothing Requires= a listener, whose restart would restart what does:
+a new policy restarts the listeners and not the workload. Without them
+the rules send the workload's connections to ports nothing listens on,
+which refuse them.
 """
 
 import json
@@ -169,7 +174,7 @@ def container_unit(box, settings, broker):
 
 [Unit]
 Description=customs box {box.name}
-Requires={box.inspect_service} {box.resolve_service}
+Wants={box.inspect_service} {box.resolve_service}
 After={box.inspect_service} {box.resolve_service}
 
 [Container]
@@ -206,6 +211,7 @@ BindsTo={box.pod_service}
 Type=notify
 {_environment(settings)}ExecStart={_exec_line(
     _tool(settings, "exec", box.name, "--", *argv))}
+Restart=on-failure
 """
 
 
