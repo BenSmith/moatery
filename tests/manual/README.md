@@ -399,10 +399,11 @@ python3 tests/manual/box_rig.py --without-rules     # must go red
 python3 tests/manual/box_rig.py --broker-not-ready  # must go red
 python3 tests/manual/box_rig.py --listeners-required  # must go red
 python3 tests/manual/box_rig.py --without-reload    # must go red
+python3 tests/manual/box_rig.py --without-reopen    # must go red
 python3 tests/manual/box_rig.py --restarts 10       # more restarts of each
 ```
 
-The fixture is riglib's, and four drop-ins beside the units `create`
+The fixture is riglib's, and five drop-ins beside the units `create`
 writes, removed before `rm`: the inspector and the broker trust the
 stub's certificate, and under `--without-reload` the inspector's unit
 has no `ExecReload=`; the broker's interpreter sleeps 3 s before it runs,
@@ -411,7 +412,9 @@ Type=simple; the pod's rules load fails, for two rows, or is empty,
 under `--without-rules`; and the workload's `Exec=` is a script whose
 first act at every start is a request to the provider, with a nonce in
 its path, recorded in the box's home, and under `--listeners-required`
-its unit `Requires=` both listeners, as it did before the policy loop.
+its unit `Requires=` both listeners, as it did before the policy loop;
+and under `--without-reopen`, for the record's row alone, the
+rotation's `ExecStart=` is an `mv` of the record and signals nothing.
 That request is the window: the row for each start is the stub's log and
 the record naming its nonce.
 The provider is brokered: the rig seals a key with `credential add`, the
@@ -422,8 +425,9 @@ apart, long enough for an `allow` to land in it.
 
 **Rows.** `credential add` seals the key, and neither file holds it. The
 files `create` lays out, and nothing started. The chain as the manager
-loaded it: the workload wants the listeners and requires neither, and the
-broker is Type=notify and bound to nothing. A failing rules
+loaded it: the workload wants the listeners and requires neither, the
+broker is Type=notify and bound to nothing, and the pod pulls in the
+record's rotation timer, which is `PartOf=` it. A failing rules
 load starts nothing: `enter` refuses, the workload's first act never
 happened, and `stop` leaves nothing active. The first request, brokered,
 at the first start, at every workload restart and pod restart, and
@@ -457,7 +461,11 @@ the broker and removes its unit, and the provider is reached unbrokered
 the provider is served; the inspector killed is started again, and
 nothing else is; stopped, the workload runs on in its container, and
 `enter` starts it again; `log` follows a request just made, and SIGINT,
-which is Ctrl-C, ends it with status 0 and no traceback. A file outside
+which is Ctrl-C, ends it with status 0 and no traceback. The record's
+rotation: its timer active with the pod and its run exited 0; the
+record padded past 32 MiB, the manager's run of the rotation moves it
+aside, and the next request's line is in a new record and not in the
+moved one. A file outside
 the home is gone after a restart. After `podman pod restart` the namespace has no rules and
 `enter` refuses it, and `stop` then `enter` serves it again. `credential
 rm` is refused while the box names the credential. `rm` leaves no unit,
@@ -582,6 +590,16 @@ names asked for that no list admits:
        4  unlisted.test
        1  aaaa-b0d94ce6.exfil.test
 ```
+
+**The record's rotation, 2026-09-30.** 100/100. The timer's own run of
+the rotation had exited 0; the padded record, 33.5 MiB, moved to `.1`,
+and the next request's line was in the new record, 402 bytes, and not
+in the moved one. `--without-reopen` 99/100, the one row it
+names: the line was in the moved record, and no new one was made,
+since the inspector wrote on into the file it held open.
+`--without-rules` 48/100: the rotation's row is red with the rows that
+make a request, and the timer's two stay green, since neither needs the
+rules.
 
 **The workspace, 2026-09-30: the user manager's alone.** A bare unit
 loading a sealed credential, `ExecStart=sleep infinity`, started with

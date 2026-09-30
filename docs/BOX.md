@@ -71,8 +71,8 @@ host the workload reaches has to be listed.
 
 - **log** follows the box's record, one line per request or refused
   connection, from its last twenty, and on into the next file when it is
-  rotated. With `--refused` it prints instead the lines whose decision is
-  `drop`, counted by host and reason, with the method and path of a
+  rotated. With `--refused` it prints instead the lines, in the record
+  and the rotated ones it keeps, whose decision is `drop`, counted by host and reason, with the method and path of a
   request the entries refused; and the responder's `unlisted_names`, the
   names the workload asked for that no list admits. Both leave out what
   the policy now lets through.
@@ -157,10 +157,11 @@ For box NAME, credential ID:
 | policy | `~/.config/customs/box/NAME/policy.json` |
 | bundle | `~/.config/customs/box/NAME/bundle.pem` |
 | CA, certificates, status files | `~/.local/state/customs/box/NAME/` |
-| record | `~/.local/state/log/customs/box/NAME/requests.log` |
+| record | `~/.local/state/log/customs/box/NAME/requests.log`, and `.1` to `.4.gz` |
 | the box's home | `~/.local/share/customs/box/NAME/home/` |
 | pod, workload | `~/.config/containers/systemd/customs-box-NAME.{pod,container}` |
 | inspector, responder, broker | `~/.config/systemd/user/customs-box-NAME-{inspect,resolve,broker}.service` |
+| the record's rotation | `~/.config/systemd/user/customs-box-NAME-rotate.{service,timer}` |
 | broker's socket | `$XDG_RUNTIME_DIR/customs-box/NAME/broker.sock` |
 | credential | `~/.config/customs/credentials/ID.{cred,json}` |
 
@@ -205,6 +206,17 @@ As in examples/quadlet, with these differences:
   the container (`ExecStartPost=`), giving the user sudo without a
   password: the image's own rule asks for one, and the user has none.
   Root in a box is filtered as the user is.
+- The record is rotated by the tool (`customs-box unit rotate NAME`),
+  from a timer the pod `Wants=` and that is `PartOf=` it, a minute after
+  the pod starts and every ten after. Past 32 MiB the record is moved to
+  `.1`, and the inspector's main process alone is sent `SIGHUP`, on which
+  it opens the path again at its next write; the other processes in its
+  unit are openssl mints, which a HUP ends. Four are kept, all but `.1`
+  compressed: a line being written as the record moved lands in `.1`,
+  which is compressed at the rotation after. The inspector stops writing
+  a record past 512 MiB, and a box writing that much in ten minutes
+  loses its lines until the next rotation. The tool, not logrotate,
+  which neither the image nor every host has.
 - No `[Install]`: a box runs from `enter` to `stop`.
 
 What starts what: `enter` starts `customs-box-NAME.service`, which
@@ -312,7 +324,9 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
   a `policy` edit the loader refuses changes and restarts nothing; a
   killed inspector is started again, and a stopped one leaves the
   workload running until `enter` starts it; `log` follows a request as
-  it is made.
+  it is made;
+- the rotation's timer runs with the pod, and a record past its size is
+  moved aside and the next request's line is in a new one.
 
 Unit tests hold the generated units' dependencies to the chain above,
 each one broken on purpose once, and the refusals.
@@ -320,6 +334,5 @@ each one broken on purpose once, and the refusals.
 ## Open
 
 - Starting boxes at login (`create --autostart`).
-- Rotating the records: the inspector stops writing one past 512 MiB.
 - DESIGN.md: "What customs does not do" to say the programs do not,
   once the RPM carries customs-box.

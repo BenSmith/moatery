@@ -219,6 +219,25 @@ class TestUnits(unittest.TestCase):
             self.assertIn("signal.signal(signal.SIGUSR1, lambda",
                           (REPO_ROOT / "libexec" / program).read_text())
 
+    def test_the_pod_starts_the_rotation_which_stops_with_it(self):
+        """The timer starts its service by their shared name, and that
+        runs `unit rotate` on this box, as the command line takes it."""
+        timer = self.units["customs-box-agent-rotate.timer"]
+        service = self.units["customs-box-agent-rotate.service"]
+        self.assertIn(self.box.rotate_timer, _keys(self.pod, "Wants"))
+        self.assertEqual(_keys(timer, "PartOf"), [self.box.pod_service])
+        self.assertEqual(_keys(timer, "Unit"), [])
+        self.assertEqual(self.box.rotate_timer.removesuffix(".timer"),
+                         self.box.rotate_service.removesuffix(".service"))
+        self.assertEqual(_keys(service, "Type"), ["oneshot"])
+        words = _exec_words(service, "ExecStart")
+        self.assertEqual(words[:2], list(self.settings.tool))
+        from customs_box import cli
+        with mock.patch.object(cli, "unit_rotate") as rotate:
+            cli.run_command(parse(words[2:]), tool=(), environ={},
+                            cwd="/", isatty=False)
+        rotate.assert_called_once_with("agent", dirs=mock.ANY)
+
     def test_the_pod_loads_the_rules_and_has_no_cgroup_or_host_names(self):
         self.assertEqual(_exec_words(self.pod, "ExecStartPost"),
                          [*self.settings.tool, "unit", "rules", "agent"])
@@ -613,6 +632,42 @@ def _line(**fields):
                          "reason", "status", "credential"))
     doc.update(ts="2026-09-30T01:02:03.456Z", mode="terminate", **fields)
     return doc
+
+
+class TestRecordRotation(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.path = self.dir / "requests.log"
+
+    def _write(self, n):
+        # As the inspector creates it.
+        self.path.write_text(json.dumps(_line(host=f"h{n}")) + "\n")
+        self.path.chmod(0o600)
+
+    def test_a_record_under_its_size_stays(self):
+        self._write(0)
+        self.assertFalse(record.rotate(self.path, max_bytes=1 << 20))
+        self.assertFalse(record.rotate(self.dir / "none", max_bytes=0))
+        self.assertEqual(record.records(self.path), [self.path])
+
+    def test_rotations_keep_the_newest_and_compress_the_rest(self):
+        """Every rotated record read back, the oldest first; the newest is
+        left as the inspector may still be writing its last line."""
+        for n in range(record.KEEP + 3):
+            self._write(n)
+            self.assertTrue(record.rotate(self.path, max_bytes=1))
+        self._write(record.KEEP + 3)
+        files = record.records(self.path)
+        self.assertEqual([p.name for p in files], [
+            "requests.log.4.gz", "requests.log.3.gz", "requests.log.2.gz",
+            "requests.log.1", "requests.log"])
+        self.assertEqual(
+            [doc["host"] for p in files for doc in record.lines(p)],
+            ["h3", "h4", "h5", "h6", "h7"])
+        for p in files:
+            self.assertEqual(p.stat().st_mode & 0o777, 0o600, p)
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()),
+                         sorted(p.name for p in files))
 
 
 class TestRecordReading(unittest.TestCase):
@@ -1345,6 +1400,32 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(commands.refused("agent", dirs=self.dirs),
                          ([(1, "evil.example", "not allowlisted", "")],
                           [(1, "evil.example")]))
+
+    def test_log_refused_reads_the_rotated_records_too(self):
+        box, _ = self._create()
+        refusal = json.dumps(_line(host="evil.example", decision="drop",
+                                   reason="not allowlisted")) + "\n"
+        box.record.write_text(refusal)
+        record.rotate(box.record, max_bytes=1)
+        box.record.write_text(refusal)
+        record.rotate(box.record, max_bytes=1)
+        box.record.write_text(refusal)
+        self.assertEqual(commands.refused("agent", dirs=self.dirs)[0],
+                         [(3, "evil.example", "not allowlisted", "")])
+
+    def test_a_rotation_has_the_inspector_reopen_the_record(self):
+        box, _ = self._create()
+        host = FakeHost(self.home)
+        hup = ["systemctl", "--user", "kill", "--kill-whom=main", "-s",
+               "HUP", box.inspect_service]
+        box.record.write_text("{}\n")
+        commands.unit_rotate("agent", dirs=self.dirs, runner=host)
+        self.assertEqual(host.calls, [])
+        with box.record.open("r+") as handle:
+            handle.truncate(record.ROTATE_BYTES)
+        commands.unit_rotate("agent", dirs=self.dirs, runner=host)
+        self.assertEqual(host.calls, [hup])
+        self.assertFalse(box.record.exists())
 
     def test_the_command_line_takes_the_policy_loop(self):
         from customs_box import cli

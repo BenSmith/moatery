@@ -383,7 +383,9 @@ def refused(name, *, dirs):
     the names its workload asked for that no list admits."""
     box, _settings = _existing(name, dirs)
     policy = _policy(box.policy)
-    return (record.refusals(record.lines(box.record), policy),
+    docs = (doc for path in record.records(box.record)
+            for doc in record.lines(path))
+    return (record.refusals(docs, policy),
             record.unlisted(box.resolve_status, policy))
 
 
@@ -684,6 +686,15 @@ def unit_rules(name, *, runner=run):
 
 def unit_exec(name, argv, *, runner=run, execv=os.execv):
     exec_with_pid(name, argv, runner, execv)
+
+
+def unit_rotate(name, *, dirs, runner=run):
+    """The HUP to the main process alone: the unit's others are openssl
+    mints under way, which it would end."""
+    box, _settings = _existing(name, dirs)
+    if record.rotate(box.record):
+        runner(["systemctl", "--user", "kill", "--kill-whom=main", "-s",
+                "HUP", box.inspect_service], check=False)
 
 
 def unit_sudoers(name, *, dirs, runner=run):

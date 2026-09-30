@@ -244,7 +244,7 @@ def main(argv=None):
         print(f"callers served: uids {spans(caller_ranges)}", flush=True)
     signal.signal(signal.SIGTERM, lambda *_args: listener.stop())
     signal.signal(signal.SIGUSR1, lambda *_args: listener.request_reload())
-    # logrotate renames the file and HUPs; the handler only sets a flag (see
+    # A rotation renames the file and HUPs; the handler only sets a flag (see
     # RequestLog.reopen).
     signal.signal(signal.SIGHUP,
                   lambda *_args: listener.inspection.record.reopen())

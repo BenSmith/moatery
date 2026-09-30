@@ -154,9 +154,18 @@ class Box(NamedTuple):
         return self.dirs.config / "systemd" / "user" / self.broker_service
 
     @property
+    def rotate_file(self):
+        return self.dirs.config / "systemd" / "user" / self.rotate_service
+
+    @property
+    def rotate_timer_file(self):
+        return self.dirs.config / "systemd" / "user" / self.rotate_timer
+
+    @property
     def unit_files(self):
         return (self.pod_file, self.container_file, self.inspect_file,
-                self.resolve_file, self.broker_file)
+                self.resolve_file, self.broker_file, self.rotate_file,
+                self.rotate_timer_file)
 
     # quadlet names the services it generates: NAME.pod gives
     # NAME-pod.service, NAME.container gives NAME.service.
@@ -181,6 +190,15 @@ class Box(NamedTuple):
         return f"{self.unit}-broker.service"
 
     @property
+    def rotate_service(self):
+        return f"{self.unit}-rotate.service"
+
+    @property
+    def rotate_timer(self):
+        return f"{self.unit}-rotate.timer"
+
+    @property
     def services(self):
         return (self.pod_service, self.service, self.inspect_service,
-                self.resolve_service, self.broker_service)
+                self.resolve_service, self.broker_service,
+                self.rotate_service, self.rotate_timer)

@@ -8,7 +8,7 @@ import sys
 from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, BoxError, allow,
                        create, credential_add, credential_ls, credential_rm,
                        edit_policy, enter, log, ls, refused, rm, stop,
-                       unit_exec, unit_rules, unit_sudoers)
+                       unit_exec, unit_rotate, unit_rules, unit_sudoers)
 from .netns import NetnsError
 from .paths import user_dirs
 from .process import CommandFailed
@@ -88,6 +88,7 @@ def build_parser():
                                                  required=True)
     unit.add_parser("rules").add_argument("name")
     unit.add_parser("sudoers").add_argument("name")
+    unit.add_parser("rotate").add_argument("name")
     unit.add_parser("exec").add_argument("name")
     return parser
 
@@ -212,6 +213,8 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
         unit_rules(args.name)
     elif args.unit_command == "sudoers":
         unit_sudoers(args.name, dirs=dirs)
+    elif args.unit_command == "rotate":
+        unit_rotate(args.name, dirs=dirs)
     else:
         unit_exec(args.name, args.argv)
     return 0

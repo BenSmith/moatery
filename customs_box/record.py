@@ -1,23 +1,75 @@
-"""Reading a box's record: a line as a person reads it, the record
-followed as it is written, and the refusals the box's policy still
-makes."""
+"""A box's record: a line as a person reads it, the record followed as
+it is written, the refusals the box's policy still makes, and its
+rotation."""
 
+import gzip
 import json
 import os
+import shutil
 import time
 from collections import Counter
 
 from customs.egress_record import DROP_NOT_ALLOWLISTED, DROP_NOT_PERMITTED
 
-# How far back the first lines are looked for: the record is capped at
-# 512 MiB, and a line is under a kilobyte.
+# How far back the first lines are looked for: a line is under a
+# kilobyte.
 _TAIL_BYTES = 256 * 1024
+
+# Rotated well short of the inspector's cap (RECORD_MAX_BYTES), past
+# which it writes nothing until the record is rotated. KEEP are kept
+# besides it, all but the newest compressed.
+ROTATE_BYTES = 32 * 1024 * 1024
+KEEP = 4
+
+
+def rotated(path, n):
+    return path.with_name(f"{path.name}.{n}" + (".gz" if n > 1 else ""))
+
+
+def records(path):
+    """The record's files that exist, the oldest first."""
+    older = (rotated(path, n) for n in range(KEEP, 0, -1))
+    return [p for p in older if p.exists()] + [path]
+
+
+def rotate(path, max_bytes=ROTATE_BYTES):
+    """Move the record aside if it is past max_bytes, shifting the kept
+    ones and dropping the oldest; True if it did, and then the inspector
+    is to reopen it. The newest kept is compressed only at the rotation
+    after: a write under way as it moved lands in it."""
+    try:
+        if path.stat().st_size < max_bytes:
+            return False
+    except FileNotFoundError:
+        return False
+    rotated(path, KEEP).unlink(missing_ok=True)
+    for n in range(KEEP - 1, 1, -1):
+        if rotated(path, n).exists():
+            os.replace(rotated(path, n), rotated(path, n + 1))
+    if rotated(path, 1).exists():
+        _compress(rotated(path, 1), rotated(path, 2))
+    os.replace(path, rotated(path, 1))
+    return True
+
+
+def _compress(source, target):
+    staged = target.with_name(f".{target.name}.new")
+    try:
+        fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with open(source, "rb") as raw, os.fdopen(fd, "wb") as out, \
+                gzip.GzipFile(filename="", mode="wb", fileobj=out) as z:
+            shutil.copyfileobj(raw, z)
+        os.replace(staged, target)
+    finally:
+        staged.unlink(missing_ok=True)
+    source.unlink()
 
 
 def lines(path):
     """The record's lines, parsed; a line being written is skipped."""
+    opener = gzip.open if path.suffix == ".gz" else open
     try:
-        handle = open(path, "rb")
+        handle = opener(path, "rb")
     except FileNotFoundError:
         return
     with handle:

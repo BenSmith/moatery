@@ -10,13 +10,14 @@ the proving host as an ordinary user, from a checkout:
     python3 tests/manual/box_rig.py [--keep] [--without-rules]
                                     [--broker-not-ready]
                                     [--listeners-required]
-                                    [--without-reload] [--restarts N]
+                                    [--without-reload] [--without-reopen]
+                                    [--restarts N]
 
 The tool is the checkout's bin/customs-box running the checkout's
 programs, or, with CUSTOMS_LIBEXEC=/usr/libexec/customs, the installed
 customs-box. riglib's two host facts need sudo and are undone at teardown.
 
-Beside the units `create` writes, the rig writes four drop-ins, and
+Beside the units `create` writes, the rig writes five drop-ins, and
 removes them before `rm`:
 
   inspector SSL_CERT_FILE names the stub's certificate, which no system
@@ -32,6 +33,8 @@ removes them before `rm`:
             the broker.
   pod       for the fail rows, its ExecStartPost= is `false`; with
             --without-rules, it is empty.
+  rotate    with --without-reopen, for the record's row only, its
+            ExecStart= moves the record aside and signals nothing.
 
 The stub is on the host's 127.0.0.1, which the pod cannot reach, so
 anything the stub answers came by the inspector's dial. The provider is
@@ -49,7 +52,8 @@ THE ROWS
             BindsTo= the pod; each
             listener is BindsTo= and After= the pod; the inspector pulls
             in the broker and is After= it, which is Type=notify and not
-            bound to the pod.
+            bound to the pod. The pod pulls in the record's rotation
+            timer, which is PartOf= it.
   fail      with the pod's rules load failing, enter refuses and the
             workload never ran: its first act left no line; stop leaves
             no unit active.
@@ -111,13 +115,18 @@ THE ROWS
             container and its request is not served; enter starts it
             again. log follows a request just made, and Ctrl-C ends it
             with status 0. The provider is served after each.
+  record    the timer started with the pod, and it has run the rotation,
+            which exited 0. The record padded past its size, the
+            rotation the manager runs moves it aside, and the next
+            request's line is in a new record and not in the moved one.
   persist   after a workload restart, a file written outside the home is
             gone and one in it is there.
   restart   N workload restarts, then N pod restarts, each pod restart a
             new namespace with the rules in it: at every start the first
             request was inspected.
-  stop      every unit inactive, no pod, no container, and ls says so; then
-            enter starts it, and its first request was inspected.
+  stop      every unit inactive, the timer too, no pod, no container, and
+            ls says so; then enter starts it, and its first request was
+            inspected.
   outside   after `podman pod restart`, outside systemd, the namespace is
             new and has no rules, and enter refuses it; stop, then enter,
             serves it again.
@@ -131,7 +140,8 @@ THE ROWS
 with no rules in its namespace: first, the premise that the rules are
 there, enter (which refuses) and every row through it, dns, silent,
 quic, ssh, listed, unlisted, root, the broker's requests, rotate, the
-loop's rows that make a request or read one back, the killed
+loop's rows that make a request or read one back, the record's
+rotation, the killed
 inspector's, and enter's, restart, and each enter after a stop with its
 first request must go red. (The killed inspector's row is red because an
 enter refused left the broker stopped, and the inspector's restart
@@ -153,6 +163,11 @@ allow and finishes whole, and that the policy edited at a terminal
 reloads the listeners, must go red. The restarted inspector reads the
 new document at its start, so the row that its status file names it
 after allow stays green.
+
+`--without-reopen` makes the rotation a rename and no more, as a
+logrotate configuration without its `postrotate` would: the record's
+row that the next request's line is in the new record must go red,
+since the inspector writes on into the file it has open.
 
 `--broker-not-ready` makes the broker's unit Type=simple, so nothing
 waits for its socket: the first request after each start of the broker,
@@ -192,6 +207,7 @@ from customs.egress_record import (  # noqa
     DROP_BROKER_UNREACHABLE, DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED,
     DROP_UNREACHABLE,
 )
+from customs_box.record import ROTATE_BYTES, rotated  # noqa
 
 BOX = "customs-rig-box"
 UNIT = f"customs-box-{BOX}"
@@ -200,8 +216,10 @@ SERVICE = f"{UNIT}.service"
 INSPECT_SERVICE = f"{UNIT}-inspect.service"
 RESOLVE_SERVICE = f"{UNIT}-resolve.service"
 BROKER_SERVICE = f"{UNIT}-broker.service"
+ROTATE_SERVICE = f"{UNIT}-rotate.service"
+ROTATE_TIMER = f"{UNIT}-rotate.timer"
 SERVICES = (POD_SERVICE, INSPECT_SERVICE, RESOLVE_SERVICE, BROKER_SERVICE,
-            SERVICE)
+            SERVICE, ROTATE_SERVICE, ROTATE_TIMER)
 LISTENERS = {INSPECT_SERVICE, RESOLVE_SERVICE}
 # docs/BOX.md's default.
 IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
@@ -216,7 +234,8 @@ QUADLET = HOME / ".config" / "containers" / "systemd"
 UNITS = HOME / ".config" / "systemd" / "user"
 UNIT_FILES = (QUADLET / f"{UNIT}.pod", QUADLET / f"{UNIT}.container",
               UNITS / INSPECT_SERVICE, UNITS / RESOLVE_SERVICE,
-              UNITS / BROKER_SERVICE)
+              UNITS / BROKER_SERVICE, UNITS / ROTATE_SERVICE,
+              UNITS / ROTATE_TIMER)
 LAID_OUT = (CONFIG / "policy.json", CONFIG / "bundle.pem",
             ca_cert_path(STATE), LOGS, BOX_HOME, *UNIT_FILES)
 STATUS = STATE / "status.json"
@@ -234,7 +253,8 @@ BROKER_SOCKET = RUNTIME / "customs-box" / BOX / "broker.sock"
 DROP_INS = {"inspect": UNITS / f"{INSPECT_SERVICE}.d" / "rig.conf",
             "broker": UNITS / f"{BROKER_SERVICE}.d" / "rig.conf",
             "workload": QUADLET / f"{UNIT}.container.d" / "rig.conf",
-            "pod": UNITS / f"{POD_SERVICE}.d" / "rig.conf"}
+            "pod": UNITS / f"{POD_SERVICE}.d" / "rig.conf",
+            "rotate": UNITS / f"{ROTATE_SERVICE}.d" / "rig.conf"}
 FAILING_RULES = "[Service]\nExecStartPost=\nExecStartPost=/usr/bin/false\n"
 NO_RULES = "[Service]\nExecStartPost=\n"
 
@@ -358,7 +378,7 @@ def sudo_in(argv, **kw):
 
 
 def short(unit):
-    name = unit.removesuffix(".service")
+    name = unit.removesuffix(".service").replace(".timer", " timer")
     return "workload" if name == UNIT else name.removeprefix(UNIT + "-")
 
 
@@ -585,7 +605,8 @@ def create_rows():
 def chain_rows():
     say("chain")
 
-    keys = ("Requires", "Wants", "After", "BindsTo", "PartOf", "Type")
+    keys = ("Requires", "Wants", "After", "BindsTo", "PartOf", "Type",
+            "Triggers")
 
     def loaded(unit):
         out = run(["systemctl", "--user", "show",
@@ -616,6 +637,13 @@ def chain_rows():
     row("chain: the pod pulls in both listeners",
         LISTENERS <= pod["Wants"] | pod["Requires"],
         f"Wants: {sorted(map(short, pod['Wants'] & LISTENERS))}")
+    timer = loaded(ROTATE_TIMER)
+    row("chain: the pod pulls in the record's rotation timer, which is "
+        "PartOf= it and triggers the rotation",
+        ROTATE_TIMER in pod["Wants"] and POD_SERVICE in timer["PartOf"]
+        and timer["Triggers"] == {ROTATE_SERVICE},
+        f"in the pod's Wants: {ROTATE_TIMER in pod['Wants']}; PartOf: "
+        f"{sorted(timer['PartOf'])}; Triggers: {sorted(timer['Triggers'])}")
     inspect = loaded(INSPECT_SERVICE)
     row("chain: the inspector pulls in the broker and is After= it, "
         "without Requires=",
@@ -1260,6 +1288,52 @@ def loop_rows():
         f"{'the same' if same else 'replaced'}")
 
 
+def record_rows(without_reopen):
+    say("record: its rotation")
+    ran = await_(lambda: show(ROTATE_SERVICE,
+                              "ExecMainStartTimestampMonotonic")
+                 not in ("", "0"), 75)
+    timer, result, status = (show(ROTATE_TIMER, "ActiveState"),
+                             show(ROTATE_SERVICE, "Result"),
+                             show(ROTATE_SERVICE, "ExecMainStatus"))
+    row("record: the rotation's timer is active with the pod, and has run "
+        "the rotation, which exited 0",
+        timer == "active" and ran and result == "success" and status == "0",
+        f"timer {timer}; ran {bool(ran)}; result {result}, status {status}")
+    if without_reopen:
+        write_drop_in("rotate", "[Service]\nExecStart=\n"
+                      f"ExecStart=/usr/bin/mv {RECORD} {rotated(RECORD, 1)}\n")
+        say("  the rotation signals nothing, as asked")
+    # A line the record's readers skip, as they do one being written.
+    with RECORD.open("ab") as handle:
+        handle.write(b"x" * ROTATE_BYTES + b"\n")
+    started = run(["systemctl", "--user", "start", ROTATE_SERVICE],
+                  check=False, timeout=60)
+    path = f"/record/{os.urandom(8).hex()}"
+    got = exec_in([*CURL, f"https://{PROVIDER}{path}"])
+    rec = await_(lambda: record_for(path), 5)
+    try:
+        moved = rotated(RECORD, 1).read_bytes()
+    except FileNotFoundError:
+        moved = b""
+    padded, stale = b"x" * 1024 in moved, path.encode() in moved
+    size = RECORD.stat().st_size if RECORD.exists() else None
+    row("record: past its size it is moved aside, and the next request's "
+        "line is in a new record, not the moved one",
+        started.returncode == 0 and padded and not stale
+        and rec is not None and size is not None and size < ROTATE_BYTES,
+        f"rc={started.returncode} {started.stderr.strip()[-160:]}; "
+        f"http={got.stdout.strip()!r}; moved: {len(moved)} bytes, padded "
+        f"{padded}, the line in it {stale}; new record: {size} bytes, the "
+        f"line in it {rec is not None}")
+    if without_reopen:
+        remove_drop_in("rotate")
+        reload()
+        # What the rotation leaves out, so the rows after read the record.
+        run(["systemctl", "--user", "kill", "--kill-whom=main", "-s", "HUP",
+             INSPECT_SERVICE], check=False)
+
+
 def restart_rows(count, tag):
     say("persist, and workload restarts")
     exec_in(["sh", "-c", f"echo {tag} > /var/tmp/customs-rig-reset; "
@@ -1298,7 +1372,8 @@ def stop_rows():
     say("stop")
     stopped = box("stop", BOX)
     now, mine = states(), listed()
-    row("stop: every unit inactive, no pod, no container, and ls says so",
+    row("stop: every unit inactive, the timer too, no pod, no container, "
+        "and ls says so",
         stopped.returncode == 0 and set(now.values()) == {"inactive"}
         and not exists("pod") and not exists("container")
         and mine is not None and mine[1:2] == ["inactive"],
@@ -1440,6 +1515,7 @@ def probe(args, tag, secret):
     rotate_rows()
     counter_rows()
     loop_rows()
+    record_rows(args.without_reopen)
     restart_rows(args.restarts, tag)
     stop_rows()
     outside_rows()
@@ -1534,6 +1610,10 @@ def main():
                     help="empty the inspector's ExecReload=; the loop's "
                          "rows that a new policy restarts nothing must go "
                          "red")
+    ap.add_argument("--without-reopen", action="store_true",
+                    help="make the rotation a rename that signals nothing; "
+                         "the record's row that the next line is in a new "
+                         "record must go red")
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
     args = ap.parse_args()
@@ -1568,7 +1648,8 @@ def main():
             "--without-rules: first, premise's rules, enter and every row "
             "through it, dns, silent, quic, ssh, listed, unlisted, root, the "
             "broker's requests, rotate, the loop's that make a request "
-            "or read one back, the killed inspector's and enter's, "
+            "or read one back, the record's rotation, the killed "
+            "inspector's and enter's, "
             "restart, and each enter after a stop are expected red")
     if args.broker_not_ready:
         expected.append(
@@ -1588,6 +1669,10 @@ def main():
             "listeners reloaded and restarts nothing, the download running "
             "on and finishing whole, and the terminal's edit reloading the "
             "listeners are expected red")
+    if args.without_reopen:
+        expected.append(
+            "--without-reopen: the record's row that the next request's "
+            "line is in a new record is expected red")
     rc = riglib.report("; ".join(expected) or None)
     if rc:
         say(f"journal: journalctl --user -u '{UNIT}*' -b")

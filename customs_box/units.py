@@ -6,7 +6,8 @@ What starts what: `enter` starts the workload's unit, which Wants= and
 is After= the two listener units; they are BindsTo= and After= the
 pod's, which is active only once its ExecStartPost= has loaded the
 rules. The pod Wants= the listeners, so a restart of the pod brings
-them back into its new namespace. The inspector Wants= and is After=
+them back into its new namespace, and the timer that rotates the
+record, which is PartOf= it. The inspector Wants= and is After=
 the broker, which is ready once it is listening, and holds nothing of
 the namespace: a restart of the pod does not restart it, and `stop`
 stops it.
@@ -136,7 +137,7 @@ def pod_unit(box, settings):
 
 [Unit]
 Description=customs box {box.name}: pod and rules
-Wants={box.inspect_service} {box.resolve_service}
+Wants={box.inspect_service} {box.resolve_service} {box.rotate_timer}
 
 [Pod]
 PodName={box.name}
@@ -284,13 +285,44 @@ Restart=on-failure
 """
 
 
+def rotate_unit(box, settings):
+    return f"""\
+# customs box {box.name}: its record moved aside once it is past its
+# size, and the inspector told to reopen it. Started by its timer.
+
+[Unit]
+Description=customs box {box.name}: rotate the record
+
+[Service]
+Type=oneshot
+{_environment(settings)}ExecStart={_exec_line(
+    _tool(settings, "rotate", box.name))}
+"""
+
+
+def rotate_timer(box):
+    return f"""\
+# customs box {box.name}: the record's rotation, while the pod runs.
+
+[Unit]
+Description=customs box {box.name}: rotate the record
+PartOf={box.pod_service}
+
+[Timer]
+OnActiveSec=1min
+OnUnitActiveSec=10min
+"""
+
+
 def render(box, settings, broker):
     """Unit file path to text, for every unit the box has: the broker's
     only if it has a broker."""
     units = {box.pod_file: pod_unit(box, settings),
              box.container_file: container_unit(box, settings, broker),
              box.inspect_file: inspect_unit(box, settings, broker),
-             box.resolve_file: resolve_unit(box, settings)}
+             box.resolve_file: resolve_unit(box, settings),
+             box.rotate_file: rotate_unit(box, settings),
+             box.rotate_timer_file: rotate_timer(box)}
     if broker:
         units[box.broker_file] = broker_unit(box, settings, broker)
     return units
