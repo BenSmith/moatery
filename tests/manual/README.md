@@ -524,12 +524,13 @@ start that starts it is refused. A run takes two minutes,
 inspector wanted no new invocation at all, and the manager's start of
 the inspector is one; re-derived to the inspector's alone. Then 88/88,
 in 2m10s, and with the rows for a policy that drops the credential and
-names it again, 91/91 in 2m17s. `--listeners-required` 85/88, the three rows it names: with
-the workload requiring the listeners, `allow` replaced the workload's
-container, so did the manager's automatic start of the killed inspector,
-and stopping the inspector stopped the workload. `--broker-not-ready`
-83/91, the eight it names, the loop's request after the broker is named
-again among them. `--without-rules` 41/88; its loop row for what `allow` restarts is red because an earlier
+names it again, 91/91 in 2m17s. `--listeners-required` 85/88, the three
+rows it names: with the workload requiring the listeners, `allow`
+replaced the workload's container, so did the manager's automatic start
+of the killed inspector, and stopping the inspector stopped the
+workload. `--broker-not-ready` 83/91, the eight it names, the loop's
+request after the broker is named again among them. `--without-rules`
+41/88; its loop row for what `allow` restarts is red because an earlier
 `enter`, refused, had left the broker stopped, and the inspector's
 restart starts it (`Wants=`). A request while the inspector is stopped
 gets curl's `000`, which is the listener's port refusing it: the rows
