@@ -40,7 +40,9 @@ from .tls_hello import TLS_EXT_ECH, HelloUnreadable, read_client_hello
 
 def serve_tls(insp, conn, where):
     """Peek, match, and then splice or terminate."""
-    inspect = insp.policy.tls == "inspect"
+    # Read once, as a request's is; `tls` is never reloaded.
+    policy = insp.policy
+    inspect = policy.tls == "inspect"
     if inspect and insp.minter is None:
         # The entrypoint refuses to start like this; a Listener built by
         # hand would otherwise fail every handshake with no line saying why.
@@ -69,12 +71,13 @@ def serve_tls(insp, conn, where):
                   mode="terminate")
         return
     host = normalise_hostname(hello.server_name)
-    allowed = insp.policy.admits(host)
+    allowed = policy.admits(host)
     insp.counters.record_hello(hello, allowed)
     # The allowlist first: a `splice` pattern can cover names no list
     # admits, and those are refused like any other denial, by a bump.
-    if inspect and not (allowed and insp.policy.splices(host)):
-        _serve_tls_inspect(insp, conn, where, host, allowed, hello)
+    if inspect and not (allowed and policy.splices(host)):
+        _serve_tls_inspect(insp, conn, where, host, allowed, hello,
+                           policy)
         return
     if not allowed:
         insp.drop(where, DROP_NOT_ALLOWLISTED, host=host, mode="splice")
@@ -100,7 +103,7 @@ def serve_tls(insp, conn, where):
             (host, TLS.guest_port), timeout=egress_relay.CONNECTION_TIMEOUT)
     except OSError as exc:
         insp.drop(where, dial_failure_reason(
-            host, insp.policy.internal_expected), exc,
+            host, policy.internal_expected), exc,
                   host=host, mode="splice")
         return
     try:
@@ -127,7 +130,7 @@ def _offer(hello):
     return f" alpn={quoted(','.join(hello.alpn))}"
 
 
-def _serve_tls_inspect(insp, conn, where, host, allowed, hello):
+def _serve_tls_inspect(insp, conn, where, host, allowed, hello, policy):
     """Terminate one connection: decide, dial, mint, handshake, serve.
 
     The origin is dialled before the guest's handshake, so a host that
@@ -147,7 +150,7 @@ def _serve_tls_inspect(insp, conn, where, host, allowed, hello):
     # A brokered host's requests go to the broker, per request, so the
     # origin is not dialled here: that would make its reachability and
     # certificate a condition of requests that never reach it.
-    brokered = allowed and insp.policy.credential_for(host) is not None
+    brokered = allowed and policy.credential_for(host) is not None
     if not allowed:
         refusal = (DROP_NOT_ALLOWLISTED, 403, "Forbidden",
                    (f"{host} matches no `hosts` pattern and no `policy` "
@@ -162,7 +165,7 @@ def _serve_tls_inspect(insp, conn, where, host, allowed, hello):
             refusal = (reason, 502, "Bad Gateway", text)
         except OSError as exc:
             reason = dial_failure_reason(
-                host, insp.policy.internal_expected)
+                host, policy.internal_expected)
             refusal = (reason, 502, "Bad Gateway",
                        f"{host} could not be reached: {exc}")
     leaf = None

@@ -30,7 +30,9 @@ client to TCP, where it is whole.
 
 The policy is the inspector's, read to count and never to answer: a query
 for a name no list admits, and no static entry names, is counted as
-`unlisted`, the signature of something encoding data into names.
+`unlisted`, the signature of something encoding data into names. SIGUSR1
+reads it again, as it does the inspector's; one that cannot be read then
+is logged and the one loaded kept.
 
 It never binds. The socket unit binds and hands the sockets in, UDP and
 TCP; a missing activation environment is a failure, never a fallback
@@ -92,8 +94,8 @@ def parse_args(argv):
                         help="the IPv6 address every AAAA query is "
                              "answered with; absent means no records")
     parser.add_argument("--policy", required=True,
-                        help="the inspector's policy document, read once at "
-                             "start to count unlisted names")
+                        help="the inspector's policy document, read at "
+                             "start and on SIGUSR1 to count unlisted names")
     parser.add_argument("--static", default=None,
                         help="a JSON object of name to address list, read "
                              "once at start; those names are answered with "
@@ -105,6 +107,8 @@ def parse_args(argv):
 
 def main(argv=None):
     argv = sys.argv if argv is None else argv
+    # Until the handler: a USR1's default ends the process.
+    signal.signal(signal.SIGUSR1, signal.SIG_IGN)
     try:
         args = parse_args(argv)
     except SystemExit as exc:
@@ -132,10 +136,24 @@ def main(argv=None):
     log(f"  responder for {args.name}: {len(sockets)} socket(s), "
         f"A {args.address}, AAAA {args.address6 or 'none'}, "
         f"{len(policy.static)} static name(s), ttl {policy.ttl}s")
-    stopping = []
+    stopping, reloading = [], []
+
+    def reload():
+        if not reloading:
+            return
+        reloading.clear()
+        try:
+            lists = load_policy(args.policy)
+        except (OSError, ValueError) as exc:
+            log(f"  WARNING: policy not reloaded: {exc}")
+            return
+        policy.readmit(lists.admits)
+        log(f"  policy reloaded from {args.policy}")
+
     signal.signal(signal.SIGTERM, lambda *_args: stopping.append(True))
+    signal.signal(signal.SIGUSR1, lambda *_args: reloading.append(True))
     serve(sockets, policy, Counters(), args.status,
-          stop=lambda: bool(stopping))
+          stop=lambda: bool(stopping), turn=reload)
     return 0
 
 

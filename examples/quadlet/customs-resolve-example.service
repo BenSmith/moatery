@@ -16,4 +16,5 @@ ExecStart=/bin/sh -c 'pid=$$(%h/.local/bin/customs-pod-netns pid example) \
     --address 127.0.0.1 \
     --policy %E/customs/policy.json \
     --status %S/customs/resolve-status.json'
+ExecReload=kill -USR1 $MAINPID
 StateDirectory=customs

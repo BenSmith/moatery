@@ -1107,6 +1107,56 @@ class TestEntrypoint(unittest.TestCase):
         self.assertEqual(status["queries"]["synthesised"], 2)
         self.assertEqual(status["unlisted_names"], {"exfil.example": 1})
 
+    def test_usr1_reads_the_policy_again(self):
+        """A name counted as unlisted is not once the reloaded policy
+        admits it; a document that does not load keeps the one loaded."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.addCleanup(sock.close)
+        sock.bind(("127.0.0.1", 0))
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.addCleanup(client.close)
+        client.settimeout(5)
+
+        def ask(name):
+            client.sendto(query(name, TYPE_A), sock.getsockname())
+            client.recv(512)
+
+        def reload(text, words):
+            Path(self.policy).write_text(text)
+            os.kill(os.getpid(), signal.SIGUSR1)
+            deadline = time.monotonic() + 5
+            while (not any(words in line for line in self.logged)
+                   and time.monotonic() < deadline):
+                time.sleep(0.01)
+
+        def poke():
+            ask("new.example")
+            reload("{", "not reloaded")
+            ask("new.example")
+            reload(json.dumps({"hosts": ["new.example"]}), "reloaded from")
+            ask("new.example")
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        for sig in (signal.SIGTERM, signal.SIGUSR1):
+            self.addCleanup(signal.signal, sig, signal.getsignal(sig))
+        with mock.patch.object(self.mod, "inherited_listening_sockets",
+                               return_value=[sock]):
+            threading.Thread(target=poke, daemon=True).start()
+            rc = self.mod.main(self.argv())
+        self.assertEqual(rc, 0)
+        status = json.loads(Path(self.status).read_text())
+        self.assertEqual(status["unlisted_names"], {"new.example": 2})
+
+    def test_a_usr1_before_the_handler_is_ignored(self):
+        """The unit may be reloaded while the policy is being read, and
+        USR1's default would end the process."""
+        self.addCleanup(signal.signal, signal.SIGUSR1,
+                        signal.getsignal(signal.SIGUSR1))
+        Path(self.policy).write_text("{")
+        with mock.patch("sys.stderr"):
+            self.assertEqual(self.mod.main(self.argv()), 1)
+        self.assertEqual(signal.getsignal(signal.SIGUSR1), signal.SIG_IGN)
+
     def test_a_static_name_is_answered_from_the_file(self):
         static = os.path.join(self.dir, "static.json")
         Path(static).write_text(json.dumps({"git.local": ["192.0.2.9"]}))

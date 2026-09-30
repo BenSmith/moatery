@@ -37,6 +37,10 @@ cat > ~/.config/customs/policy.json <<'EOF'
 EOF
 ```
 
+An edit applies with `systemctl --user reload customs-inspect
+customs-resolve`, which cuts no connection; a change of `tls` needs a
+restart.
+
 The credential, sealed to this user on this host. `LoadCredentialEncrypted=`
 in a user unit needs systemd 256 or later.
 
@@ -82,8 +86,8 @@ are steps 4 and 5 of shape 1 in [DESIGN.md](../docs/DESIGN.md).
   or refused connection, mode 0600. Past 512 MiB the inspector drops
   lines, and counts them as write failures, until the file is rotated.
 - `~/.local/state/customs/status.json`: counters, rewritten every 30
-  seconds and at stop, with the digest of the policy the running
-  inspector loaded.
+  seconds, at a reload and at stop, with the digest of the policy the
+  running inspector enforces.
 - `~/.local/state/customs/resolve-status.json`: the responder's counters,
   among them `unlisted`, the queries for names no list admits, and the
   first twenty such names.

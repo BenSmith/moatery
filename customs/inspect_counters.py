@@ -65,20 +65,13 @@ class Counters:
         self.internal_refusals = self.per_host[DROP_INTERNAL]
         # Every list as loaded, which is what this process enforces whatever
         # the file now says.
-        self.lists = {
-            "tls": policy.tls if policy else TLS_DEFAULT,
-            "hosts": list(policy.hosts) if policy else [],
-            "internal_expected": list(policy.internal_expected)
-            if policy else [],
-            "splice": list(policy.splice) if policy else [],
-            "policy": [
-                {"host": e.host,
-                 "methods": None if e.methods is None else list(e.methods),
-                 "paths": None if e.paths is None else list(e.paths),
-                 "credential": e.credential}
-                for e in policy.policy
-            ] if policy else [],
-        }
+        self.lists = _lists(policy)
+
+    def set_lists(self, policy) -> None:
+        """The lists of a policy reloaded, which is enforced from now."""
+        lists = _lists(policy)
+        with self._lock:
+            self.lists = lists
 
     def record_hello(self, hello, on_a_list: bool) -> None:
         """What one readable ClientHello offered. `on_a_list` is the
@@ -179,3 +172,20 @@ class Counters:
                 "concurrency": {"open": open_now, "refused": refused},
                 "lists": dict(self.lists),
             }
+
+
+def _lists(policy):
+    return {
+        "tls": policy.tls if policy else TLS_DEFAULT,
+        "hosts": list(policy.hosts) if policy else [],
+        "internal_expected": list(policy.internal_expected)
+        if policy else [],
+        "splice": list(policy.splice) if policy else [],
+        "policy": [
+            {"host": e.host,
+             "methods": None if e.methods is None else list(e.methods),
+             "paths": None if e.paths is None else list(e.paths),
+             "credential": e.credential}
+            for e in policy.policy
+        ] if policy else [],
+    }

@@ -196,6 +196,18 @@ print(os.environ.get("NOTIFY_SOCKET", "unset"), os.environ["LISTEN_FDS"])
         self.assertEqual(sock.recv(64), b"READY=1")
         self.assertEqual(done.stdout.split(), ["unset", "2"])
 
+    def test_the_program_starts_with_a_reload_ignored(self):
+        """Once READY=1 is sent, the unit may be reloaded, and USR1's
+        default would end the program before its handler is in place."""
+        pid = _target(self)
+        _joined(self, pid)
+        done = _launch(pid, [sys.executable, "-c", """
+import signal
+print(signal.getsignal(signal.SIGUSR1) == signal.SIG_IGN)
+"""])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split(), ["True"])
+
     def test_a_failed_bind_is_never_reported_ready(self):
         path, sock = self._notify_socket()
         done = _launch(2 ** 22 + 7, ["true"],

@@ -25,7 +25,9 @@ from pathlib import Path
 
 from tests import assert_bare_refusal, load_script
 from customs.inspect_document import (
+    INSPECT_DIGEST_KEY,
     TLS_DEFAULT,
+    inspect_policy_digest,
     hostname_match,
     normalise_hostname,
     VmPolicyEntry,
@@ -1529,17 +1531,70 @@ class TestEntrypointWiring(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(d, "status.json")),
                         "the exit path did not write the status file")
 
-    def test_a_hup_before_the_listener_exists_is_ignored(self):
-        """logrotate's HUP can land while the inspector is still reading its
-        policy; the default action would end the process it meant to keep
-        writing."""
+    def test_usr1_reloads_the_policy_on_the_accept_loop(self):
+        """The unit's ExecReload= sends USR1; the handler only asks, and
+        the accept loop reads the file and writes the status file."""
         mod = _mod()
-        saved = signal.getsignal(signal.SIGHUP)
-        self.addCleanup(signal.signal, signal.SIGHUP, saved)
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        policy = Path(d, "policy.json")
+        policy.write_text('{"tls": "splice", "hosts": ["a.example"]}')
+        status = Path(d, "status.json")
+        seen = {}
+
+        class Capture(Listener):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                seen["listener"] = self
+
+        def digest():
+            try:
+                return json.loads(status.read_text())[INSPECT_DIGEST_KEY]
+            except (OSError, ValueError, KeyError):
+                return None
+
+        def poke():
+            while digest() is None:
+                time.sleep(0.01)
+            text = '{"tls": "splice", "hosts": ["b.example"]}'
+            policy.write_text(text)
+            os.kill(os.getpid(), signal.SIGUSR1)
+            deadline = time.monotonic() + 5
+            while (digest() != inspect_policy_digest(text)
+                   and time.monotonic() < deadline):
+                time.sleep(0.01)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        saved = {s: signal.getsignal(s)
+                 for s in (signal.SIGHUP, signal.SIGTERM, signal.SIGUSR1)}
+        self.addCleanup(lambda: [signal.signal(s, h)
+                                 for s, h in saved.items()])
+        patch = unittest.mock.patch.object
+        with patch(mod, "inherited_listening_sockets", return_value=[]), \
+                patch(mod, "Listener", Capture), \
+                contextlib.redirect_stdout(io.StringIO()):
+            poker = threading.Thread(target=poke)
+            poker.start()
+            rc = mod.main(["x", "--name", "wl", "--policy", str(policy),
+                           "--state-dir", d, "--status", str(status),
+                           "--record", os.path.join(d, "requests.log")])
+            poker.join()
+        self.assertEqual(rc, 0)
+        self.assertTrue(
+            seen["listener"].inspection.policy.admits("b.example"))
+
+    def test_a_hup_or_usr1_before_the_listener_exists_is_ignored(self):
+        """logrotate's HUP, or a reload's USR1, can land while the inspector
+        is still reading its policy; the default action would end the
+        process it meant to keep writing, or reload."""
+        mod = _mod()
+        for sig in (signal.SIGHUP, signal.SIGUSR1):
+            self.addCleanup(signal.signal, sig, signal.getsignal(sig))
         during = []
 
         def load(path):
             during.append(signal.getsignal(signal.SIGHUP))
+            during.append(signal.getsignal(signal.SIGUSR1))
             raise ValueError("stop here")
 
         with unittest.mock.patch.object(mod, "load_policy", load), \
@@ -1548,7 +1603,7 @@ class TestEntrypointWiring(unittest.TestCase):
                            "--state-dir", "/unread", "--status", "/unread",
                            "--record", "/unread"])
         self.assertEqual(rc, 1)
-        self.assertEqual(during, [signal.SIG_IGN])
+        self.assertEqual(during, [signal.SIG_IGN, signal.SIG_IGN])
 
     def _started(self, extra, **more):
         """main() past the parser, with a Listener that does not accept."""
@@ -4247,6 +4302,161 @@ class TestInternalAttribution(unittest.TestCase):
                 dial_failure_reason(
                     normalise_hostname("Host.Example."), internal),
                 "upstream unreachable")
+
+
+class TestPolicyReload(unittest.TestCase):
+    """A reload between accepts: the file read again and enforced from
+    each connection's next decision, or the one enforced kept."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.path = os.path.join(self.dir, "policy.json")
+        self.status = os.path.join(self.dir, "status.json")
+        self.out = io.StringIO()
+
+    def _write(self, doc):
+        text = doc if isinstance(doc, str) else json.dumps(doc)
+        Path(self.path).write_text(text)
+        return text
+
+    def _listener(self, doc):
+        self._write(doc)
+        return Listener([], self.out, policy=load_policy(self.path),
+                        status_path=self.status, policy_path=self.path)
+
+    def _status(self):
+        return json.loads(Path(self.status).read_text())
+
+    def test_a_reload_is_enforced_and_its_digest_written(self):
+        listener = self._listener({"tls": "splice", "hosts": ["a.example"]})
+        text = self._write({"tls": "splice", "hosts": ["b.example"]})
+        listener.reload_policy()
+        self.assertTrue(listener.inspection.policy.admits("b.example"))
+        self.assertFalse(listener.inspection.policy.admits("a.example"))
+        status = self._status()
+        self.assertEqual(status[INSPECT_DIGEST_KEY],
+                         inspect_policy_digest(text))
+        self.assertEqual(status["lists"]["hosts"], ["b.example"])
+        self.assertIn(f"policy reloaded from {self.path}: tls=splice "
+                      "hosts=1", self.out.getvalue())
+
+    def test_what_does_not_load_leaves_the_policy_enforced(self):
+        """A document that does not load, a change of `tls`, and a
+        listener given no path: each is logged, and the status file still
+        names the digest enforced."""
+        listener = self._listener({"tls": "splice", "hosts": ["a.example"]})
+        before = listener.inspection.policy
+        for doc, words in (("{", "Expecting"),
+                           ({"tls": "inspect", "hosts": []},
+                            "its tls is 'inspect' and the one enforced "
+                            "'splice', which only a restart changes")):
+            with self.subTest(words):
+                self._write(doc)
+                listener.reload_policy()
+                self.assertIs(listener.inspection.policy, before)
+                self.assertIn(words, self.out.getvalue())
+                self.assertEqual(self._status()[INSPECT_DIGEST_KEY],
+                                 before.digest)
+        listener._policy_path = None
+        listener.reload_policy()
+        self.assertIs(listener.inspection.policy, before)
+        self.assertIn("given no policy path", self.out.getvalue())
+        self.assertEqual(self.out.getvalue().count(
+            "WARNING: policy not reloaded, still enforcing "
+            f"{before.digest[:12]}"), 3)
+
+    def test_the_next_request_on_a_connection_has_the_new_policy(self):
+        """A request relaying when the reload lands is let finish; the
+        next one on the same connection is refused by the new document,
+        and one it admits is let through."""
+        listener = self._listener({"tls": "splice", "hosts": ["a.example"]})
+        record = os.path.join(self.dir, "requests.log")
+        listener.inspection.record = egress_record.RequestLog(record)
+        self.addCleanup(listener.inspection.record.close)
+        ours, guest = socket.socketpair()
+        self.addCleanup(ours.close)
+        self.addCleanup(guest.close)
+        ours.settimeout(2.0)
+        guest.settimeout(2.0)
+        guest.sendall(b"GET /1 HTTP/1.1\r\nHost: a.example\r\n\r\n"
+                      b"GET /2 HTTP/1.1\r\nHost: a.example\r\n\r\n"
+                      b"GET /3 HTTP/1.1\r\nHost: b.example\r\n\r\n")
+        guest.shutdown(socket.SHUT_WR)
+        answer = threading.Thread(target=_read_all, args=(guest,),
+                                  daemon=True)
+        answer.start()
+
+        def dial(addr, timeout=None):
+            if addr[0] == "a.example":
+                self._write({"tls": "splice", "hosts": ["b.example"]})
+                listener.reload_policy()
+            near, far = socket.socketpair()
+            self.addCleanup(near.close)
+            self.addCleanup(far.close)
+            far.sendall(_OK)
+            return near
+
+        with unittest.mock.patch.object(
+                socket, "create_connection", side_effect=dial), \
+                unittest.mock.patch.object(
+                    egress_relay, "RELAY_IDLE_TIMEOUT", 2.0):
+            serve_cleartext(listener.inspection, ours, _where("cleartext"))
+        with open(record) as fh:
+            lines = [json.loads(ln) for ln in fh]
+        self.assertEqual([(ln["path"], ln["decision"]) for ln in lines],
+                         [("/1", "forward"), ("/2", "drop"),
+                          ("/3", "forward")])
+
+    def test_a_request_is_decided_by_one_document(self):
+        """A reload landing between a request's questions does not answer
+        the rest from the new document: here the new one allows only POST,
+        and the GET the old admitted is still forwarded."""
+        listener = self._listener({"tls": "inspect", "hosts": ["a.example"]})
+        self._write({"tls": "inspect", "policy": [
+            {"host": "a.example", "methods": ["POST"]}]})
+        narrowed = load_policy(self.path)
+        insp = listener.inspection
+
+        class Swapping(Policy):
+            def admits(self, host):
+                insp.policy = narrowed
+                return super().admits(host)
+
+        insp.policy = Swapping(*insp.policy)
+        log, _sent, dialled = _serve_with(
+            self, insp, b"GET / HTTP/1.1\r\nHost: a.example\r\n\r\n")
+        self.assertEqual(len(dialled), 1, log)
+
+
+def _serve_with(test, insp, request_bytes):
+    """One guest connection through the cleartext plane, each upstream
+    answering 200. Returns (log, what the guest was sent, addresses
+    dialled)."""
+    ours, guest = socket.socketpair()
+    test.addCleanup(ours.close)
+    test.addCleanup(guest.close)
+    ours.settimeout(2.0)
+    guest.settimeout(2.0)
+    guest.sendall(request_bytes)
+    guest.shutdown(socket.SHUT_WR)
+    dialled = []
+
+    def dial(addr, timeout=None):
+        near, far = socket.socketpair()
+        test.addCleanup(near.close)
+        test.addCleanup(far.close)
+        far.sendall(_OK)
+        dialled.append(addr)
+        return near
+
+    with unittest.mock.patch.object(
+            socket, "create_connection", side_effect=dial), \
+            unittest.mock.patch.object(
+                egress_relay, "RELAY_IDLE_TIMEOUT", 2.0):
+        serve_cleartext(insp, ours, _where("cleartext"))
+    ours.close()
+    return insp.out.getvalue(), _read_all(guest), dialled
 
 
 class TestStatusFile(unittest.TestCase):

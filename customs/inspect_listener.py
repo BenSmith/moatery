@@ -11,6 +11,11 @@ under Accept=no every fd carries the unit's name.
 One daemon thread per connection, up to a ceiling, and refused above it
 rather than queued. Every accepted socket gets egress_relay's decision
 timeout before it is touched.
+
+A reload reads the policy file again between accepts and enforces it from
+each connection's next decision; a connection already relaying keeps
+going. Its `tls` is the one thing a reload cannot change: the minter was
+built for it.
 """
 
 import errno
@@ -33,7 +38,8 @@ from . import egress_relay
 from .egress_status import write_status
 from . import inspect_http
 from . import inspect_tls
-from .inspect_scope import Inspection
+from .inspect_policy import load_policy
+from .inspect_scope import Inspection, quoted
 from .peer_identity import (
     PROC_NET_TCP, in_ranges, local_endpoints, peer_caller, peer_closed,
 )
@@ -108,8 +114,11 @@ class Listener:
     def __init__(self, sockets, out=None, limit=MAX_CONNECTIONS, policy=None,
                  status_path=None, minter=None, record_path=None,
                  broker_endpoint=None, caller_uid=None, caller_ranges=None,
-                 peer_tables=PROC_NET_TCP):
+                 peer_tables=PROC_NET_TCP, policy_path=None):
         self._sockets = list(sockets)
+        # Where a reload reads the policy from; None: it cannot be.
+        self._policy_path = policy_path
+        self._reload = threading.Event()
         self._ceiling = Ceiling(limit)
         self._identifying = Ceiling(MAX_IDENTIFYING)
         self._stop = threading.Event()
@@ -134,6 +143,35 @@ class Listener:
         """Ask the accept loop to end; called from the SIGTERM handler."""
         self._stop.set()
 
+    def request_reload(self):
+        """Ask the accept loop to read the policy again; called from the
+        reload signal's handler."""
+        self._reload.set()
+
+    def reload_policy(self):
+        """Read the policy file and enforce it, or keep enforcing the one
+        loaded and log why. The status file names the digest enforced
+        either way."""
+        current = self.inspection.policy
+        try:
+            if self._policy_path is None:
+                raise ValueError("this listener was given no policy path")
+            policy = load_policy(self._policy_path)
+            if policy.tls != current.tls:
+                raise ValueError(
+                    f"its tls is {policy.tls!r} and the one enforced "
+                    f"{current.tls!r}, which only a restart changes")
+        except (OSError, ValueError) as exc:
+            self.inspection.log(
+                f"WARNING: policy not reloaded, still enforcing "
+                f"{current.digest[:12] or 'none'}: reason={quoted(exc)}")
+        else:
+            self.inspection.policy = policy
+            self.inspection.counters.set_lists(policy)
+            self.inspection.log(f"policy reloaded from {self._policy_path}: "
+                                f"{policy.summary}")
+        self.write_status()
+
     def close(self):
         for s in self._sockets:
             s.close()
@@ -148,6 +186,9 @@ class Listener:
         due = time.monotonic() + STATUS_INTERVAL
         try:
             while not self._stop.is_set():
+                if self._reload.is_set():
+                    self._reload.clear()
+                    self.reload_policy()
                 if time.monotonic() >= due:
                     self.write_status()
                     due = time.monotonic() + STATUS_INTERVAL

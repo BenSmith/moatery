@@ -44,6 +44,10 @@ class Policy:
         self.static = {normalise_hostname(name): tuple(addresses)
                        for name, addresses in (static or {}).items()}
 
+    def readmit(self, admits):
+        """Count against another document's lists from the next query."""
+        self._admits = admits
+
     def on_a_list(self, name: str) -> bool:
         return name in self.static or (
             self._admits is not None and self._admits(name))

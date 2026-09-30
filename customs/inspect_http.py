@@ -120,14 +120,17 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
                   f"the session is for {pinned_host}", host=req.host,
                   rec=rec, answered=421)
         return _refuse(client, conn, req, 421, "Misdirected Request")
+    # Read once: a reload between two of its questions would answer them
+    # from two documents.
+    policy = insp.policy
     # The guest gets the same bare 403 for an unlisted host and a refused
     # method or path; only the journal and the record tell them apart.
-    if not insp.policy.admits(req.host):
+    if not policy.admits(req.host):
         rec.request(req)
         insp.drop(where, DROP_NOT_ALLOWLISTED, host=req.host, rec=rec,
                   answered=403)
         return _refuse(client, conn, req, 403, "Forbidden")
-    if not insp.policy.permits(req.host, req.method, req.path):
+    if not policy.permits(req.host, req.method, req.path):
         rec.request(req)
         insp.drop(where, DROP_NOT_PERMITTED, host=req.host, rec=rec,
                   answered=403, method=req.method)
@@ -138,7 +141,7 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
     rec.request(req)
     # A brokered request goes to the broker instead of the origin, with the
     # same head; the broker picks the credential by its Host.
-    credential = insp.policy.credential_for(req.host)
+    credential = policy.credential_for(req.host)
     if credential:
         rec.set(credential=credential)
     try:
@@ -167,7 +170,7 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
                     f"is the endpoint this inspector's --broker names.")
         else:
             reason = dial_failure_reason(
-                req.host, insp.policy.internal_expected)
+                req.host, policy.internal_expected)
             text = f"{req.host} could not be reached: {exc}"
         insp.drop(where, reason, text, host=req.host, rec=rec, answered=502)
         return _refuse(client, conn, req, 502, "Bad Gateway")

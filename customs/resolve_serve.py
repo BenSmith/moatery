@@ -286,11 +286,13 @@ def recv_exactly(conn, count, deadline=None):
 _TCP_SLOTS = _TcpSlots()
 
 
-def serve(sockets, policy, counters=None, status_path=None, stop=None):
+def serve(sockets, policy, counters=None, status_path=None, stop=None,
+          turn=None):
     """The loop. Returns when `stop` says so, or never.
 
     `stop` is a callable so the tests can end the loop after a fixed number
-    of turns; in the process it reads the SIGTERM flag.
+    of turns; in the process it reads the SIGTERM flag. `turn`, if given,
+    is called at the start of every turn: the process's reload.
     """
     selector = selectors.DefaultSelector()
     for sock in sockets:
@@ -305,6 +307,8 @@ def serve(sockets, policy, counters=None, status_path=None, stop=None):
     emit()
     due = time.monotonic() + STATUS_INTERVAL
     while stop is None or not stop():
+        if turn is not None:
+            turn()
         # The timeout is what makes the tick happen on an idle responder,
         # whose file would otherwise read as a process that had died.
         for key, _events in selector.select(timeout=_SELECT_POLL):

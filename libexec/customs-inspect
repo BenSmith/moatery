@@ -18,7 +18,9 @@ reachable from nowhere else, so every caller is the workload, sudo
 included. A namespace that maps every uid is refused, since that serves
 anyone.
 
-The policy is read once, here; one that cannot be read fails the start.
+The policy is read here, and one that cannot be read fails the start.
+SIGUSR1 reads it again (customs/inspect_listener.py): one that cannot be
+read then is logged and the one loaded kept.
 
 It never binds. The socket unit binds and hands the listeners in, which
 keeps the bind out of the workload's security domain, so a missing
@@ -110,7 +112,8 @@ def parse_args(argv):
                         help="the workload this listener serves; a label, "
                              "carried on the CA subject and the log lines")
     parser.add_argument("--policy", required=True,
-                        help="the policy document (JSON), read once at start")
+                        help="the policy document (JSON), read at start and "
+                             "on SIGUSR1")
     parser.add_argument("--state-dir", required=True,
                         help="where the egress CA and the leaf caches live")
     parser.add_argument("--status", required=True,
@@ -151,8 +154,11 @@ def spans(ranges):
 
 def main(argv=None):
     argv = sys.argv if argv is None else argv
-    # A HUP before the record exists would otherwise end the process.
+    # A HUP before the record exists, or a USR1 before the listener, would
+    # otherwise end the process. A USR1 ignored here may leave an older
+    # document loaded, which the status file's digest shows.
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    signal.signal(signal.SIGUSR1, signal.SIG_IGN)
     try:
         args = parse_args(argv)
     except SystemExit as exc:
@@ -232,11 +238,12 @@ def main(argv=None):
                         broker_endpoint=args.broker,
                         caller_uid=args.caller_uid,
                         caller_ranges=caller_ranges,
-                        peer_tables=tables)
+                        peer_tables=tables, policy_path=policy_path)
     print(f"policy loaded from {policy_path}: {policy.summary}", flush=True)
     if caller_ranges is not None:
         print(f"callers served: uids {spans(caller_ranges)}", flush=True)
     signal.signal(signal.SIGTERM, lambda *_args: listener.stop())
+    signal.signal(signal.SIGUSR1, lambda *_args: listener.request_reload())
     # logrotate renames the file and HUPs; the handler only sets a flag (see
     # RequestLog.reopen).
     signal.signal(signal.SIGHUP,

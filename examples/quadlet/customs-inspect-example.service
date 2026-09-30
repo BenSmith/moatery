@@ -20,5 +20,6 @@ ExecStart=/bin/sh -c 'pid=$$(%h/.local/bin/customs-pod-netns pid example) \
     --record %L/customs/requests.log \
     --broker unix:%t/customs/broker.sock \
     --netns-pid "$$pid"'
+ExecReload=kill -USR1 $MAINPID
 StateDirectory=customs
 LogsDirectory=customs

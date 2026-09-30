@@ -16,11 +16,14 @@ is netns_listen.
 
 Under a Type=notify unit it sends READY=1 once the listeners are bound,
 before the exec, so a unit ordered after it (the workload's) starts only
-when a connection can no longer be refused.
+when a connection can no longer be refused. SIGUSR1 is ignored from
+then, across the exec: a reload the unit is sent before the command's
+handler is in place is lost, not the end of the process.
 """
 
 import argparse
 import os
+import signal
 import sys
 
 # Before the lib imports: the install directory is not this process's to
@@ -68,6 +71,7 @@ def main(argv=None):
         print(f"error: cannot bind in pid {args.pid}'s network namespace: "
               f"{exc}", file=sys.stderr)
         return 1
+    signal.signal(signal.SIGUSR1, signal.SIG_IGN)
     try:
         notify_ready()
     except OSError as exc:

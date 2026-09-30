@@ -22,8 +22,9 @@ from .inspect_document import (
 
 
 class Policy(NamedTuple):
-    """One workload's inspection lists, as read at start. Tuples, since
-    nothing may edit them after load.
+    """One workload's inspection lists, as read at start or at a reload.
+    Tuples, since nothing may edit them after load: a reload replaces the
+    whole.
 
     `internal_expected` admits nothing. It names the hosts the host's
     own private-address rule excepts, so a failed dial into private space

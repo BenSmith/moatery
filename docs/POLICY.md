@@ -1,12 +1,16 @@
 # The policy document
 
-`customs-inspect --policy PATH` reads one JSON object, once, at start. An
-edited document applies on a restart; the running policy is always the
-file's as it was when the inspector started, and the status file carries
-the SHA-256 of the text it loaded (`policy_digest`) so the two can be
-compared.
+`customs-inspect --policy PATH` reads one JSON object at start, and
+again on SIGUSR1 (`ExecReload=kill -USR1 $MAINPID`, and `systemctl
+reload`). A reload applies from each connection's next decision: a
+request already relaying finishes, and the next one on its connection is
+decided against the new document. `tls` is the one key a reload cannot
+change, since the minter was built for it; that needs a restart. The
+running policy is the last document loaded, and the status file carries
+the SHA-256 of its text (`policy_digest`), so the two can be compared.
 
-A document that cannot be read or parsed fails the start. There is no
+A document that cannot be read or parsed fails the start, and fails a
+reload, which logs why and keeps the document loaded. There is no
 fallback to an empty policy.
 
 ```json
