@@ -90,6 +90,10 @@ SOCKET = f"{RUN_DIR}/broker.sock"
 SECRETS = "/run/secrets"
 
 LOOPBACK = "127.0.0.1"
+# What the responder answers every name with: an address the redirect
+# catches by port, and not loopback, which a VM's guest in the workload's
+# container would take for its own. Never routed (RFC 2544).
+ANSWER = "198.18.0.1"
 PLANES = (TLS.inspect_port, CLEARTEXT.inspect_port)
 # The first inherited fd, by the activation convention the inspector reads.
 LISTEN_FDS_START = 3
@@ -147,10 +151,10 @@ def inspector_argv(name, caller_uid):
 
 
 def resolver_argv(name):
-    """Every name answered with the pod's loopback, where the redirect
-    lands 443 and 80 on the planes."""
+    """Every name answered with ANSWER, which the redirect lands on the
+    planes at 443 and 80."""
     return [sys.executable, str(RESOLVER), "--name", name,
-            "--address", LOOPBACK, "--policy", POLICY,
+            "--address", ANSWER, "--policy", POLICY,
             "--status", RESOLVE_STATUS]
 
 

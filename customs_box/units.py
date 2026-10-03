@@ -246,10 +246,17 @@ def inspect_argv(box, settings, broker):
     return argv
 
 
+# What the responder answers every name with. The redirect is by port, so
+# any address the workload's traffic leaves its namespace for lands on the
+# listeners; loopback would not, from a VM's guest, whose 127.0.0.1 is its
+# own. In 198.18.0.0/15, which is never routed (RFC 2544).
+ANSWER = "198.18.0.1"
+
+
 def resolve_argv(box, settings):
     return [*_program(settings, "customs-netns-listen"), "--pid", PID,
             "--resolver", "--", *_program(settings, "customs-resolve"),
-            "--name", box.name, "--address", "127.0.0.1",
+            "--name", box.name, "--address", ANSWER,
             "--policy", str(box.policy),
             "--status", str(box.resolve_status)]
 

@@ -511,7 +511,7 @@ def probe(sidecar_pid, workload_pid, secret, dns):
         lambda argv: in_netns(sidecar_pid, ["python3", "-c",
                                             riglib.DNS_LOOKUP, *argv],
                               check=False).stdout.strip(),
-        dns, "127.0.0.1",
+        dns, riglib.ANSWER,
         lambda: sidecar_file(f"{STATE_IN_SIDECAR}/resolve-status.json"))
 
     say("silent drop")

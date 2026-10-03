@@ -10,6 +10,10 @@ results there competes with the kernel console and the getty.
 
 The names and addresses below are vm_rig.py's; the two files are read
 side by side and ship together, so they are repeated rather than imported.
+The address the responder answers with is the seed's (ANSWER_FILE), since
+it is the placement's: the host's loopback map, or an address passt
+carries out of the guest for a placement with the listeners inside the
+container's namespace.
 """
 
 import http.client
@@ -26,6 +30,7 @@ import time
 PROVIDER = "provider.test"
 UNLISTED = "unlisted.test"
 MAP = "169.254.1.3"
+ANSWER_FILE = "/etc/customs-rig/answer"
 ELSEWHERE = "192.0.2.53"
 CA = "/etc/customs-rig/bundle.pem"
 PLACEHOLDER = "sk-placeholder"
@@ -53,6 +58,15 @@ def emit(probe, **fields):
     else:
         sys.stdout.buffer.write(line)
         sys.stdout.flush()
+
+
+def answer():
+    """The address the responder is expected to answer with."""
+    try:
+        with open(ANSWER_FILE) as fh:
+            return fh.read().strip() or MAP
+    except OSError:
+        return MAP
 
 
 def resolver():
@@ -129,20 +143,25 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
 
 
 def http(host, path, headers=None):
-    """One request through the guest's client stack: status, Server, body."""
+    """One request through the guest's client stack: status, Server, body.
+    It dials whatever the responder answered, so an answer the guest
+    cannot carry out (its own loopback) is seen failing, not skipped."""
     address = dns_query(resolver(), host, "A", "udp")
-    if address != MAP:
+    try:
+        socket.inet_aton(address)
+    except OSError:
         return {"error": f"resolve {host}: {address}"}
     ctx = ssl.create_default_context(cafile=CA)
     conn = PinnedHTTPSConnection(host, address, context=ctx, timeout=20)
     try:
         conn.request("GET", path, headers=headers or {})
         resp = conn.getresponse()
-        return {"status": resp.status,
+        return {"address": address, "status": resp.status,
                 "server": resp.getheader("Server"),
                 "body": resp.read(65536).decode("utf-8", "replace")}
     except Exception as exc:
-        return {"error": f"{type(exc).__name__}: {exc}"}
+        return {"address": address,
+                "error": f"{type(exc).__name__}: {exc}"}
     finally:
         conn.close()
 
@@ -170,7 +189,7 @@ def tcp_probe():
     s.setblocking(False)
     started = time.time()
     try:
-        s.connect((MAP, DROP_PORT))
+        s.connect((answer(), DROP_PORT))
         result = "connected"
     except BlockingIOError:
         _, writable, _ = select.select([], [s], [], 6)

@@ -399,6 +399,69 @@ defect in the pair. Four facts, all in the guest half:
   port-53 DNAT claims it. SELinux in Enforcing needed no extra flag for
   `--device /dev/kvm` or the bind mount.
 
+## vm_placement_rig.py — a VM in the netns and sidecar placements
+
+vm_rig.py's qemu container and guest, moved into the two placements whose
+listeners are in the workload's namespace: netns_rig's host side (the
+broker a user unit, the listeners bound in the qemu container's namespace
+by customs-netns-listen), or sidecar_rig's pod with the qemu container as
+its workload, uid 1000 with every capability dropped.
+
+```bash
+python3 tests/manual/vm_placement_rig.py --placement netns
+python3 tests/manual/vm_placement_rig.py --placement sidecar  # builds
+python3 tests/manual/vm_placement_rig.py --placement netns \
+    --loopback-answer                                       # must go red
+python3 tests/manual/vm_placement_rig.py --placement netns --no-build
+```
+
+It needs what vm_rig needs. The guest reads the address the responder
+answers with from the seed (`/etc/customs-rig/answer`) and dials whatever
+it is given, so a wrong answer is a failed request and not a skipped one.
+The sidecar's qemu runs as a subordinate uid, so the serial and probe
+files are made first, writable by anyone, and its `/proc` is read through
+`podman unshare`.
+
+**Rows.** Premise (no `CAP_NET_ADMIN` in qemu's bounding set; the table is
+in the namespace; qemu holds `/dev/kvm`; the guest is a namespace of its
+own). DNS from the guest, answered with riglib.ANSWER. The guest's UDP
+sends dropped and the one to 443 counted as quic. The request (200; the
+real key arrived; the record says `forward` under the credential; the
+guest holds the placeholder only). The unlisted row. A guest connect to
+another port at the answered address times out. The counters.
+
+**What it found, first runs, 2026-10-03.** One defect: the netns
+placement, customs-box and the sidecar answered every name with the
+namespace's `127.0.0.1`, which a container dials into its own namespace
+and a guest into its own stack, where passt never carries it. 14/20 in
+both placements: DNS green, request, unlisted and drop red, the guest's
+dials refused by its own loopback. Nothing left the namespace, and every
+caller was named. With `198.18.0.1`, never routed, 20/20 in both; the
+redirect is by port, and passt's dial to that address meets it. The
+three now answer `198.18.0.1`, and `--loopback-answer` 14/20 is the old
+answer as a control. Re-run on that change, the same day: vm_rig 30/30,
+netns_rig 30/30, sidecar_rig 36/36, box_rig 103/103.
+
+Outside the rig, the same day, two more ways to hold a VM:
+
+- qemu under pasta alone, with no podman (`pasta --config-net --
+  qemu ...`), host_rig's listeners: 30/30 with vm_rig's rows, given two
+  things podman supplies. pasta runs the command as root in its user
+  namespace with every capability, so qemu was started under `setpriv
+  --bounding-set=-all`; kept, the premise row goes red, and root there
+  lists our tables. The namespace shares the host's mount namespace, so
+  its `resolv.conf` names the host's `127.0.0.53`, which passt forwards
+  to and no DNAT moves off loopback: DNS timed out until qemu had a
+  mount namespace of its own and a `resolv.conf` naming pasta's
+  forwarder.
+- a krun microVM (`podman run --runtime krun`, crun-krun 1.28, libkrun
+  1.19), in the host placement and in the netns: 11/11 and 6/6 of a
+  smaller set (DNS, request with the real key, unlisted 403, drop,
+  callers named), with either answer. krun hands the guest's sockets to
+  its process in the container's namespace, loopback ones too. A dial to
+  a dropped port fails in the guest at once (curl 7) instead of timing
+  out; a listener on the host's end of it saw nothing.
+
 ## box_rig.py — a customs box, through its command line
 
 `docs/BOX.md`: `customs-box credential add`, `create`, `enter`, `log`,

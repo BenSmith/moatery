@@ -38,6 +38,10 @@ PLACEHOLDER = "sk-placeholder"
 # nothing else on the host's loopback is reachable from inside by any name.
 LOOPBACK_MAP = "169.254.1.3"
 INSPECT_TLS, INSPECT_CLEARTEXT = 8443, 8080
+# What the responder answers every name with where the listeners are in the
+# workload's namespace: customs-box's, which the netns recipe and the
+# sidecar answer too (tests/test_quadlet_example.py, tests/test_sidecar.py).
+from customs_box.units import ANSWER  # noqa: E402, F401
 RESOLVE_PORT = 8053
 PROVIDER_PORT = 443
 IMAGE = "registry.fedoraproject.org/fedora:44"
@@ -337,10 +341,10 @@ def dns_rows(ask, resolver, synthesised, read_status):
     provider's name absent from it is the control that it counts against the
     policy. The provider's name is asked of a nameserver that does not exist,
     since pasta's forwarder answers it from the host's hosts file, with the
-    rig's own 127.0.0.1, which is what the responder answers in the netns rig
-    and the sidecar. The file is awaited from after the queries: a
-    socket-activated responder first writes it at start, which is after the
-    first query arrived and before it was counted.
+    rig's own 127.0.0.1: only the redirect answers a query sent there, whatever
+    address the placement's responder gives. The file is awaited from after
+    the queries: a socket-activated responder first writes it at start,
+    which is after the first query arrived and before it was counted.
     """
     say("dns")
     tag = os.urandom(4).hex()

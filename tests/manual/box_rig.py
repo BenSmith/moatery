@@ -813,7 +813,7 @@ def dns_rows():
     riglib.dns_rows(
         lambda argv: exec_in(["python3", "-c", riglib.DNS_LOOKUP,
                               *argv]).stdout.strip(),
-        resolver, "127.0.0.1", RESOLVE_STATUS.read_text)
+        resolver, riglib.ANSWER, RESOLVE_STATUS.read_text)
 
 
 def drop_rows():

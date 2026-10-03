@@ -8,6 +8,7 @@ provides is one systemd drops without a word. The programs' flags are
 parsed by the programs' own parsers, so a flag renamed there fails here.
 """
 
+import ipaddress
 import json
 import re
 import shlex
@@ -31,8 +32,8 @@ from customs_box.credentials import (Broker, Credential, CredentialError,
 from customs_box.mounts import Mount, MountRefused, parse_mount, refuse
 from customs_box.paths import (Box, boxes_root, credentials_root, described,
                                protected, sealed, user_dirs, valid_name)
-from customs_box.units import (ALL_CAPABILITIES, CAPABILITIES, Settings,
-                               container_unit, interpreter, render)
+from customs_box.units import (ALL_CAPABILITIES, ANSWER, CAPABILITIES,
+                               Settings, container_unit, interpreter, render)
 
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
 DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo", "PartOf")
@@ -332,7 +333,8 @@ class TestUnits(unittest.TestCase):
         args = load_script("libexec/customs-resolve").parse_args(
             launched.command[2:])
         self.assertEqual(args.policy, str(self.box.policy))
-        self.assertEqual(args.address, "127.0.0.1")
+        self.assertEqual(args.address, ANSWER)
+        self.assertFalse(ipaddress.ip_address(args.address).is_loopback)
 
     def test_awkward_paths_survive_the_unit_files(self):
         box = Box("agent", user_dirs({"HOME": "/home/a b%c$d"}))

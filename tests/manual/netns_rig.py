@@ -194,16 +194,16 @@ def start_inspector(pid, netns_pid, notify):
         f" (pid {unit_pid()})")
 
 
-def start_responder(pid, notify):
+def start_responder(pid, notify, address=riglib.ANSWER):
     """The same launcher with --resolver: the responder's port bound in the
-    container's namespace, and every name answered with its loopback."""
+    container's namespace, and every name answered with `address`."""
     run(["systemd-run", "--user", "--quiet", "--unit", f"{UNIT}-resolve",
          *unit_type(notify),
          *(f"--setenv={k}={v}" for k, v in PROGRAM_ENV.items()),
          sys.executable, str(LIBEXEC / "customs-netns-listen"),
          "--pid", str(pid), "--resolver", "--",
          sys.executable, str(LIBEXEC / "customs-resolve"),
-         "--name", NAME, "--address", "127.0.0.1", "--policy", str(POLICY),
+         "--name", NAME, "--address", address, "--policy", str(POLICY),
          "--status", str(RESOLVE_STATUS)])
     READY["responder"] = [listening(pid, proto, RESOLVE_PORT)
                           for proto in ("udp", "tcp")]
@@ -444,7 +444,7 @@ def probe(pid, dns, secret):
     riglib.dns_rows(
         lambda argv: in_netns(pid, ["python3", "-c", riglib.DNS_LOOKUP,
                                     *argv], check=False).stdout.strip(),
-        dns, "127.0.0.1", RESOLVE_STATUS.read_text)
+        dns, riglib.ANSWER, RESOLVE_STATUS.read_text)
 
     say("silent drop")
     sent = in_netns(pid, ["python3", "-c", UDP_SEND, FILTERED_UDP[0],

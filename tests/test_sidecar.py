@@ -12,6 +12,7 @@ the bind, the drop, the socket at the path, the workload's request.
 
 import contextlib
 import io
+import ipaddress
 import os
 import pwd
 import signal
@@ -24,6 +25,7 @@ from pathlib import Path
 from unittest import mock
 
 from customs.egress_plane import CLEARTEXT, TLS
+from customs_box.units import ANSWER as BOX_ANSWER
 from tests import REPO_ROOT, load_script, script_env, suppress_fork_warning
 
 FAKE_INSPECT = pwd.struct_passwd(("inspect", "x", 200, 200, "", "/", ""))
@@ -99,13 +101,16 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
         self.assertEqual(args.state_dir, mod.STATE)
         self.assertEqual(args.policy, mod.POLICY)
 
-    def test_the_responder_argv_parses_and_answers_with_the_loopback(self):
-        """Every name answered with the address the redirect lands 443 and
-        80 from, counted against the policy the inspector reads."""
+    def test_the_responder_argv_parses_and_answers_off_the_loopback(self):
+        """Every name answered with an address the redirect lands 443 and
+        80 from, counted against the policy the inspector reads. Not the
+        loopback, which a VM's guest in the pod would dial as its own."""
         mod = _mod()
         resolver = load_script("libexec/customs-resolve")
         args = resolver.parse_args(mod.resolver_argv("wl")[1:])
-        self.assertEqual(args.address, mod.LOOPBACK)
+        self.assertEqual(args.address, mod.ANSWER)
+        self.assertFalse(ipaddress.ip_address(args.address).is_loopback)
+        self.assertEqual(args.address, BOX_ANSWER)
         self.assertIsNone(args.address6)
         self.assertEqual(args.policy, mod.POLICY)
         self.assertTrue(args.status.startswith(mod.STATE + "/"))

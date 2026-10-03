@@ -12,6 +12,7 @@ import re
 import unittest
 from pathlib import Path
 
+from customs_box.units import ANSWER
 from tests import REPO_ROOT
 
 EXAMPLES = Path(REPO_ROOT) / "examples"
@@ -107,6 +108,20 @@ class TestQuadletExample(unittest.TestCase):
         against a slice systemd already has."""
         pod = QUADLET / "example.pod"
         self.assertIn("--share-parent=false", _keys(pod, "PodmanArgs"))
+
+    def test_the_responder_answers_as_customs_box_does(self):
+        """One address for the netns placement wherever it is written
+        down: the example, the recipe and customs-box. A copy left on the
+        loopback works for a container and fails a VM's guest, which
+        dials its own."""
+        design = DESIGN.read_text().split(
+            "## Netns:", 1)[1].split("\n## ", 1)[0]
+        resolve = QUADLET / LISTENERS[1]
+        for where, text in (("example", resolve.read_text()),
+                            ("DESIGN.md", design)):
+            with self.subTest(where=where):
+                self.assertEqual(
+                    re.findall(r"--address (\S+)", text), [ANSWER])
 
     def test_the_rules_are_the_netns_placements(self):
         design = DESIGN.read_text().split(

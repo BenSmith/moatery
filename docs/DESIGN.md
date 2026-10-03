@@ -196,7 +196,19 @@ every AAAA with a v6 address if it is given one (`--address6`) and no
 records if not; every other type gets NOERROR and no records. The
 address is one the workload's 443 and 80 are redirected from, and every
 placement redirects port 53 to the responder whatever the address, so a
-workload that names its own nameserver reaches it too. That is enough
+workload that names its own nameserver reaches it too.
+
+The redirect is by port, so the address need only be one the workload's
+traffic leaves its own stack for. In the host placement it is the
+loopback map. Where the listeners are in the workload's namespace
+(netns, sidecar, customs-box) it is `198.18.0.1`, in `198.18.0.0/15`,
+which is set aside for benchmarking and never routed. It is not the
+namespace's `127.0.0.1`, although the listeners are bound there: a VM's
+guest takes that address for its own and never sends it out, and a
+container workload's dial to another port would reach whatever listens
+on its own loopback instead of the drop. A layout with root that gives
+each workload an address of its own in that range starts above
+`198.18.0.255`. That is enough
 for the redirect, and it is correct, because the inspector dials the
 name it authorised and never the address the workload was given. The
 responder has no upstream socket: no connect, no resolver call, which
@@ -502,7 +514,7 @@ systemd-run --user --unit customs-inspect-NAME -p Type=notify \
     --netns-pid "$PID"
 systemd-run --user --unit customs-resolve-NAME -p Type=notify \
   customs-netns-listen --pid "$PID" --resolver -- \
-  customs-resolve --name x --address 127.0.0.1 --policy … --status …
+  customs-resolve --name x --address 198.18.0.1 --policy … --status …
 podman start NAME
 # and at the container's stop
 systemctl --user stop customs-inspect-NAME customs-resolve-NAME
@@ -592,7 +604,7 @@ broker as 201 on `unix:/run/customs/broker.sock` with
 `CREDENTIALS_DIRECTORY=/run/secrets`; mints the CA into the state volume
 on the first start; then starts the inspector as 200 with its listeners
 as fds 3 and 4 and `LISTEN_PID`/`LISTEN_FDS` set, and the responder as
-200 with its own, answering every name with `127.0.0.1`. There is no
+200 with its own, answering every name with `198.18.0.1`. There is no
 systemd in the image: the bind is still not the inspector's, and it is
 root's before any privilege is dropped, which is what the socket unit
 gives by another route. The entrypoint takes the two facts the image
@@ -721,8 +733,9 @@ listens on TCP in the pod.
 
 ## VM: a VM inside a rootless container
 
-**What runs where.** qemu is the workload: it runs inside the host
-placement's container, with `--device /dev/kvm` and `-netdev passt` (or
+**What runs where.** qemu is the workload: it runs inside the
+container of the host, netns or sidecar placement, unchanged but for
+`--device /dev/kvm` and `-netdev passt` (or
 `passt --socket` with `-netdev stream`). passt re-originates the
 guest's traffic as sockets in the container's namespace, so the guest's
 egress is the container's and the rules apply unchanged. Root in the
@@ -741,8 +754,13 @@ by the user on the host re-originates as the user, and the guest's own
 namespace is the guest's. A VM on a bridge under system libvirt can be
 filtered on the host by its tap, but that takes root.
 
+The guest dials the address the responder answers with, from its own
+stack, so that address cannot be loopback (see "DNS" above); none of
+the placements' is.
+
 **Proved by** `tests/manual/vm_rig.py`, which runs the host recipe with
-qemu as the workload.
+qemu as the workload, and `tests/manual/vm_placement_rig.py`, which
+runs the same qemu and guest in the netns and sidecar placements.
 
 ## With root: a uid per workload
 

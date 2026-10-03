@@ -295,9 +295,11 @@ def b64(data):
     return base64.b64encode(data).decode()
 
 
-def write_seed():
+def write_seed(bundle=BUNDLE, answer=LOOPBACK_MAP):
     """The NoCloud seed: the CA bundle, the agent's environment, and the
-    guest probe. Both touches the design puts in the seed are here."""
+    guest probe. Both touches the design puts in the seed are here, and
+    the address the responder answers with, which the guest's rows
+    expect."""
     VM_DIR.mkdir(parents=True, exist_ok=True)
     (VM_DIR / "meta-data").write_text(
         f"instance-id: customs-vm-{os.urandom(4).hex()}\n"
@@ -317,7 +319,10 @@ def write_seed():
         "    permissions: '0644'\n"
         "    encoding: b64\n"
         "    content: |\n"
-        f"      {b64(BUNDLE.read_bytes())}\n"
+        f"      {b64(bundle.read_bytes())}\n"
+        "  - path: /etc/customs-rig/answer\n"
+        "    permissions: '0644'\n"
+        f"    content: {answer}\n"
         "  - path: /etc/profile.d/customs-rig.sh\n"
         "    permissions: '0644'\n"
         "    content: |\n"
