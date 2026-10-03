@@ -1,17 +1,18 @@
 # The interface
 
-What customs keeps stable for a program that imports its modules or
-reads its status files. workloadctl is that program: it requires the
-customs RPM, runs `customs-broker`, `customs-inspect`, `customs-mint-ca`
-and `customs-resolve`, imports the names below and reads the inspector's
-and the responder's status files into its metrics and `workloadctl
-doctor`. `tests/test_interface.py` holds the three lists to the code.
+What customs keeps stable for a program built on it: one that runs
+`customs-broker`, `customs-inspect`, `customs-mint-ca` and
+`customs-resolve`, imports the names below (to write a policy the
+inspector will accept, say, or to lay out a CA where the inspector
+looks for it) and reads the inspector's and the responder's status
+files into its own metrics. `tests/test_interface.py` holds the three
+lists to the code.
 
 ## Imported names
 
 customs is a package, `customs`, installed where Python finds it; the
-programs are in `/usr/libexec/customs/`. These are the names
-workloadctl's shipped code imports:
+programs are in `/usr/libexec/customs/`. These are the names a program
+may import:
 
 ```
 customs.broker_profiles   BROKER_DEFAULT_AUTH_FORMAT
@@ -38,9 +39,8 @@ customs.sd_listen         NotSocketActivated
 ```
 
 Some of these are unused inside customs (`clear_status`, `leaf_dir`,
-`denial_dir`); they are here for workloadctl and are not dead code.
-workloadctl's tests import further names; that its shipped code
-imports nothing else is checked on its side.
+`denial_dir`); they are here for such a program and are not dead code.
+Any other name in the package may be renamed or removed in any release.
 
 ## The inspector's status file
 

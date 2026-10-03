@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """What docs/INTERFACE.md publishes is what the code provides.
 
-Three lists: the names workloadctl imports, each defined in its module,
-and the two status files' paths, each present in a file the inspector or
-the responder wrote. A
-name or a key renamed without the list following would pass every other
-test and break workloadctl at the switch: an import error for a name, a
-figure that silently reads zero for a key.
+Three lists: the published names, each defined in its module, and the
+two status files' paths, each present in a file the inspector or the
+responder wrote. A name or a key renamed without the list following
+would pass every other test and break a program built on customs (as
+workloadctl is): an import error for a name, a figure that silently
+reads zero for a key.
 """
 
 import importlib
