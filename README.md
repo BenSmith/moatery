@@ -106,8 +106,8 @@ the CA and the per-host certificates); systemd 256 or later for
 `LoadCredentialEncrypted=` in a user unit; podman with pasta for the
 container shapes.
 
-Building the RPM takes `just`, `rpmbuild` (rpm-build) and
-python3-rpm-macros: `just rpm` builds from the checkout into
+Building the RPM takes `just`, `rpm-build` and
+`python3-rpm-macros`: `just rpm` builds from the checkout into
 `rpmbuild/RPMS/`, with the programs in `/usr/libexec/customs/`,
 `customs-box` in `/usr/bin/`, and the `customs` and `customs_box`
 packages in site-packages.

@@ -1,4 +1,4 @@
-# Dev-container variant of ../pi-agent.Containerfile: same Fedora + tooling, but no PyCharm.
+# The dev container: Fedora with the tooling the checkout and its agents use.
 ARG FEDORA_VERSION=44
 FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
 
