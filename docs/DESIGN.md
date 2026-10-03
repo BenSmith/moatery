@@ -1,6 +1,6 @@
 # Placing customs
 
-The pair needs one thing from the host: something outside the workload
+customs needs one thing from the host: something outside the workload
 that owns the workload's outbound sockets, so rules can select them
 without the workload's cooperation. This is how to get that with nothing
 but a normal user, for each shape that matters. The policy document is

@@ -1,9 +1,10 @@
 # Examples: shape 1 as user units
 
-Units for a rootless podman container inspected by the pair running as
-the user on the host ([DESIGN.md](../docs/DESIGN.md), shape 1). They
-assume the RPM is installed (`just rpm`): the programs in
-`/usr/libexec/customs/`, the `customs` package where Python finds it.
+Units for a rootless podman container inspected by customs, its
+inspector, broker and responder running as the user on the host
+([DESIGN.md](../docs/DESIGN.md), shape 1). They assume the RPM is
+installed (`just rpm`): the programs in `/usr/libexec/customs/`, the
+`customs` package where Python finds it.
 
 The workload's name in these files is `example`, and the brokered
 provider is `api.example.com` under the credential id `example`.
