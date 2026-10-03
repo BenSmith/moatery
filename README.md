@@ -12,8 +12,9 @@ never handle yourself. Same two jobs here.
 
 ## What it is
 
-Two programs, stdlib Python. Everything is on the command line except
-the inspector's policy, one JSON document:
+Two programs do the work, in stdlib Python. They take everything on the
+command line but the inspector's policy, one JSON document, and the
+broker's keys, which systemd hands it in `$CREDENTIALS_DIRECTORY`:
 
 - **customs-inspect** — a transparent egress inspector. Outbound 443
   (and 80) from the workload is redirected into it; it reads the SNI or
@@ -29,12 +30,19 @@ the inspector's policy, one JSON document:
   never leaves loopback; the key never enters the workload.
 
 A third, **customs-resolve**, is the workload's nameserver: it answers
-every name with the address the redirect catches and asks no one, so the
-workload's DNS is not a way out. **customs-mint-ca** makes the
-per-workload CA once, before the inspector first starts, and
+every name with the address the redirect catches, or from a `--static`
+map file, and asks no one, so the workload's DNS is not a way out.
+**customs-mint-ca** makes the per-workload CA once, before the inspector
+first starts, and
 **customs-netns-listen** binds the inspector's or the responder's
 listeners inside a rootless container's network namespace and hands them
 over (shape 1n).
+
+**customs-box** puts them together for command-line work: `customs-box
+create NAME --policy FILE` makes a long-lived box, a rootless container
+with its own home, inspector and responder, and a broker once its policy
+names a credential; `customs-box enter NAME` runs a shell or a command
+in it.
 
 The workload cannot name the broker, cannot choose to use it, and cannot
 be pointed at another workload's. The only thing that dials the broker is
@@ -76,8 +84,7 @@ flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
   program that imports the modules or reads the inspector's status file.
 - [examples/](examples/): user units, a logrotate configuration, and the
   one-time setup for a rootless container.
-- `customs-inspect --help`, `customs-broker --help`,
-  `customs-resolve --help`: the flags.
+- `--help` on any of the programs: the flags.
 - [container/](container/): the sidecar image, the programs in one
   container of a pod.
 - [examples/quadlet/](examples/quadlet/): shape 1n as a quadlet pod.
