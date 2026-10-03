@@ -268,8 +268,8 @@ loaded that dial succeeds, and the list only changes the report.
 - **Netns** keeps every other uid off the listeners, and gives every
   container its own. Its listeners belong to one start of the container,
   so they are started with it; [examples/quadlet/](../examples/quadlet/)
-  does that with a pod, and customs-box ([BOX.md](BOX.md)) is built on
-  it.
+  does that with a unit holding the namespace, and customs-box
+  ([BOX.md](BOX.md)) is built on it.
 - **Sidecar** needs no host install: the programs are an image. It
   needs more rules, since the programs' own dials leave through the
   workload's namespace.

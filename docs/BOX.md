@@ -3,8 +3,9 @@
 customs-box makes long-lived, inspected containers, called boxes:
 `customs-box create NAME --policy FILE`, then `customs-box enter NAME`.
 Each box is the netns placement ([DESIGN.md](DESIGN.md)) laid out as
-[examples/quadlet/](../examples/quadlet/): a pod that holds the network
-namespace and loads the rules when it starts, the inspector's and the
+[examples/quadlet/](../examples/quadlet/): a unit that holds the
+network namespace and loads the rules when it starts (a quadlet `.pod`,
+with the workload its only container), the inspector's and the
 responder's listeners bound in that namespace, and the workload started
 after them.
 
@@ -52,8 +53,8 @@ boot for a lingering user. It starts the same chain `enter` does, and
 at the next login.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
-order, the pod, the rules, the broker and the listeners, and the
-workload. It then checks that the pod's namespace holds both customs
+order, the namespace's unit, the rules, the broker and the listeners,
+and the workload. It then checks that the namespace holds both customs
 tables, and refuses if it does not, before `podman exec -it` as the user
 (or uid 0 with `--root`). A listener that is not running is started
 again, and so is a box's broker. If one does not start, `enter` says so
@@ -63,12 +64,12 @@ broker a request with its credentials is refused, not sent without. The
 working directory is the host's current one if that is inside a mount,
 and the box's home otherwise.
 
-**stop** stops the pod's unit, and the broker's; everything bound to
-the pod stops too.
+**stop** stops the namespace's unit, and the broker's; everything bound
+to it stops too.
 **ls** lists each box, whether its workload is active, its image, and
 `autostart` if it has it.
-**rm** stops the box and removes its units, container and pod; its home
-and its record stay unless `--home`.
+**rm** stops the box and removes its units and what podman made from
+them; its home and its record stay unless `--home`.
 
 ## The policy loop
 
@@ -165,22 +166,22 @@ For box NAME, credential ID:
 | CA, certificates, status files | `~/.local/state/customs/box/NAME/` |
 | record | `~/.local/state/log/customs/box/NAME/requests.log`, and `.1` to `.4.gz` |
 | the box's home | `~/.local/share/customs/box/NAME/home/` |
-| pod, workload | `~/.config/containers/systemd/customs-box-NAME.{pod,container}` |
+| namespace, workload | `~/.config/containers/systemd/customs-box-NAME.{pod,container}` |
 | inspector, responder, broker | `~/.config/systemd/user/customs-box-NAME-{inspect,resolve,broker}.service` |
 | the record's rotation | `~/.config/systemd/user/customs-box-NAME-rotate.{service,timer}` |
 | broker's socket | `$XDG_RUNTIME_DIR/customs-box/NAME/broker.sock` |
 | credential | `~/.config/customs/credentials/ID.{cred,json}` |
 
-The pod and the container are both named NAME, so `podman` commands
-take the box's name; `create` refuses a name either already has. The
-credentials are beside the boxes, not among them, where they would be a
-box's directory.
+The container is named NAME, and so is podman's object for its
+namespace, so `podman` commands take the box's name; `create` refuses a
+name podman already uses. The credentials are beside the boxes, not
+among them, where they would be a box's directory.
 
 ## The units
 
 As in examples/quadlet, with these differences:
 
-- The pod is created with `--hosts-file image`, so the host's hosts file
+- The namespace is created with `--hosts-file image`, so the host's hosts file
   does not answer the workload's names.
 - The rules are loaded by the tool (`customs-box unit rules NAME`, one
   of the commands for the units' use). The egress device is read inside
@@ -189,8 +190,9 @@ As in examples/quadlet, with these differences:
   inspector `Wants=` and is ordered `After=` it: not `Requires=`, which
   would restart the inspector, and with it the workload, at every new
   key. Its start takes as long as the decryption, over a second on the
-  proving host. It is bound to nothing: a restart of the pod is a new
-  namespace, which is nothing to the broker, and `stop` and `rm` stop it.
+  proving host. It is bound to nothing: a restart of the namespace's
+  unit is a new namespace, which is nothing to the broker, and `stop`
+  and `rm` stop it.
 - systemd's user manager leaves a credentialed unit's workspace behind
   when it stops the unit while its credentials are being decrypted, and
   every start after fails on it; the system manager's leaves nothing.
@@ -202,10 +204,10 @@ As in examples/quadlet, with these differences:
   `PIP_CERT`. The mount is what root sees under sudo, which drops the
   variables.
 - Each box has a home of its own, a directory on the host that only it
-  mounts, at the path the user's home has on the host: the pod maps the
-  user to the same name and uid inside (`UserNS=keep-id`). The user's
-  own home directory is never mounted. The workload's working directory
-  is that path too: podman writes the passwd entry of a user the pod's
+  mounts, at the path the user's home has on the host: the namespace's
+  unit maps the user to the same name and uid inside (`UserNS=keep-id`).
+  The user's own home directory is never mounted. The workload's working
+  directory is that path too: podman writes the passwd entry of a user
   keep-id brings in with the working directory as its home, and `HOME`
   from it.
 - At each start the workload's unit writes a sudoers drop-in, as root in
@@ -213,26 +215,26 @@ As in examples/quadlet, with these differences:
   password: the image's own rule asks for one, and the user has none.
   Root in a box is filtered as the user is.
 - The record is rotated by the tool (`customs-box unit rotate NAME`),
-  from a timer the pod `Wants=` and that is `PartOf=` it, a minute after
-  the pod starts and every ten after. Past 32 MiB the record is moved to
-  `.1`, and the inspector's main process alone is sent `SIGHUP`, on which
-  it opens the path again at its next write; the other processes in its
-  unit are openssl mints, which a HUP ends. Four are kept, all but `.1`
-  compressed: a line being written as the record moved lands in `.1`,
-  which is compressed at the rotation after. The inspector stops writing
-  a record past 512 MiB, and a box writing that much in ten minutes
-  loses its lines until the next rotation. The tool, not logrotate,
-  which neither the image nor every host has.
+  from a timer the namespace's unit `Wants=` and that is `PartOf=` it, a
+  minute after that unit starts and every ten after. Past 32 MiB the
+  record is moved to `.1`, and the inspector's main process alone is
+  sent `SIGHUP`, on which it opens the path again at its next write; the
+  other processes in its unit are openssl mints, which a HUP ends. Four
+  are kept, all but `.1` compressed: a line being written as the record
+  moved lands in `.1`, which is compressed at the rotation after. The
+  inspector stops writing a record past 512 MiB, and a box writing that
+  much in ten minutes loses its lines until the next rotation. The tool,
+  not logrotate, which neither the image nor every host has.
 - No `[Install]` unless `--autostart`: without it a box runs from
   `enter` to `stop`.
 
 What starts what: `enter` starts `customs-box-NAME.service`, which
 `Wants=` and is `After=` the inspector and the responder; they are
-`BindsTo=` and `After=` the pod, whose unit is active only once its
-`ExecStartPost=` has loaded the rules. A rules load that fails fails
-the pod, and nothing after it starts. The pod `Wants=` the listeners, so
-a restart of the pod brings them back into its new namespace. The
-inspector `Wants=` the broker and starts after it is listening.
+`BindsTo=` and `After=` the namespace's unit, which is active only once
+its `ExecStartPost=` has loaded the rules. A rules load that fails fails
+that unit, and nothing after it starts. It `Wants=` the listeners, so
+its restart brings them back into its new namespace. The inspector
+`Wants=` the broker and starts after it is listening.
 
 Nothing `Requires=` a listener: a restart of a required unit restarts
 what requires it, and the inspector's restart would restart the
@@ -250,7 +252,7 @@ them; one that dies is started again (`Restart=on-failure`).
   the broker's socket, the CA's key, the sealed credentials, and the
   units that load a box's rules, which a box able to write them could
   drop;
-- a name outside `[a-z0-9-]`, or one a container or pod already has;
+- a name outside `[a-z0-9-]`, or one podman already uses;
 - a policy naming a credential that has not been added, an entry naming
   one for a host `credential add` did not name, a credential an earlier
   entry takes every host of, and two credentials setting one variable;
@@ -273,13 +275,13 @@ The user holds none.
 
 ## What is not closed
 
-A workload restart, by anything, keeps the pod's namespace and its
-rules. A pod started outside systemd (`podman pod start NAME`, or
-`podman start NAME` while the pod is down) is a new namespace with no
+A workload restart, by anything, keeps the namespace and its rules. A
+box started outside systemd (`podman pod start NAME`, or `podman start
+NAME` while the namespace's unit is down) has a new namespace with no
 rules, and its egress is not inspected. `enter` refuses such a box, but
-a process started in it some other way is not caught. A pod that joins a
-namespace the tool holds (`Network=ns:PATH`) would turn that start into
-a failure; that is untested.
+a process started in it some other way is not caught. Joining a
+namespace the tool holds (`Network=ns:PATH`), instead of making one,
+would turn that start into a failure; that is untested.
 
 ## Where it lives
 
@@ -304,8 +306,9 @@ A rig, `tests/manual/box_rig.py`, on a real host, through the command
 line ([tests/manual/README.md](../tests/manual/README.md)):
 
 - the workload's first request at every start, the box's first, each
-  restart of the workload and of the pod, and `enter` after `stop`, is
-  inspected: the rules and the listeners are in place before it;
+  restart of the workload and of the namespace's unit, and `enter` after
+  `stop`, is inspected: the rules and the listeners are in place before
+  it;
 - a rules load that fails starts nothing, and `enter` refuses the box;
 - a listed host answers and an unlisted one is refused 403, as the user
   and as root by sudo; the workload's DNS is the responder's; UDP 443,
@@ -314,7 +317,7 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
 - `enter` runs in the box's home, or the mount the host's directory is
   in; the user's own home is not the box's; a file outside the home is
   gone after a restart;
-- `enter` refuses a box whose pod `podman pod restart` started;
+- `enter` refuses a box `podman pod restart` started;
 - a brokered request reaches a stub provider carrying the sealed key,
   at every start of the broker as well, while the box holds the
   placeholder and has no path to the broker's socket; a stopped broker's
@@ -322,10 +325,10 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
   again, even after a stop while it started; a new key with `credential
   add` is the next request's, and neither the inspector nor the workload
   restarted;
-- `rm` leaves no unit, container or pod, nor the broker's socket, and
-  keeps the home and the record, which `create` finds again; `rm --home`
-  removes the home; `credential rm` is refused while a box names the
-  credential;
+- `rm` leaves no unit, container or namespace, nor the broker's socket,
+  and keeps the home and the record, which `create` finds again; `rm
+  --home` removes the home; `credential rm` is refused while a box names
+  the credential;
 - `log --refused` names a host the box was refused; `allow` lists it and
   reloads the listeners, a download running through it finishing whole,
   and the host is dialled after;
@@ -333,8 +336,9 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
 - a killed inspector is started again, and a stopped one leaves the
   workload running until `enter` starts it;
 - `log` follows a request as it is made;
-- the rotation's timer runs with the pod, and a record past its size is
-  moved aside and the next request's line is in a new one.
+- the rotation's timer runs with the namespace's unit, and a record
+  past its size is moved aside and the next request's line is in a new
+  one.
 
 Unit tests hold the generated units' dependencies to the chain above,
 each one broken on purpose once, and the refusals.
