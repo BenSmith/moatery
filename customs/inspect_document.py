@@ -14,7 +14,7 @@ from typing import NamedTuple
 
 # --- Hostname vocabulary: one normalisation, one refusal, one comparison ---
 
-def normalise_hostname(host: str) -> str:
+def normalize_hostname(host: str) -> str:
     """A hostname in the one form every match is made against: lowercased,
     one trailing root dot removed. Otherwise the spelling is the bypass.
     """
@@ -61,10 +61,10 @@ def hostname_match(host: str, patterns) -> bool:
     fnmatchcase on normalised names, since fnmatch's case handling varies by
     platform. `*.example.com` does not match `example.com`.
     """
-    host = normalise_hostname(host)
+    host = normalize_hostname(host)
     if not host:
         return False
-    return any(fnmatch.fnmatchcase(host, normalise_hostname(p))
+    return any(fnmatch.fnmatchcase(host, normalize_hostname(p))
                for p in patterns)
 
 
@@ -75,8 +75,8 @@ def patterns_overlap(a: str, b: str) -> bool:
     shared name, so a caller that must never let one through checks the
     name too.
     """
-    a = normalise_hostname(a)
-    b = normalise_hostname(b)
+    a = normalize_hostname(a)
+    b = normalize_hostname(b)
     if not a or not b:
         return False
     return a == b or fnmatch.fnmatchcase(a, b) or fnmatch.fnmatchcase(b, a)

@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 
-from .broker_profiles import normalise_host
+from .broker_profiles import normalize_host
 from .broker_request import (
     forwarded_headers, request_framing, response_framing,
 )
@@ -167,7 +167,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         # The Host selects a row of this broker's own table and supplies
         # nothing; with no row, no credential is sent.
-        host = normalise_host(self.headers.get("Host"))
+        host = normalize_host(self.headers.get("Host"))
         profile = self.profiles.get(host) if host else None
         if profile is None:
             log("deny", reason="host-not-configured", sandbox=label,

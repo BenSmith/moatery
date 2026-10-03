@@ -9,7 +9,7 @@ composition rule).
 import json
 
 from customs.inspect_document import (hostname_bad_character,
-                                      normalise_hostname)
+                                      normalize_hostname)
 
 
 class AllowRefused(ValueError):
@@ -20,7 +20,7 @@ class AllowRefused(ValueError):
 def host_name(text):
     """A host name as the lists match it, or raise: a pattern is the
     document's to hold, written with `customs-box policy`."""
-    host = normalise_hostname(text)
+    host = normalize_hostname(text)
     if not host or hostname_bad_character(host):
         raise AllowRefused(f"{text!r} is not a host name; a pattern is "
                            "written with customs-box policy NAME")

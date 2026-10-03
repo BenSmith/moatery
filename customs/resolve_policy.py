@@ -11,7 +11,7 @@ exactly like any other.
 import ipaddress
 import json
 
-from .inspect_document import normalise_hostname
+from .inspect_document import normalize_hostname
 from .resolve_wire import TYPE_AAAA
 
 # The answer for a name never changes while the responder runs, so a long
@@ -41,7 +41,7 @@ class Policy:
         self.address6 = address6
         self._admits = admits
         self.ttl = ttl
-        self.static = {normalise_hostname(name): tuple(addresses)
+        self.static = {normalize_hostname(name): tuple(addresses)
                        for name, addresses in (static or {}).items()}
 
     def readmit(self, admits):

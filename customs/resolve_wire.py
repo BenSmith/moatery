@@ -9,7 +9,7 @@ tests/test_resolve.py parses this file to keep it that way.
 import socket
 import struct
 
-from .inspect_document import hostname_control_character, normalise_hostname
+from .inspect_document import hostname_control_character, normalize_hostname
 
 FLAG_QR = 0x8000
 FLAG_AA = 0x0400
@@ -99,7 +99,7 @@ def read_name(msg, offset):
         raise Malformed(
             f"label carries the control character {ch!r}, which forges a "
             f"line in this log")
-    return normalise_hostname(name), offset
+    return normalize_hostname(name), offset
 
 
 def pack_address(text):

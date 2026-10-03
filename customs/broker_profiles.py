@@ -2,7 +2,7 @@
 
 `build_profiles` resolves each `--host HOST=CREDENTIAL` against the material
 that credential id names and the flags describing it, into a table keyed by
-Host. `normalise_host` is the one spelling of a Host the table is keyed by
+Host. `normalize_host` is the one spelling of a Host the table is keyed by
 and the server looks up. There is no config file: every value is on the
 unit's ExecStart= line, and the material arrives by LoadCredentialEncrypted=.
 tests/test_closure.py holds the flag set this reads.
@@ -43,7 +43,7 @@ class Profile:
     auth_value: str
 
 
-def normalise_host(value):
+def normalize_host(value):
     """One `Host` header or flag key as the string the table is keyed by.
 
     Lowercased, port stripped, trailing root dot stripped: `API.GitHub.com`,
@@ -71,7 +71,7 @@ def normalise_host(value):
     return host or None
 
 
-# What normalise_host lets through: a DNS name or an IPv4 literal, and the
+# What normalize_host lets through: a DNS name or an IPv4 literal, and the
 # inside of a bracketed IPv6 one.
 _HOST_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-_.")
 _LITERAL_CHARS = frozenset("0123456789abcdef:.[]")
@@ -179,7 +179,7 @@ def build_profiles(name, hosts, placeholders=(), auth_headers=(),
     nothing, so the Host a request carries selects a row and supplies
     nothing.
 
-    Returns {host: Profile}, the host through normalise_host.
+    Returns {host: Profile}, the host through normalize_host.
     """
     from_env = load is None and not os.environ.get("CREDENTIALS_DIRECTORY")
     load = load or load_credential
@@ -197,7 +197,7 @@ def build_profiles(name, hosts, placeholders=(), auth_headers=(),
     for raw in hosts:
         raw_host, cred_id = split_pair(raw, "--host")
         where = f"--host {raw}"
-        host = normalise_host(raw_host)
+        host = normalize_host(raw_host)
         if host is None:
             raise BrokerConfigError(
                 f"{where}: {raw_host!r} is not a usable Host")

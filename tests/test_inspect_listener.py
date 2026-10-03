@@ -29,7 +29,7 @@ from customs.inspect_document import (
     TLS_DEFAULT,
     inspect_policy_digest,
     hostname_match,
-    normalise_hostname,
+    normalize_hostname,
     VmPolicyEntry,
 )
 from customs.egress_plane import CLEARTEXT, TLS, plane_for_port
@@ -4371,7 +4371,7 @@ class TestInternalAttribution(unittest.TestCase):
                 return_value=[(2, 1, 6, "", ("10.0.0.9", 443))]):
             self.assertEqual(
                 dial_failure_reason(
-                    normalise_hostname("Host.Example."), internal),
+                    normalize_hostname("Host.Example."), internal),
                 "upstream unreachable")
 
 

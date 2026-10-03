@@ -31,7 +31,7 @@ customs.egress_status     BoundedCounts OTHER_KEY STATUS_TOP_N
 customs.inspect_document  INSPECT_DIGEST_KEY TLS_DEFAULT TLS_MODES
                           VmPolicyEntry hostname_control_character
                           hostname_match inspect_policy_digest
-                          normalise_hostname patterns_overlap
+                          normalize_hostname patterns_overlap
                           policy_governs
 customs.sd_listen         NotSocketActivated
                           inherited_listening_sockets

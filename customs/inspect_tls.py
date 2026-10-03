@@ -17,7 +17,7 @@ journal.
 import socket
 import ssl
 
-from .inspect_document import normalise_hostname
+from .inspect_document import normalize_hostname
 from .egress_ca import LeafRefused
 from .egress_mint import MintFailed, MintThrottled
 from .egress_plane import TLS
@@ -70,7 +70,7 @@ def serve_tls(insp, conn, where):
                   "client's GREASE, which look alike. A terminated "
                   "connection hides nothing either way; a spliced one is "
                   "refused",
-                  host=normalise_hostname(hello.server_name)
+                  host=normalize_hostname(hello.server_name)
                   if hello.server_name else None)
     if not hello.server_name:
         # Before the drop: a hello that withholds SNI and carries ECH is the
@@ -80,7 +80,7 @@ def serve_tls(insp, conn, where):
                   "the ClientHello carries no server_name extension",
                   mode="terminate")
         return
-    host = normalise_hostname(hello.server_name)
+    host = normalize_hostname(hello.server_name)
     allowed = policy.admits(host)
     insp.counters.record_hello(hello, allowed)
     # The allowlist first: a `splice` pattern can cover names no list

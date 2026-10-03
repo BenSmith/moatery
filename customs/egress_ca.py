@@ -10,7 +10,7 @@ import ipaddress
 import time
 from pathlib import Path
 
-from .inspect_document import normalise_hostname
+from .inspect_document import normalize_hostname
 
 
 # --- The per-workload egress CA ---
@@ -135,7 +135,7 @@ def leaf_san(name: str) -> str:
     against RFC 1035, because real service names use it. An IP literal gets
     an `IP:` SAN, since a `DNS:` one holding an address matches nothing.
     """
-    name = normalise_hostname(name)
+    name = normalize_hostname(name)
     if not name:
         raise LeafRefused("empty name")
 

@@ -314,7 +314,7 @@ def place(sockets):
 
 def become_supervisor(inspect, broker, group):
     """The uids SUPERVISION describes: real the inspector's, effective
-    and saved the broker's. No uid is 0 afterwards, so the kernel clears
+    and saved the broker's. No uid is 0 afterward, so the kernel clears
     every capability."""
     os.setgroups([])
     os.setresgid(group.gr_gid, group.gr_gid, group.gr_gid)

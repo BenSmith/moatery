@@ -12,7 +12,7 @@ import secrets
 from typing import NamedTuple
 
 from customs.broker_profiles import (
-    BrokerConfigError, build_profiles, normalise_host)
+    BrokerConfigError, build_profiles, normalize_host)
 from customs.inspect_document import hostname_match
 
 from .paths import described, valid_name
@@ -66,7 +66,7 @@ def describe(credential, hosts, env, auth_header, auth_format, fiction,
                               "dashes, 48 at most")
     named = []
     for host in hosts:
-        normal = normalise_host(host)
+        normal = normalize_host(host)
         if normal is None or normal.startswith("["):
             raise CredentialError(f"--host {host!r} is not a host name")
         if normal not in named:

@@ -277,16 +277,16 @@ class TestHostKeysAreNormalised(unittest.TestCase):
         for raw in ("API.Example.com", "api.example.com:443",
                     "api.example.com.", "  api.example.com  "):
             with self.subTest(raw=raw):
-                self.assertEqual(broker_profiles.normalise_host(raw), "api.example.com")
+                self.assertEqual(broker_profiles.normalize_host(raw), "api.example.com")
 
     def test_an_unusable_value_is_none_and_never_a_fallback(self):
         for raw in (None, "", "   ", 7, ":443", "[unterminated",
                     "a b.example.com", "a'b.example.com", "[::1 x]"):
             with self.subTest(raw=raw):
-                self.assertIsNone(broker_profiles.normalise_host(raw))
+                self.assertIsNone(broker_profiles.normalize_host(raw))
 
     def test_a_bracketed_literal_keeps_its_brackets(self):
-        self.assertEqual(broker_profiles.normalise_host("[2001:db8::1]:8443"),
+        self.assertEqual(broker_profiles.normalize_host("[2001:db8::1]:8443"),
                          "[2001:db8::1]")
 
     def test_the_table_is_keyed_by_the_normalised_spelling(self):

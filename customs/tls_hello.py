@@ -18,7 +18,7 @@ import time
 from typing import NamedTuple
 
 from .inspect_document import (
-    hostname_bad_character, hostname_control_character, normalise_hostname,
+    hostname_bad_character, hostname_control_character, normalize_hostname,
 )
 
 # The ceiling on a ClientHello, in bytes. A post-quantum one spans more
@@ -132,7 +132,7 @@ def _parse_server_name(data: bytes):
                 raise HelloUnreadable(
                     f"the server_name carries the control character {ch!r}, "
                     "which no name has and which forges a line in this log")
-            ch = hostname_bad_character(normalise_hostname(name))
+            ch = hostname_bad_character(normalize_hostname(name))
             if ch is not None:
                 raise HelloUnreadable(
                     f"the server_name carries {ch!r}, which no host name is "

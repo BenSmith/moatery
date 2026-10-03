@@ -25,7 +25,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import NamedTuple
 
-from .inspect_document import normalise_hostname
+from .inspect_document import normalize_hostname
 from .egress_ca import (
     DENIAL_DIR_NAME, LEAF_DIR_NAME, LEAF_RENEW_WITHIN_SECONDS, LeafRefused,
     ca_cert_path, ca_key_path, ca_openssl_argv, leaf_openssl_argv, leaf_san,
@@ -411,7 +411,7 @@ class Minter:
         On an empty bucket a denial fails at once, and an allowlisted name
         waits up to MINT_WAIT_SECONDS.
         """
-        name = normalise_hostname(server_name)
+        name = normalize_hostname(server_name)
         cache = self.denials if denied else self.working_set
         now = self._clock()
 

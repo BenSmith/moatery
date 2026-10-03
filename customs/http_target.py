@@ -13,7 +13,7 @@ are reduced the same way to the one name policy is matched against.
 import ipaddress
 from typing import NamedTuple
 
-from .inspect_document import hostname_bad_character, normalise_hostname
+from .inspect_document import hostname_bad_character, normalize_hostname
 from .egress_plane import CLEARTEXT, TLS
 from .http_framing import RequestUnreadable
 
@@ -202,7 +202,7 @@ def host_from_authority(authority, scheme=SCHEME_HTTP):
             "where its port begins is a guess")
     else:
         host, _, port = authority.partition(":")
-    host = normalise_hostname(host)
+    host = normalize_hostname(host)
     if not host:
         raise RequestUnreadable(f"authority {authority!r} names no host")
     if host.startswith("["):

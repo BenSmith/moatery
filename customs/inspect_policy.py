@@ -14,7 +14,7 @@ from .inspect_document import (
     TLS_MODES,
     hostname_match,
     inspect_policy_digest,
-    normalise_hostname,
+    normalize_hostname,
     patterns_overlap,
     policy_governs,
     VmPolicyEntry,
@@ -175,7 +175,7 @@ def load_policy(path):
     _refuse_inert_entries(path, tls, policy, splice)
     return Policy(tls=tls, hosts=tuple(hosts),
                   internal_expected=tuple(
-                      normalise_hostname(h) for h in internal_expected),
+                      normalize_hostname(h) for h in internal_expected),
                   splice=tuple(splice), policy=tuple(policy), digest=digest)
 
 
