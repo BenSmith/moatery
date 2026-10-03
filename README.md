@@ -4,9 +4,11 @@ Egress inspection and credential brokering for a sandboxed workload — a
 container, a VM, or a VM inside a container — that is never told it is
 being inspected and never holds the key it appears to be using.
 
-At a border, *customs* inspects what leaves, and a *customs broker* is the
-agent who clears your goods across on your behalf, carrying papers you
-never handle yourself. Same two jobs here.
+At a border, *customs* inspects what crosses, and a *customs broker* is
+the agent who deals with customs for you and files your declarations.
+Here the border is the workload's, and what crosses is outbound:
+the inspector examines it, and the broker presents a credential the
+workload never sees.
 
 ---
 
