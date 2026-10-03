@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -s
 """
 customs-netns-listen: bind the inspector's two planes, or the responder's
 port, in another process's network namespace, then become the program

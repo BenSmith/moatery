@@ -304,6 +304,19 @@ class TestTheRpmCarriesEverything(unittest.TestCase):
                               f"--help", spec)
 
 
+    def test_every_program_leaves_the_user_site_off(self):
+        """Run as a user, a program would otherwise import from that
+        user's site-packages ahead of the installed package -- and a
+        directory in the user's home can be a box's mount. Under SELinux
+        the probe is also a denial logged on every start."""
+        programs = [*self._programs("libexec"), *self._programs("bin"),
+                    Path(REPO_ROOT) / "container" / "customs-sidecar"]
+        for path in programs:
+            with self.subTest(program=path.name):
+                self.assertEqual(path.read_text().split("\n", 1)[0],
+                                 "#!/usr/bin/python3 -s")
+
+
 class TestNothingKnowsWhatAWorkloadIs(unittest.TestCase):
 
     def _sources(self):

@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -s
 """
 customs-resolve: the workload's nameserver, which never asks another.
 

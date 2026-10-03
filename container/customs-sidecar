@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -s
 """
 customs-sidecar: the entrypoint of the sidecar image, doing as the
 container's root what the units and the socket units do on a host:

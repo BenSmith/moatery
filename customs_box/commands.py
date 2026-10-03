@@ -25,7 +25,7 @@ from .netns import exec_with_pid, load_rules, pod_pid, rules_loaded
 from .paths import Box, boxes_root, credentials_root, described, sealed, \
     valid_name
 from .process import CommandFailed, run
-from .units import CA_VARIABLES, Settings, render
+from .units import CA_VARIABLES, Settings, interpreter, render
 
 DEFAULT_IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
 DEFAULT_LIBEXEC = "/usr/libexec/customs"
@@ -194,7 +194,7 @@ def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
                 parents=True, exist_ok=True)
     box.policy.write_bytes(Path(policy_path).read_bytes())
     box.policy.chmod(0o600)
-    minted = runner([settings.python,
+    minted = runner([*interpreter(settings),
                      str(Path(settings.libexec) / "customs-mint-ca"),
                      "--name", box.name, "--state-dir", str(box.state)],
                     env=_program_env(environ, settings.pythonpath))

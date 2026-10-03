@@ -629,6 +629,19 @@ now not running. A real login is not driven: a lingering user's
 manager outlives the ssh session, and `start default.target` is the
 job the manager queues at its own start.
 
+**No user site, 2026-10-03.** 103/103 against the RPM, with every
+program's shebang and every interpreter line a box's units carry
+running `python3 -s`. The run before it was 102/103: `log` did not
+end within 10 s of its SIGINT, once, and the rerun was green. `log`
+starts with the rig's own interpreter, which the change does not
+touch.
+
+The same day, autostart was proven at a real boot, outside the rig: a
+box created with `--autostart`, linger on, the host rebooted. The
+linger session (logind class `manager`) started the user's manager, and
+the chain was active with its rules loaded before the first login
+(class `user`).
+
 **The workspace, 2026-09-30: the user manager's alone.** A bare unit
 loading a sealed credential, `ExecStart=sleep infinity`, started with
 `--no-block` and stopped 0.05, 0.2, 0.4, 0.7 and 1.0 s into its 1.3 s

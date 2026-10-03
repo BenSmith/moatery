@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -s
 """
 customs-broker -- a credential-holding reverse proxy for one workload.
 

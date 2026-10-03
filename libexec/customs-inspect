@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -s
 """
 customs-inspect: the socket-activated entrypoint of the transparent egress
 inspector. The inspector itself is lib/inspect_listener.py; this process

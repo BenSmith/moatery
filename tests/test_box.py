@@ -32,7 +32,7 @@ from customs_box.mounts import Mount, MountRefused, parse_mount, refuse
 from customs_box.paths import (Box, boxes_root, credentials_root, described,
                                protected, sealed, user_dirs, valid_name)
 from customs_box.units import (ALL_CAPABILITIES, CAPABILITIES, Settings,
-                               container_unit, render)
+                               container_unit, interpreter, render)
 
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
 DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo", "PartOf")
@@ -307,17 +307,17 @@ class TestUnits(unittest.TestCase):
         self.assertEqual((args.command, args.unit_command, args.name),
                          ("unit", "exec", "agent"))
         argv = [w.replace(netns.PID, "4242") for w in args.argv]
-        self.assertEqual(argv[0], self.settings.python)
+        self.assertEqual(argv[:2], interpreter(self.settings))
         listen = load_script("libexec/customs-netns-listen")
-        return listen.parse_args(argv[1:])
+        return listen.parse_args(argv[2:])
 
     def test_the_inspector_is_handed_flags_its_parser_takes(self):
         launched = self._handed(self.inspect)
         self.assertEqual(launched.pid, 4242)
         self.assertFalse(launched.resolver)
-        self.assertEqual(launched.command[0], self.settings.python)
+        self.assertEqual(launched.command[:2], interpreter(self.settings))
         args = load_script("libexec/customs-inspect").parse_args(
-            launched.command[1:])
+            launched.command[2:])
         self.assertEqual(args.netns_pid, 4242)
         self.assertEqual(args.name, "agent")
         self.assertEqual(args.policy, str(self.box.policy))
@@ -328,8 +328,9 @@ class TestUnits(unittest.TestCase):
         launched = self._handed(self.resolve)
         self.assertEqual(launched.pid, 4242)
         self.assertTrue(launched.resolver)
+        self.assertEqual(launched.command[:2], interpreter(self.settings))
         args = load_script("libexec/customs-resolve").parse_args(
-            launched.command[1:])
+            launched.command[2:])
         self.assertEqual(args.policy, str(self.box.policy))
         self.assertEqual(args.address, "127.0.0.1")
 
@@ -480,11 +481,13 @@ class TestBrokerUnits(unittest.TestCase):
 
     def test_the_inspector_dials_the_socket_the_broker_binds(self):
         broker = load_script("libexec/customs-broker").parse_args(
-            _exec_words(self.unit, "ExecStart")[1:])
+            _exec_words(self.unit, "ExecStart")[2:])
         words = [w.replace(netns.PID, "4242")
                  for w in _exec_words(self.inspect, "ExecStart")]
+        command = words[words.index("--", words.index("--") + 1) + 1:]
+        self.assertEqual(command[:2], interpreter(self.settings))
         inspect = load_script("libexec/customs-inspect").parse_args(
-            words[words.index("--", words.index("--") + 1) + 2:])
+            command[2:])
         self.assertEqual(broker.listen, f"unix:{self.box.broker_socket}")
         self.assertEqual(inspect.broker, str(self.box.broker_socket))
         self.assertEqual(broker.caller_uid, self.settings.uid)
@@ -495,7 +498,7 @@ class TestBrokerUnits(unittest.TestCase):
     def test_the_broker_loads_each_credential_its_hosts_name(self):
         """It reads $CREDENTIALS_DIRECTORY/ID for each --host's ID."""
         broker = load_script("libexec/customs-broker").parse_args(
-            _exec_words(self.unit, "ExecStart")[1:])
+            _exec_words(self.unit, "ExecStart")[2:])
         self.assertEqual(broker.host, ["api.a.com=a", "up.b.com=b"])
         loaded = dict(v.split(":", 1)
                       for v in _keys(self.unit, "LoadCredentialEncrypted"))
@@ -893,6 +896,21 @@ class TestCommands(unittest.TestCase):
         doc = json.loads(box.settings.read_text())
         del doc["autostart"]
         self.assertFalse(Settings.from_json(json.dumps(doc)).autostart)
+
+    def test_the_ca_is_minted_with_the_user_site_off(self):
+        """The mint runs as the user, like every program a box starts;
+        units.interpreter says why the flag."""
+        _, host = self._create()
+        (mint,) = [a for a in host.calls if "customs-mint-ca" in " ".join(a)]
+        self.assertEqual(mint[:3], ["/py", "-s", "/lx/customs-mint-ca"])
+
+    def test_the_units_call_customs_box_with_the_user_site_off(self):
+        from customs_box import cli
+        with mock.patch.object(cli, "run_command",
+                               return_value=0) as run_command:
+            cli.main(["/opt/cb/customs-box", "ls"], environ=self.env)
+        tool = run_command.call_args.kwargs["tool"]
+        self.assertEqual(tool[1:], ("-s", "/opt/cb/customs-box"))
 
     def test_the_command_line_hands_autostart_on(self):
         from customs_box import cli

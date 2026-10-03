@@ -123,8 +123,15 @@ def _environment(settings):
     return f"Environment={_quoted('PYTHONPATH=' + settings.pythonpath)}\n"
 
 
+def interpreter(settings):
+    """The programs run as the user, whose own site-packages come ahead
+    of the installed package on the path, and a directory in the user's
+    home can be a box's mount. `-s` leaves the user's site off."""
+    return [settings.python, "-s"]
+
+
 def _program(settings, name):
-    return [settings.python, str(Path(settings.libexec) / name)]
+    return [*interpreter(settings), str(Path(settings.libexec) / name)]
 
 
 def _tool(settings, *args):

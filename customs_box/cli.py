@@ -229,7 +229,8 @@ def main(argv=None, environ=os.environ):
         args = parse(argv[1:])
     except SystemExit as exc:
         return int(exc.code or 0)
-    tool = (sys.executable, os.path.abspath(argv[0]))
+    # -s for the reason units.interpreter gives.
+    tool = (sys.executable, "-s", os.path.abspath(argv[0]))
     try:
         return run_command(args, tool=tool, environ=environ,
                            cwd=os.getcwd(), isatty=sys.stdin.isatty())

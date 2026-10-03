@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -s
 """
 customs-box: long-lived, inspected containers for command-line
 workloads (docs/BOX.md).

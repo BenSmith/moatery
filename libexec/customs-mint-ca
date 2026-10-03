@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -s
 """
 customs-mint-ca: mint a workload's egress CA into the inspector's state
 directory, once.
