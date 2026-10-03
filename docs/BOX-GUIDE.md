@@ -113,6 +113,59 @@ authority replaces the image's system bundle, and `SSL_CERT_FILE`,
 `PIP_CERT` point at it, so curl, git, pip, Python and Node trust the
 inspector without any setup.
 
+## Coming from toolbx or distrobox
+
+The commands will look familiar, and the default image is the one
+toolbx uses, but the aim is the opposite. toolbx and distrobox make a
+container part of your desktop: your home, the host's network, its
+devices, its D-Bus and its root filesystem are all inside. A box is
+kept apart from your desktop, and what it sends out is checked.
+
+| toolbx / distrobox | customs-box |
+|---|---|
+| `toolbox create` / `distrobox create` | `customs-box create NAME --policy FILE` |
+| `toolbox enter` / `distrobox enter` | `customs-box enter NAME` |
+| `toolbox run CMD` / `distrobox enter -- CMD` | `customs-box enter NAME -- CMD` |
+| `toolbox list` / `distrobox list` | `customs-box ls` |
+| `distrobox stop` | `customs-box stop NAME` |
+| `toolbox rm` / `distrobox rm` | `customs-box rm NAME` |
+
+What you will notice first:
+
+- **Your home isn't there.** The box has a home of its own, at the same
+  path as yours, so your dotfiles, ssh keys and tokens are out of its
+  reach. Mount the project directories you work in with `--mount`, and
+  copy in any configuration the box should have, at
+  `~/.local/share/customs/box/NAME/home/` on the host.
+- **`dnf install` doesn't last.** Every start is a fresh container, so
+  build the tools into an image (below), or install them under the
+  home.
+- **The network isn't the host's.** The box reaches only the hosts its
+  policy lists, over HTTPS and HTTP. Nothing on your host or your LAN
+  answers it unless the policy lists it, and a server started in the
+  box can't be reached from outside it. Use HTTPS git remotes.
+- **No display, audio, GPU or devices,** and none of `/run/host`,
+  `distrobox-export`, `distrobox-host-exec` or `flatpak-spawn --host`.
+  These would let the box reach the host.
+- **sudo works,** but root in a box has no more network access than
+  you do, and can't change the rules.
+- **Start and stop it with customs-box,** not `podman start` or
+  `podman pod start`: those start a box with no rules, and `enter`
+  refuses it.
+
+To build an image with your tools:
+
+```
+cat > Containerfile <<'EOF'
+FROM registry.fedoraproject.org/fedora-toolbox:44
+RUN dnf -y install ripgrep nodejs && dnf clean all
+EOF
+podman build -t localhost/work .
+customs-box create work --policy ~/policy.json --image localhost/work
+```
+
+The build runs on the host, so it doesn't need the box's policy.
+
 ## When something is refused
 
 A host that isn't allowed gets a `403 Forbidden` from the inspector.
