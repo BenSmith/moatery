@@ -44,59 +44,67 @@ Two put them in place:
   them over.
 
 And **customs-box** puts them all together for command-line work:
-`customs-box create NAME --policy FILE` makes a long-lived rootless 
-container with its own home, inspector and responder, and a broker 
-once its policy names a credential; `customs-box enter NAME` runs a 
-shell or a command in it. A lot like toolbx or distrobox, with some 
-handles to manage and monitor ingress and egress.
+`customs-box create NAME --policy FILE` makes a long-lived rootless
+container with its own home, inspector and responder, and a broker
+once its policy names a credential; `customs-box enter NAME` runs a
+shell or a command in it. A lot like toolbx or distrobox, but a box
+publishes no ports, so nothing can connect to it as a server, and what
+it sends out is inspected, with commands to watch it and change what
+is allowed.
 
 The workload cannot name the broker, cannot choose to use it, and cannot
 be pointed at another workload's. The only thing that dials the broker is
 that workload's own inspector.
 
-## The one property
+## What it needs
 
-Something *outside* the workload has to own the workload's outbound
-sockets, so rules can select them without the workload's cooperation.
+No root. Something outside the workload has to own the workload's
+outbound sockets, so rules can select them without the workload's
+cooperation, and that owner is a **network namespace you are root in
+and the workload is not**. A rootless podman container is the cheapest
+way to get one: rules go into its namespace with `podman unshare
+nsenter`, and the container's own processes hold no `CAP_NET_ADMIN` to
+undo them. A VM is one more process inside such a container. With
+root, a uid of the workload's own can be the selector instead, which is
+how workloadctl runs customs.
 
-- With root, that owner can be a **dedicated uid per workload**:
-  passt/pasta re-originate the workload's traffic as host sockets owned
-  by that uid, and `meta skuid` selects them.
-- Without root there is no uid to spend, so the owner is a **network
-  namespace you are root in and the workload is not**. A rootless podman
-  container is an inexpensive way to get one; rules go inside its netns via
-  `podman unshare nsenter`, and the container's own processes hold no
-  `CAP_NET_ADMIN` to undo them. A VM is one more process inside such a
-  container.
+customs is placed in one of four ways, each run end to end on a real
+host ([DESIGN.md](docs/DESIGN.md)):
 
-Everything else — the policy document, the CA bundle and the env vars that
-point at it, the socket-activated inspector and responder, the broker's
-flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
+- **host**: the programs as user units, the listeners on the host's
+  loopback;
+- **netns**: the same programs, the listeners inside the container's
+  network namespace (what customs-box uses);
+- **sidecar**: the programs as a second container in the workload's
+  pod, with no host install;
+- **VM**: qemu as the workload of a host-placed container.
+
+The policy, the trust bundle and the sealed credential are the same in
+every placement.
 
 ## Documents
 
+- [docs/BOX-GUIDE.md](docs/BOX-GUIDE.md): customs-box, as a user's
+  guide; [docs/BOX.md](docs/BOX.md) is its reference.
 - [docs/POLICY.md](docs/POLICY.md): the policy document the inspector
   reads.
-- [docs/DESIGN.md](docs/DESIGN.md): placing customs beside a rootless
-  container, with its listeners on the host or in the container's
-  network namespace; as a sidecar in a pod; and for a VM. Also how the
-  workload's DNS is answered, and what the host has to do that customs
-  does not, such as stopping the programs from dialling a loopback or
-  private address that an allowed name resolves to.
-- [docs/BOX-GUIDE.md](docs/BOX-GUIDE.md): customs-box, long-lived
-  inspected containers for command-line work, as a user's guide;
-  [docs/BOX.md](docs/BOX.md) is its reference.
+- [docs/DESIGN.md](docs/DESIGN.md): placing customs, the rules it
+  needs, how the workload's DNS is answered, and what the host has to
+  do that customs does not, such as keeping the programs off private
+  addresses.
 - [docs/LOGGING.md](docs/LOGGING.md): what the journal, the record and
   the status files report, and what to look for in them.
 - [docs/INTERFACE.md](docs/INTERFACE.md): what stays stable for a
-  program that imports the modules or reads the inspector's status file.
-- [examples/](examples/): user units, a logrotate configuration, and the
-  one-time setup for a rootless container.
+  program that imports the modules or reads the status files.
 - `--help` on any of the programs: the flags.
-- [container/](container/): the sidecar image, the programs in one
-  container of a pod.
-- [examples/quadlet/](examples/quadlet/): the listeners in the
-  container's network namespace, as a quadlet pod.
+
+Examples and images:
+
+- [examples/](examples/): the host placement as user units, with the
+  one-time setup and a logrotate configuration.
+- [examples/quadlet/](examples/quadlet/): the netns placement as a
+  quadlet pod.
+- [container/](container/): the sidecar image.
 - [examples/bootc/](examples/bootc/): a bootc image with customs and
   what it recommends installed.
 
@@ -107,32 +115,30 @@ the CA and the per-host certificates); systemd 256 or later for
 `LoadCredentialEncrypted=` in a user unit; podman with pasta for the
 container placements.
 
-Building the RPM takes `just`, `rpm-build` and
-`python3-rpm-macros`: `just rpm` builds from the checkout into
-`rpmbuild/RPMS/`, with the programs in `/usr/libexec/customs/`,
-`customs-box` in `/usr/bin/`, and the `customs` and `customs_box`
-packages in site-packages.
-`just rpm-image` builds and tests it in a container, into
+## Building and testing
+
+`just rpm` builds the RPM from the checkout into `rpmbuild/RPMS/`; it
+takes `just`, `rpm-build` and `python3-rpm-macros`. The RPM puts the
+programs in `/usr/libexec/customs/`, `customs-box` in `/usr/bin/`, and
+the `customs` and `customs_box` packages in site-packages. `just
+rpm-image` builds and tests it in a container, into
 `localhost/customs-rpm:VERSION`, an image holding `/customs.rpm` alone,
 for another image's build to copy; a tag `vVERSION` on the forge pushes
 it, signed, to the local registry (`.forgejo/workflows/rpm-image.yml`).
-`.forgejo/workflows/unit.yml` runs `just lint` and `just coverage` on
-every push and pull request.
+
+`just test` runs the unit tests and `just lint` runs ruff. `just
+coverage` runs the suite under coverage of the shipped code alone —
+the `customs` package and every entrypoint, including the scripts the
+suite executes as subprocesses — and fails below the floor in
+`.coveragerc`. `.forgejo/workflows/unit.yml` runs `just lint` and `just
+coverage` on every push and pull request.
 
 ## Status
 
-Version 0.5.1. The programs have run end to end on a real host in
-four placements: a rootless container (`tests/manual/host_rig.py`), the
-same with the listeners in the container (`tests/manual/netns_rig.py`),
-a sidecar in a pod (`tests/manual/sidecar_rig.py`), and a VM inside the
-container (`tests/manual/vm_rig.py`); and a box, through
-`customs-box` (`tests/manual/box_rig.py`). The workload's DNS is answered by
-customs-resolve and forwarded nowhere ([DESIGN.md](docs/DESIGN.md),
-"DNS").
-`just test` runs the unit tests; `just lint` runs ruff. `just coverage`
-runs the suite under coverage of the shipped code alone — the `customs`
-package and every entrypoint, including the scripts the suite executes as
-subprocesses — and fails below the floor in `.coveragerc`.
+Version 0.5.1. Each placement, and customs-box, has a rig that runs it
+end to end on a real host: `tests/manual/host_rig.py`, `netns_rig.py`,
+`sidecar_rig.py`, `vm_rig.py` and `box_rig.py`
+([tests/manual/README.md](tests/manual/README.md)).
 
 ## Licence
 

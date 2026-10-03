@@ -27,7 +27,7 @@ in the units, `~/.local/state` is `%S`, and `~/.local/state/log` is `%L`.
 
 The policy (see [POLICY.md](../docs/POLICY.md)). The brokered entry names
 the endpoints the workload calls: without `paths`, any endpoint that
-echoes a request's headers hands the guest the key.
+echoes a request's headers hands the workload the key.
 
 ```
 mkdir -p ~/.config/customs

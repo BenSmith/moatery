@@ -1,16 +1,15 @@
 # customs-box
 
-A command line for long-lived, inspected containers for command-line
-workloads: `customs-box create NAME --policy FILE`, then `customs-box
-enter NAME`. Each box is the netns placement ([DESIGN.md](DESIGN.md))
-laid out as [examples/quadlet/](../examples/quadlet/): a pod that holds the network
+customs-box makes long-lived, inspected containers, called boxes:
+`customs-box create NAME --policy FILE`, then `customs-box enter NAME`.
+Each box is the netns placement ([DESIGN.md](DESIGN.md)) laid out as
+[examples/quadlet/](../examples/quadlet/): a pod that holds the network
 namespace and loads the rules when it starts, the inspector's and the
 responder's listeners bound in that namespace, and the workload started
 after them.
 
-The commands are built, the customs RPM carries them, and a rig proves
-them on a real host (below). [BOX-GUIDE.md](BOX-GUIDE.md) is the user's
-guide; this is the reference.
+[BOX-GUIDE.md](BOX-GUIDE.md) is the user's guide; this is the
+reference.
 
 ## What a box is for
 
@@ -224,7 +223,8 @@ As in examples/quadlet, with these differences:
   a record past 512 MiB, and a box writing that much in ten minutes
   loses its lines until the next rotation. The tool, not logrotate,
   which neither the image nor every host has.
-- No `[Install]`: a box runs from `enter` to `stop`.
+- No `[Install]` unless `--autostart`: without it a box runs from
+  `enter` to `stop`.
 
 What starts what: `enter` starts `customs-box-NAME.service`, which
 `Wants=` and is `After=` the inspector and the responder; they are
@@ -284,9 +284,9 @@ a failure; that is untested.
 ## Where it lives
 
 `customs-box` is a host layout, the thing DESIGN.md says customs is not.
-Its code is its own package, `customs_box`, beside `customs`; the
-programs never import it, and `tests/test_closure.py` holds them to that
-unchanged. It may import `customs` (the policy loader). The customs RPM
+Its code is its own package, `customs_box`, beside `customs`. It may
+import `customs` (the policy loader); the programs never import it,
+which `tests/test_closure.py` holds. The customs RPM
 carries it, `/usr/bin/customs-box` and the package beside `customs` in
 site-packages; there is no separate package. `tests/test_closure.py`
 holds the RPM's spec to installing both packages and every program.
@@ -329,16 +329,12 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
 - `log --refused` names a host the box was refused; `allow` lists it and
   reloads the listeners, a download running through it finishing whole,
   and the host is dialled after;
-  a `policy` edit the loader refuses changes and restarts nothing; a
-  killed inspector is started again, and a stopped one leaves the
-  workload running until `enter` starts it; `log` follows a request as
-  it is made;
+- a `policy` edit the loader refuses changes and restarts nothing;
+- a killed inspector is started again, and a stopped one leaves the
+  workload running until `enter` starts it;
+- `log` follows a request as it is made;
 - the rotation's timer runs with the pod, and a record past its size is
   moved aside and the next request's line is in a new one.
 
 Unit tests hold the generated units' dependencies to the chain above,
 each one broken on purpose once, and the refusals.
-
-## Open
-
-Nothing.

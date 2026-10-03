@@ -11,10 +11,11 @@ question:
 - **The status file**: counters, replaced every 30 seconds, at a reload
   and at stop. Use it to ask how much, and whether anything is wrong.
 
-The responder writes a status file of its own. The netns's nft chain
-counts the packets it drops. Where each one lives depends on how the
-programs were placed: `examples/README.md` gives the paths for the user
-units, and [BOX.md](BOX.md), "Files", gives them for a box.
+The responder writes a status file of its own. The drop chain in the
+workload's namespace counts the packets it drops. Where each one lives
+depends on how the programs were placed: `examples/README.md` gives the
+paths for the user units, and [BOX.md](BOX.md), "Files", gives them for
+a box.
 
 ## The journal
 
@@ -26,8 +27,8 @@ drop id=5c0e81a2f4d3 plane=tls local=169.254.1.3:8443 peer=10.0.2.100:40112 req=
 
 `id` is the same on every line and record line of one connection.
 `req` is the request's ordinal on that connection, and appears on the
-lines that concern one request. Every `reason` is quoted, since guest
-bytes can reach it. A drop's reason begins with the reason as the
+lines that concern one request. Every `reason` is quoted, since the
+workload's bytes can reach it. A drop's reason begins with the reason as the
 status file counts it, so one grep finds both.
 
 | verb | what happened |
@@ -169,7 +170,7 @@ normal: it measures the clients that would use HTTP/3 if they could.
 
 - **HTTP/3.** QUIC is dropped in the kernel, before any program sees it.
   The nft chain's `quic` counter counts the UDP 443 packets it drops
-  ([DESIGN.md](DESIGN.md), "Host"). A client that falls back to TCP is
+  ([DESIGN.md](DESIGN.md), "The rules"). A client that falls back to TCP is
   then served and logged as usual.
 - **Inside a spliced connection.** Only its name, and whether its hello
   carried ECH.

@@ -214,10 +214,10 @@ No defect in the pair. Two facts for the design:
   container's process can `setns` into its user and network namespaces
   together, and bind there.
 - the caller check reads a different socket in this placement. On the
-host the inspector's peer is pasta's host socket, which is always the
-user's; here it is the workload's own, in the container's table, with
-the uid the host sees: the user for container root, a subuid for
-anything else.
+  host the inspector's peer is pasta's host socket, which is always the
+  user's; here it is the workload's own, in the container's table, with
+  the uid the host sees: the user for container root, a subuid for
+  anything else.
 
 **What it found, the responder, 2026-09-24.** 26/26;
 `--without-dns-redirect` 14/26 (dns, request, unlisted); `--without-rules`

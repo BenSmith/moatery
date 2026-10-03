@@ -1,17 +1,9 @@
 # The policy document
 
-`customs-inspect --policy PATH` reads one JSON object at start, and
-again on SIGUSR1 (`ExecReload=kill -USR1 $MAINPID`, and `systemctl
-reload`). A reload applies from each connection's next decision: a
-request already relaying finishes, and the next one on its connection is
-decided against the new document. `tls` is the one key a reload cannot
-change, since the minter was built for it; that needs a restart. The
-running policy is the last document loaded, and the status file carries
-the SHA-256 of its text (`policy_digest`), so the two can be compared.
-
-A document that cannot be read or parsed fails the start, and fails a
-reload, which logs why and keeps the document loaded. There is no
-fallback to an empty policy.
+`customs-inspect --policy PATH` reads one JSON object: which hosts the
+workload may reach, what it may do there, and which requests go to the
+broker. `customs-resolve` reads the same document, to count the names
+the workload asks for that no list admits.
 
 ```json
 {
@@ -34,7 +26,7 @@ document that admits nothing.
 
 | key | type | meaning |
 |---|---|---|
-| `tls` | `"inspect"` or `"splice"` | the mode for every TLS connection. Default `"inspect"`. Anything else fails the start. |
+| `tls` | `"inspect"` or `"splice"` | the mode for every TLS connection. Default `"inspect"`, which needs the workload to trust the inspector's CA before it first runs ([DESIGN.md](DESIGN.md), "The parts"). Anything else fails the start. |
 | `hosts` | list of patterns | hosts the workload may reach, with any method and any path |
 | `internal_expected` | list of names | hosts the operator has deliberately given a private address; changes how a failed dial is reported, and opens nothing |
 | `splice` | list of patterns | hosts whose TLS is passed through undecrypted |
@@ -111,34 +103,16 @@ A brokered host must be terminated and read, so it cannot be spliced
 
 A brokered request needs a `Content-Length`. The broker reads the body
 whole before it forwards it, and refuses a chunked one with `411 Length
-Required`. The inspector passes that answer to the guest as if the
+Required`. The inspector passes that answer to the workload as if the
 provider had sent it, and the record shows the request as forwarded with
 status 411. A client that streams its upload (`Transfer-Encoding:
 chunked`) fails against a brokered host. Provider SDKs send JSON bodies
 with a length and are not affected.
 
-Give a brokered entry `paths`. Without them the guest may call any
+Give a brokered entry `paths`. Without them the workload may call any
 endpoint on the host with the real credential attached, including any
 that echoes a request's headers back in its response, which hands the
-guest the key.
-
-## Refused at start
-
-Two combinations describe a rule that could never run, and the document
-is refused rather than one half being ignored:
-
-- `policy` entries with `"tls": "splice"` — nothing is decrypted, so no
-  method, path or credential applies;
-- a `policy` entry whose host overlaps a `splice` pattern.
-
-Also refused: a key of the wrong type (a list that is not a list, a name
-that is empty or not a string, an entry with no `host`, `methods` or
-`paths` given as a string), and an `http2` list that names a host (see
-[HTTP/2](#http2)).
-
-A `credential` that is not a non-empty string is ignored rather than
-refused; that request then goes to the origin unbrokered, and its record
-line carries no credential.
+workload the key.
 
 ## `splice`
 
@@ -150,7 +124,7 @@ every host.
 
 Nothing inside means the `Host` header too. A spliced name on a shared
 front, such as a CDN that routes by `Host`, reaches every other site behind
-that front: the guest names the allowed host in its handshake and another
+that front: the workload names the allowed host in its handshake and another
 in its request. Splice only names whose servers answer for themselves,
 and never a wildcard over a provider's shared domain, which admits every
 customer on it.
@@ -165,9 +139,6 @@ host until it is turned off (`--disable-features=EncryptedClientHello`)
 or the host is terminated. Clients on OpenSSL (Python, Node, curl) and
 Go send none unless configured to. A terminated connection takes ECH:
 the inspector completes that handshake itself.
-
-Under `"inspect"` the workload must trust the inspector's CA before it
-first runs; see [DESIGN.md](DESIGN.md), "The same in every placement".
 
 ## HTTP/2
 
@@ -195,13 +166,20 @@ what flows on the connection is relayed without being read, so an entry's
 `methods` and `paths` bound the upgrade request and nothing after it. An
 upgrade to `h2c` is never forwarded.
 
+## Port 80
+
+Cleartext requests on port 80 are decided by the same rules, by the
+`Host` header. `splice` does not apply there. A brokered host
+is brokered on port 80 too, and the broker reaches the origin over TLS
+either way.
+
 ## `internal_expected`
 
 customs does not block private, loopback or link-local destinations
 (see [DESIGN.md](DESIGN.md), "Private addresses"), and
 `internal_expected` does not open anything. It matters only on a host that
 has a rule blocking them, with an exception for each name deliberately
-given a private address. `internal_expected` lists those names -- hosts
+given a private address. `internal_expected` lists those names — hosts
 *expected* to sit in private space. When a dial fails:
 
 - to a name that resolves to a private address and is **not** listed,
@@ -210,9 +188,36 @@ given a private address. `internal_expected` lists those names -- hosts
 - to anything else, including a listed name, it is reported as
   `upstream unreachable`.
 
-## Port 80
+## Loading and reloading
 
-Cleartext requests on port 80 are decided by the same rules, by the
-`Host` header. `splice` does not apply there. A brokered host
-is brokered on port 80 too, and the broker reaches the origin over TLS
-either way.
+The inspector reads the document at start, and again on SIGUSR1
+(`ExecReload=kill -USR1 $MAINPID`, and `systemctl reload`). A reload
+applies from each connection's next decision: a request already
+relaying finishes, and the next one on its connection is decided
+against the new document. `tls` is the one key a reload cannot change,
+since the minter was built for it; that needs a restart. The running
+policy is the last document loaded, and the status file carries the
+SHA-256 of its text (`policy_digest`), so the two can be compared.
+
+A document that cannot be read or parsed fails the start, and fails a
+reload, which logs why and keeps the document loaded. There is no
+fallback to an empty policy.
+
+### Refused
+
+Two combinations describe a rule that could never run, and the document
+is refused rather than one half being ignored:
+
+- `policy` entries with `"tls": "splice"` — nothing is decrypted, so no
+  method, path or credential applies;
+- a `policy` entry whose host overlaps a `splice` pattern.
+
+Also refused: a key of the wrong type (a list that is not a list, a name
+that is empty or not a string, an entry with no `host`, `methods` or
+`paths` given as a string), an `http2` list that names a host (see
+[HTTP/2](#http2)), and an `internal` list that names one: `internal` is
+the old name of `internal_expected`, and the error says to rename it.
+
+A `credential` that is not a non-empty string is ignored rather than
+refused; that request then goes to the origin unbrokered, and its record
+line carries no credential.

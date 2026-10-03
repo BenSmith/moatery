@@ -1,11 +1,11 @@
 # The interface
 
 What customs keeps stable for a program that imports its modules or
-reads its status file. workloadctl is that program: it requires the
-customs RPM, runs `customs-broker`, `customs-inspect`,
-`customs-mint-ca` and `customs-resolve`, imports the names below and
-reads the inspector's and the responder's status files into its
-metrics and `workloadctl doctor`. `tests/test_interface.py` holds the three lists to the code.
+reads its status files. workloadctl is that program: it requires the
+customs RPM, runs `customs-broker`, `customs-inspect`, `customs-mint-ca`
+and `customs-resolve`, imports the names below and reads the inspector's
+and the responder's status files into its metrics and `workloadctl
+doctor`. `tests/test_interface.py` holds the three lists to the code.
 
 ## Imported names
 
@@ -44,8 +44,9 @@ imports nothing else is checked on its side.
 
 ## The inspector's status file
 
-`customs-inspect --status PATH` replaces the file every few seconds. A
-reader may rely on these paths, dotted through the JSON objects:
+`customs-inspect --status PATH` writes the file at start and replaces it
+every thirty seconds, at a reload and on the way out. A reader may rely
+on these paths, dotted through the JSON objects:
 
 ```
 policy_digest               the policy's digest, "" for none
@@ -100,12 +101,3 @@ written_at                  when the file was written
 
 `--static PATH` is a JSON object of name to a list of address strings,
 read once at start, and refused whole, at start, over anything else.
-
-## Module names
-
-Within the package the module names are workloadctl's, except the
-responder's two: `resolve_wire` and `resolve_serve` are workloadctl's
-`dns_wire` and `resolve_server`. `resolve_policy` has workloadctl's
-name and not its contents: it takes its answers from flags and the
-`--static` file, where workloadctl's reads a document workloadctl
-writes.

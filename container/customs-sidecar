@@ -30,8 +30,8 @@ Usage:
   podman run --pod POD --restart on-failure \\
       --cap-drop all --cap-add chown,dac_override,setgid,setuid \\
       -v policy.json:/etc/customs/policy.json:ro,Z \\
-      -v customs-state:/var/lib/customs:Z \\
-      --secret KEY,target=CRED,uid=201,mode=0400 \\
+      -v customs-state:/var/lib/customs \\
+      --secret KEY,target=CRED,uid=201,gid=200,mode=0400 \\
       IMAGE --name NAME --caller-uid UID --host HOST=CRED ...
 
 The four capabilities are for chowning the two directories, connecting to

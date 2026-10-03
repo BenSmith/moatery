@@ -116,7 +116,8 @@ inspector without any setup.
 ## When something is refused
 
 A host that isn't allowed gets a `403 Forbidden` from the inspector.
-Other ports (ssh, and anything over UDP, such as QUIC) are dropped.
+Other ports (ssh, and UDP other than DNS, such as QUIC) are dropped;
+DNS goes to the box's own responder.
 Git over ssh won't work from a box; use HTTPS remotes.
 
 **See what happened.** `log` follows the box's record, one line per

@@ -4,7 +4,9 @@ customs from the RPM, over a stock bootc base, with the packages the
 RPM recommends (podman, passt, nftables). Nothing is configured in the
 image: the units and the one-time setup are the user's, as in
 [../README.md](../README.md), and live under `/var/home`, so an update
-changes only `/usr/libexec/customs`.
+changes only what the RPM installs: the programs in
+`/usr/libexec/customs`, `/usr/bin/customs-box`, and the `customs` and
+`customs_box` packages.
 
 ```
 just rpm
