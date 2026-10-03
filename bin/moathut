@@ -1,0 +1,38 @@
+#!/usr/bin/python3 -s
+"""
+moathut: long-lived, inspected containers for command-line
+workloads (docs/BOX.md).
+
+Each box is a quadlet pod holding a network namespace, the moatery
+rules loaded into it at every start, the inspector's and the
+responder's listeners bound in it, and a workload started after them,
+with a home of its own; and, if its policy names credentials, a broker
+holding them. The units run the programs from $MOATERY_LIBEXEC,
+/usr/libexec/moatery by default, and call back into this command
+(`moathut unit ...`) for what they cannot say themselves.
+
+Usage:
+  moathut create NAME --policy FILE [--image IMAGE]
+                     [--mount SRC[:DST][:ro]]...
+  moathut enter NAME [--root] [-- COMMAND...]
+  moathut log NAME [--refused]
+  moathut allow NAME HOST [--method M]... [--path P]...
+  moathut policy NAME
+  moathut stop NAME
+  moathut rm NAME [--home]
+  moathut ls
+  moathut credential add ID [--host HOST]... [--env VARIABLE]
+                     [--auth-header FIELD] [--auth-format FORMAT]
+  moathut credential ls
+  moathut credential rm ID
+"""
+
+import sys
+
+# Before the package imports, for the reason moat-inspect gives.
+sys.dont_write_bytecode = True
+
+from moathut.cli import main
+
+if __name__ == "__main__":
+    sys.exit(main())

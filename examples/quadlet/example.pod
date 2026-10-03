@@ -15,7 +15,7 @@
 # for it.
 
 [Unit]
-Wants=customs-inspect-example.service customs-resolve-example.service
+Wants=moat-inspect-example.service moat-resolve-example.service
 
 [Pod]
 PodName=example
@@ -25,4 +25,4 @@ ExitPolicy=continue
 PodmanArgs=--hosts-file=image --share-parent=false
 
 [Service]
-ExecStartPost=%h/.local/bin/customs-pod-netns rules example
+ExecStartPost=%h/.local/bin/moat-pod-netns rules example

@@ -1,0 +1,11 @@
+# Rotates the inspector's record as this user; started by
+# moatery-logrotate.timer. The configuration is
+# examples/logrotate/moatery.conf, copied to %E/moatery/logrotate.conf.
+
+[Unit]
+Description=Rotate the moatery request record
+
+[Service]
+Type=oneshot
+ExecStart=logrotate --state %S/moatery/logrotate.state \
+    %E/moatery/logrotate.conf

@@ -1,4 +1,4 @@
-# Using customs-box
+# Using moathut
 
 A box is a long-lived container for an agent or a toolchain you run
 from a terminal. Everything it sends out over HTTPS or HTTP passes
@@ -17,15 +17,15 @@ You need, on the host:
 - Python 3.14 and OpenSSL 3.5 or later;
 - podman 5.0 or later, with pasta, and nftables;
 - systemd 256 or later;
-- the customs RPM, which carries `customs-box` and the programs it
+- the moatery RPM, which carries `moathut` and the programs it
   runs.
 
 To run it from a checkout of this repository instead, point it at the
 checkout's programs:
 
 ```
-export PYTHONPATH=~/src/customs CUSTOMS_LIBEXEC=~/src/customs/libexec
-alias customs-box='python3 ~/src/customs/bin/customs-box'
+export PYTHONPATH=~/src/moatery MOATERY_LIBEXEC=~/src/moatery/libexec
+alias moathut='python3 ~/src/moatery/bin/moathut'
 ```
 
 A box's units remember these paths when it is created, so they keep
@@ -53,7 +53,7 @@ every key; the ones you need most are shown in this guide.
 **2. Create the box.**
 
 ```
-customs-box create work --policy ~/policy.json --mount ~/src/project
+moathut create work --policy ~/policy.json --mount ~/src/project
 ```
 
 Box names use lowercase letters, digits and `-`. `create` pulls the
@@ -75,7 +75,7 @@ mounted, but a directory inside it can.
 **3. Enter it.**
 
 ```
-customs-box enter work
+moathut enter work
 ```
 
 The first `enter` starts the box, which takes a few seconds, and opens
@@ -86,7 +86,7 @@ starts in that directory; otherwise it starts in the box's home.
 To run one command instead of a shell, put it after `--`:
 
 ```
-customs-box enter work -- git clone https://github.com/example/repo
+moathut enter work -- git clone https://github.com/example/repo
 ```
 
 `--root` enters as root. `sudo` also works inside the box, with no
@@ -121,14 +121,14 @@ container part of your desktop: your home, the host's network, its
 devices, its D-Bus and its root filesystem are all inside. A box is
 kept apart from your desktop, and what it sends out is checked.
 
-| toolbx / distrobox | customs-box |
+| toolbx / distrobox | moathut |
 |---|---|
-| `toolbox create` / `distrobox create` | `customs-box create NAME --policy FILE` |
-| `toolbox enter` / `distrobox enter` | `customs-box enter NAME` |
-| `toolbox run CMD` / `distrobox enter -- CMD` | `customs-box enter NAME -- CMD` |
-| `toolbox list` / `distrobox list` | `customs-box ls` |
-| `distrobox stop` | `customs-box stop NAME` |
-| `toolbox rm` / `distrobox rm` | `customs-box rm NAME` |
+| `toolbox create` / `distrobox create` | `moathut create NAME --policy FILE` |
+| `toolbox enter` / `distrobox enter` | `moathut enter NAME` |
+| `toolbox run CMD` / `distrobox enter -- CMD` | `moathut enter NAME -- CMD` |
+| `toolbox list` / `distrobox list` | `moathut ls` |
+| `distrobox stop` | `moathut stop NAME` |
+| `toolbox rm` / `distrobox rm` | `moathut rm NAME` |
 
 What you will notice first:
 
@@ -136,7 +136,7 @@ What you will notice first:
   path as yours, so your dotfiles, ssh keys and tokens are out of its
   reach. Mount the project directories you work in with `--mount`, and
   copy in any configuration the box should have, at
-  `~/.local/share/customs/box/NAME/home/` on the host.
+  `~/.local/share/moatery/box/NAME/home/` on the host.
 - **`dnf install` doesn't last.** Every start is a fresh container, so
   build the tools into an image (below), or install them under the
   home.
@@ -149,7 +149,7 @@ What you will notice first:
   These would let the box reach the host.
 - **sudo works,** but root in a box has no more network access than
   you do, and can't change the rules.
-- **Start and stop it with customs-box,** not `podman start` or
+- **Start and stop it with moathut,** not `podman start` or
   `podman pod start`: those start a box with no rules, and `enter`
   refuses it.
 
@@ -161,7 +161,7 @@ FROM registry.fedoraproject.org/fedora-toolbox:44
 RUN dnf -y install ripgrep nodejs && dnf clean all
 EOF
 podman build -t localhost/work .
-customs-box create work --policy ~/policy.json --image localhost/work
+moathut create work --policy ~/policy.json --image localhost/work
 ```
 
 The build runs on the host, so it doesn't need the box's policy.
@@ -177,7 +177,7 @@ Git over ssh won't work from a box; use HTTPS remotes.
 request or refused connection:
 
 ```
-customs-box log work
+moathut log work
 ```
 
 ```
@@ -197,7 +197,7 @@ reason, what the record holds that the current policy would still
 refuse. It also lists the names the box looked up that no list admits:
 
 ```
-customs-box log work --refused
+moathut log work --refused
 ```
 
 ```
@@ -205,7 +205,7 @@ refused, and refused by the policy now:
        2  example.org  (not allowlisted)
 names asked for that no list admits:
        4  example.org
-to allow one: customs-box allow work HOST [--method M]... [--path P]...
+to allow one: moathut allow work HOST [--method M]... [--path P]...
 ```
 
 Some names in that last list are just lookups a tool made and didn't
@@ -214,14 +214,14 @@ need. Allow the hosts you want the box to use, not every name listed.
 **Allow a host.**
 
 ```
-customs-box allow work example.org
+moathut allow work example.org
 ```
 
 This adds the host to `hosts`, which allows any method and any path. To
 allow less, give the methods or paths:
 
 ```
-customs-box allow work api.example.org --method GET --path '/v2/*'
+moathut allow work api.example.org --method GET --path '/v2/*'
 ```
 
 `--method` and `--path` can be repeated. In a path pattern, `*` also
@@ -232,7 +232,7 @@ ever adds. It takes a host name; to allow a pattern such as
 **Edit the policy.**
 
 ```
-customs-box policy work
+moathut policy work
 ```
 
 This opens the box's policy in `$VISUAL`, `$EDITOR` or `vi`. When you
@@ -261,7 +261,7 @@ hosts you name.
 **1. Seal the key.**
 
 ```
-customs-box credential add anthropic --host api.anthropic.com \
+moathut credential add anthropic --host api.anthropic.com \
     --env ANTHROPIC_API_KEY
 ```
 
@@ -274,7 +274,7 @@ hosts. By default the key goes in an `x-api-key` header. For a provider
 that wants `Authorization: Bearer KEY`, add
 `--auth-header Authorization --auth-format 'Bearer {secret}'`.
 
-**2. Name it in the box's policy.** Use `customs-box policy work` and
+**2. Name it in the box's policy.** Use `moathut policy work` and
 add an entry:
 
 ```json
@@ -298,8 +298,8 @@ holds the keys, so this edit restarts the inspector. The variable
 box and enter it again:
 
 ```
-customs-box stop work
-customs-box enter work
+moathut stop work
+moathut enter work
 ```
 
 Inside, `echo $ANTHROPIC_API_KEY` shows a placeholder. A client using
@@ -312,9 +312,9 @@ using the key restarts with the new one; neither the inspector nor the
 workload does. A request made during that moment is refused, not sent
 without a key.
 
-**List and remove.** `customs-box credential ls` shows each credential
+**List and remove.** `moathut credential ls` shows each credential
 with its variable, its hosts, and the boxes whose policy names it.
-`customs-box credential rm ID` removes one, and is refused while any
+`moathut credential rm ID` removes one, and is refused while any
 box's policy still names it.
 
 A key is sealed once and can serve many boxes. Each box has its own
@@ -323,10 +323,10 @@ broker, so two boxes can use different keys for the same provider.
 ## Stopping and removing
 
 ```
-customs-box ls              # each box, whether it is running, its image
-customs-box stop work       # stop it; enter starts it again
-customs-box rm work         # remove it; keeps its home and its record
-customs-box rm work --home  # remove its home too
+moathut ls              # each box, whether it is running, its image
+moathut stop work       # stop it; enter starts it again
+moathut rm work         # remove it; keeps its home and its record
+moathut rm work --home  # remove its home too
 ```
 
 `rm` prints the paths it kept. A box created again with the same name
@@ -341,11 +341,11 @@ the `journalctl --user -u ...` line to run for the details.
 the journalctl command it prints. A common cause is the image lacking
 something the box needs.
 
-**`box work's namespace has no customs rules`** means the box was
-started outside customs-box, for example with `podman pod start` or
+**`box work's namespace has no moatery rules`** means the box was
+started outside moathut, for example with `podman pod start` or
 `podman pod restart`. Its traffic would not be inspected, so `enter`
-refuses it. Run `customs-box stop work`, then enter it again. Start
-and stop boxes only with customs-box.
+refuses it. Run `moathut stop work`, then enter it again. Start
+and stop boxes only with moathut.
 
 **`box work's inspector did not start`** (or responder, or broker):
 `enter` still enters, but warns you. Without the inspector, connections
@@ -354,7 +354,7 @@ broker, requests needing a key are refused, never sent without it.
 Nothing leaks, but things fail until the unit starts. The journalctl
 line in the warning shows why.
 
-**Everything gets 403.** Check `customs-box log work --refused` to see
+**Everything gets 403.** Check `moathut log work --refused` to see
 what was refused and why. `not permitted by policy` means the host is
 allowed, but not that method or path.
 
@@ -375,11 +375,11 @@ For a box named `work`:
 
 | what | where |
 |---|---|
-| its policy | `~/.config/customs/box/work/policy.json` |
-| its record | `~/.local/state/log/customs/box/work/requests.log` |
-| its home | `~/.local/share/customs/box/work/home/` |
-| its units | `systemctl --user status 'customs-box-work*'` |
+| its policy | `~/.config/moatery/box/work/policy.json` |
+| its record | `~/.local/state/log/moatery/box/work/requests.log` |
+| its home | `~/.local/share/moatery/box/work/home/` |
+| its units | `systemctl --user status 'moathut-work*'` |
 
-Edit the policy with `customs-box policy`, not in place: the command
+Edit the policy with `moathut policy`, not in place: the command
 checks it first and applies it. [BOX.md](BOX.md), "Files", lists the
 rest.

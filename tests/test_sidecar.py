@@ -24,15 +24,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from customs.egress_plane import CLEARTEXT, TLS
-from customs_box.units import ANSWER as BOX_ANSWER
+from moatery.egress_plane import CLEARTEXT, TLS
+from moathut.units import ANSWER as BOX_ANSWER
 from tests import REPO_ROOT, load_script, script_env, suppress_fork_warning
 
 FAKE_INSPECT = pwd.struct_passwd(("inspect", "x", 200, 200, "", "/", ""))
 
 
 def _mod():
-    return load_script("container/customs-sidecar")
+    return load_script("container/moat-sidecar")
 
 
 class TestTheFlagsSplit(unittest.TestCase):
@@ -82,19 +82,19 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
         with mock.patch.object(mod.pwd, "getpwnam",
                                return_value=FAKE_INSPECT):
             argv = mod.broker_argv("wl", ["--host", "api.example=main"])
-        broker = load_script("libexec/customs-broker")
+        broker = load_script("libexec/moat-broker")
         args = broker.parse_args(argv[1:])
         self.assertEqual(args.listen, f"unix:{mod.SOCKET}")
         self.assertEqual(args.caller_uid, 200)
         self.assertEqual(args.host, ["api.example=main"])
-        from customs import broker_profiles
+        from moatery import broker_profiles
         self.assertEqual(broker_profiles.listen_endpoint(args.listen),
                          mod.SOCKET)
 
     def test_the_inspector_argv_parses_and_dials_the_same_path(self):
         mod = _mod()
         argv = mod.inspector_argv("wl", 1000)
-        inspector = load_script("libexec/customs-inspect")
+        inspector = load_script("libexec/moat-inspect")
         args = inspector.parse_args(argv[1:])
         self.assertEqual(args.broker, mod.SOCKET)
         self.assertEqual(args.caller_uid, 1000)
@@ -106,7 +106,7 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
         80 from, counted against the policy the inspector reads. Not the
         loopback, which a VM's guest in the pod would dial as its own."""
         mod = _mod()
-        resolver = load_script("libexec/customs-resolve")
+        resolver = load_script("libexec/moat-resolve")
         args = resolver.parse_args(mod.resolver_argv("wl")[1:])
         self.assertEqual(args.address, mod.ANSWER)
         self.assertFalse(ipaddress.ip_address(args.address).is_loopback)
@@ -119,7 +119,7 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
     def test_the_responders_sockets_are_its_port_over_both_transports(self):
         import socket as socket_mod
         mod = _mod()
-        from customs.egress_plane import RESOLVE_PORT
+        from moatery.egress_plane import RESOLVE_PORT
         self.assertEqual(sorted(mod.RESOLVER_SOCKETS), sorted([
             (socket_mod.SOCK_DGRAM, RESOLVE_PORT),
             (socket_mod.SOCK_STREAM, RESOLVE_PORT)]))
@@ -135,7 +135,7 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
 
 class TestTheSidecarMintsTheOneWay(unittest.TestCase):
     """The sidecar's first-start mint is egress_mint.mint_ca, the call
-    customs-mint-ca makes on a host, made in a child that has already
+    moat-mint-ca makes on a host, made in a child that has already
     dropped to the inspector's uid. Root never writes into the volume the
     inspector owns, so nothing the inspector left there can steer it."""
 
@@ -189,7 +189,7 @@ class TestTheSidecarMintsTheOneWay(unittest.TestCase):
     def test_no_second_mint_lives_in_the_entrypoint(self):
         """Its own openssl argv would be a second mint for the three
         extensions to drift between."""
-        source = (Path(REPO_ROOT) / "container" / "customs-sidecar").read_text()
+        source = (Path(REPO_ROOT) / "container" / "moat-sidecar").read_text()
         self.assertNotIn("ca_openssl_argv", source)
         self.assertNotIn("os.chown(path, inspect", source)
 
@@ -250,7 +250,7 @@ SUPERVISED = r"""
 import os, signal, sys, time
 sys.path.insert(0, sys.argv[1])
 from tests import load_script
-mod = load_script("container/customs-sidecar")
+mod = load_script("container/moat-sidecar")
 scenario, mod.STOP_GRACE, marks = sys.argv[2], float(sys.argv[3]), sys.argv[4]
 
 def program(name, exit_after=None, ignore_term=False):
@@ -365,7 +365,7 @@ class TestTheSidecarStartsTwice(unittest.TestCase):
                     mock.patch.object(mod.grp, "getgrnam"), \
                     mock.patch.object(mod, "prepare_dirs") as prepare, \
                     self.assertRaises(SystemExit) as caught:
-                mod.main(["customs-sidecar", "--name", "wl", "--caller-uid",
+                mod.main(["moat-sidecar", "--name", "wl", "--caller-uid",
                           uid, "--host", "h=c"])
             self.assertIn(f"--caller-uid {uid}", str(caught.exception.code))
             prepare.assert_not_called()
@@ -381,7 +381,7 @@ class TestTheSidecarStartsTwice(unittest.TestCase):
                 mock.patch.object(mod.grp, "getgrnam"), \
                 contextlib.redirect_stderr(err), \
                 self.assertRaises(SystemExit) as caught:
-            mod.main(["customs-sidecar", "--name", "wl", "--caller-uid",
+            mod.main(["moat-sidecar", "--name", "wl", "--caller-uid",
                       "1000", "--host", "h=c"])
         self.assertIn("without --init", str(caught.exception.code))
 

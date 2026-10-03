@@ -1,0 +1,263 @@
+#!/usr/bin/python3 -s
+"""
+moat-inspect: the socket-activated entrypoint of the transparent egress
+inspector. The inspector itself is lib/inspect_listener.py; this process
+reads the policy, builds the minter, recovers the inherited sockets and
+runs the accept loop until SIGTERM.
+
+Everything host-specific -- the policy path, the state directory, the
+status and record files, the broker endpoint, the uid served -- is a flag
+the unit writes; nothing is derived. tests/test_closure.py holds that line.
+
+It serves one uid: its own, or --caller-uid's in a sidecar, where the
+workload is another uid by design. A uid this namespace cannot represent is
+refused at start, since every connection would read as the overflow uid.
+With --netns-pid and no --caller-uid it serves every uid of that process's
+user namespace: listeners bound in the workload's network namespace are
+reachable from nowhere else, so every caller is the workload, sudo
+included. A namespace that maps every uid is refused, since that serves
+anyone.
+
+The policy is read here, and one that cannot be read fails the start.
+SIGUSR1 reads it again (moatery/inspect_listener.py): one that cannot be
+read then is logged and the one loaded kept.
+
+It never binds. The socket unit binds and hands the listeners in, which
+keeps the bind out of the workload's security domain, so a missing
+activation environment is a failure, never a fallback bind. With
+--netns-pid the listeners were bound in that process's network namespace
+(moat-netns-listen), and callers are looked up in its socket table.
+Either way a listener must be in the table the lookups read, or none of
+its callers could be named, and the start is refused.
+"""
+
+import argparse
+import os
+import resource
+import signal
+import sys
+
+# Before the lib imports: the install directory is not this process's to
+# write.
+sys.dont_write_bytecode = True
+
+from moatery.inspect_policy import load_policy
+from moatery.inspect_listener import Listener, build_minter
+from moatery.peer_identity import (
+    PROC_NET_TCP, listed_in, namespace_uids, netns_tables, unmappable_uids)
+from moatery.sd_listen import NotSocketActivated
+from moatery.sd_listen import (
+    inherited_listening_sockets as sd_inherited_listening_sockets)
+
+
+def inherited_listening_sockets():
+    """Recover the listening sockets systemd passed in, or fail loudly."""
+    return sd_inherited_listening_sockets(
+        refusal=(", because a fallback bind would move the bind out of the "
+                 "inherited fd and back into the workload's security "
+                 "domain"))
+
+
+def raise_fd_limit():
+    """The soft RLIMIT_NOFILE raised to the hard one: MAX_CONNECTIONS
+    connections, each with up to UPSTREAMS_MAX upstreams, need more than
+    1024. Best effort.
+    """
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard == resource.RLIM_INFINITY or soft < hard:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+    except (OSError, ValueError):
+        pass
+
+
+# The value form that names the broker's socket path rather than its
+# address, spelled as the broker's own `--listen` spells it.
+UNIX_PREFIX = "unix:"
+
+
+def broker_endpoint(value):
+    """The --broker value as an (address, port) pair, an absolute socket
+    path, or None when absent. None is legitimate: brokered requests are
+    then refused on arrival.
+    """
+    if value is None:
+        return None
+    if value.startswith(UNIX_PREFIX):
+        path = value[len(UNIX_PREFIX):]
+        if not path.startswith("/"):
+            raise argparse.ArgumentTypeError(
+                f"{value!r}: the socket path must be absolute")
+        return path
+    address, sep, port = value.rpartition(":")
+    if not sep or not address:
+        raise argparse.ArgumentTypeError(
+            f"{value!r}: expected ADDRESS:PORT")
+    try:
+        return (address, int(port))
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{value!r}: port is not a number") from None
+
+
+def parse_args(argv):
+    """The values the unit hands over, plus the label. Every path is
+    required with no default: a default would be a guess about the host's
+    layout.
+    """
+    parser = argparse.ArgumentParser(
+        prog=os.path.basename(argv[0]),
+        description="socket-activated transparent egress inspector")
+    parser.add_argument("--name", required=True,
+                        help="the workload this listener serves; a label, "
+                             "carried on the CA subject and the log lines")
+    parser.add_argument("--policy", required=True,
+                        help="the policy document (JSON), read at start and "
+                             "on SIGUSR1")
+    parser.add_argument("--state-dir", required=True,
+                        help="where the egress CA and the leaf caches live")
+    parser.add_argument("--status", required=True,
+                        help="where the counters are written")
+    parser.add_argument("--record", required=True,
+                        help="where the per-request record is appended")
+    parser.add_argument("--broker", type=broker_endpoint, default=None,
+                        metavar="ADDRESS:PORT|unix:PATH",
+                        help="the credential broker instance brokered "
+                             "requests are sent to; absent means every "
+                             "brokered request is refused")
+    parser.add_argument("--caller-uid", type=int, default=None,
+                        metavar="UID",
+                        help="the one uid whose connections are served; "
+                             "absent means this process's own, or with "
+                             "--netns-pid every uid of that process's user "
+                             "namespace")
+    parser.add_argument("--netns-pid", type=int, default=None,
+                        metavar="PID",
+                        help="the process whose network namespace the "
+                             "listeners were bound in; callers are looked "
+                             "up in its socket table")
+    return parser.parse_args(argv[1:])
+
+
+def spans(ranges):
+    """(start, count) ranges as "1000, 524288-589823", adjacent ones
+    joined."""
+    merged = []
+    for start, count in sorted(ranges):
+        if merged and merged[-1][1] == start:
+            merged[-1][1] = start + count
+        else:
+            merged.append([start, start + count])
+    return ", ".join(str(a) if b - a == 1 else f"{a}-{b - 1}"
+                     for a, b in merged)
+
+
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
+    # A HUP before the record exists, or a USR1 before the listener, would
+    # otherwise end the process. A USR1 ignored here may leave an older
+    # document loaded, which the status file's digest shows.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    signal.signal(signal.SIGUSR1, signal.SIG_IGN)
+    try:
+        args = parse_args(argv)
+    except SystemExit as exc:
+        # argparse has printed its usage; ours is the exit status.
+        return int(exc.code or 0)
+    name = args.name
+    policy_path = args.policy
+    if args.caller_uid is not None:
+        # Before the sockets, like every refusal here.
+        try:
+            uid_map = open("/proc/self/uid_map").read()
+        except OSError as exc:
+            print(f"error: cannot read /proc/self/uid_map ({exc.strerror});"
+                  " caller identification needs it", file=sys.stderr)
+            return 1
+        if unmappable_uids([args.caller_uid], uid_map):
+            print(f"error: this user namespace cannot represent uid "
+                  f"{args.caller_uid} ({name}); every connection would be "
+                  "refused as foreign", file=sys.stderr)
+            return 1
+    caller_ranges = None
+    if args.caller_uid is None and args.netns_pid is not None:
+        caller_ranges = namespace_uids(args.netns_pid)
+        if caller_ranges is None:
+            print(f"error: cannot read the user namespace of pid "
+                  f"{args.netns_pid}; caller identification needs it",
+                  file=sys.stderr)
+            return 1
+        if not caller_ranges or any(
+                start == 0 and count >= 0xFFFFFFFF
+                for start, count in caller_ranges):
+            print(f"error: pid {args.netns_pid}'s user namespace maps "
+                  f"{'no' if not caller_ranges else 'every'} uid, so "
+                  f"serving its uids would serve "
+                  f"{'no one' if not caller_ranges else 'anyone'}; name "
+                  f"the uid served with --caller-uid", file=sys.stderr)
+            return 1
+    try:
+        policy = load_policy(policy_path)
+    except (OSError, ValueError) as exc:
+        # No empty-policy fallback: see load_policy.
+        print(f"error: could not read {policy_path}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        minter = build_minter(name, args.state_dir, policy)
+    except FileNotFoundError as exc:
+        # Before the sockets: a listener with no leaf to mint would fail every
+        # handshake while reporting itself up.
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    raise_fd_limit()
+    try:
+        sockets = inherited_listening_sockets()
+    except NotSocketActivated as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    tables = (PROC_NET_TCP if args.netns_pid is None
+              else netns_tables(args.netns_pid))
+    for sock in sockets:
+        listed = listed_in(sock, tables)
+        if listed:
+            continue
+        where = (f"the socket table of pid {args.netns_pid}'s network "
+                 "namespace" if args.netns_pid is not None
+                 else "this process's socket table")
+        why = ("cannot be read" if listed is None
+               else f"has no row for the listener on "
+                    f"{sock.getsockname()}")
+        hint = ("; was it bound in another network namespace, and "
+                "--netns-pid left out?" if args.netns_pid is None else "")
+        print(f"error: {where} {why}, so no caller could be named{hint}",
+              file=sys.stderr)
+        return 1
+    listener = Listener(sockets, policy=policy, minter=minter,
+                        status_path=args.status,
+                        record_path=args.record,
+                        broker_endpoint=args.broker,
+                        caller_uid=args.caller_uid,
+                        caller_ranges=caller_ranges,
+                        peer_tables=tables, policy_path=policy_path)
+    print(f"policy loaded from {policy_path}: {policy.summary}", flush=True)
+    if caller_ranges is not None:
+        print(f"callers served: uids {spans(caller_ranges)}", flush=True)
+    signal.signal(signal.SIGTERM, lambda *_args: listener.stop())
+    signal.signal(signal.SIGUSR1, lambda *_args: listener.request_reload())
+    # A rotation renames the file and HUPs; the handler only sets a flag (see
+    # RequestLog.reopen).
+    signal.signal(signal.SIGHUP,
+                  lambda *_args: listener.inspection.record.reopen())
+    try:
+        listener.accept_loop()
+    finally:
+        # On the way out too, so a stop between ticks is still reported.
+        listener.write_status()
+        listener.log_summary()
+        listener.inspection.record.close()
+        listener.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -4,8 +4,8 @@
 # the pod's stop is a SIGTERM the workload exits on, status 143.
 
 [Unit]
-Requires=customs-inspect-example.service customs-resolve-example.service
-After=customs-inspect-example.service customs-resolve-example.service
+Requires=moat-inspect-example.service moat-resolve-example.service
+After=moat-inspect-example.service moat-resolve-example.service
 
 [Container]
 ContainerName=example
@@ -13,7 +13,7 @@ Pod=example.pod
 Image=registry.fedoraproject.org/fedora:44
 Exec=sleep infinity
 RunInit=true
-Volume=%E/customs/bundle.pem:/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:ro,Z
+Volume=%E/moatery/bundle.pem:/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:ro,Z
 Environment=EXAMPLE_API_KEY=sk-placeholder
 
 [Service]

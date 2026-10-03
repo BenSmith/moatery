@@ -1,0 +1,21 @@
+# The egress inspector, started by moat-inspect.socket on the first
+# connection. `systemctl --user reload` applies a policy edit without
+# cutting a connection; a change of "tls" needs a restart. It refuses to start without the CA under %S/moatery/ca, which
+# moat-mint-ca makes (examples/README.md).
+
+[Unit]
+Description=moatery egress inspector
+Requires=moat-inspect.socket
+Wants=moat-broker.service
+After=moat-broker.service
+
+[Service]
+ExecStart=/usr/libexec/moatery/moat-inspect --name example \
+    --policy %E/moatery/policy.json \
+    --state-dir %S/moatery \
+    --status %S/moatery/status.json \
+    --record %L/moatery/requests.log \
+    --broker unix:%t/moatery/broker.sock
+ExecReload=kill -USR1 $MAINPID
+StateDirectory=moatery
+LogsDirectory=moatery

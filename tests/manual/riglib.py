@@ -1,7 +1,7 @@
-"""What the rigs share: the fixture customs is measured against.
+"""What the rigs share: the fixture moatery is measured against.
 
 One provider name and one unlisted name, which nothing on the internet
-resolves, so a workload resolves them only through customs-resolve; a
+resolves, so a workload resolves them only through moat-resolve; a
 stub provider on the host's :443 that answers 200 to the real key alone;
 the CA, the trust bundle, the policy; two host facts that need sudo and
 are undone at teardown. Each rig owns its placement -- what runs where, and
@@ -20,9 +20,9 @@ CHECKOUT = HERE.parent.parent
 sys.path.insert(0, str(CHECKOUT))
 
 # The programs under test: the checkout's, or the installed copy
-# CUSTOMS_LIBEXEC names (the RPM's /usr/libexec/customs), whose package
+# MOATERY_LIBEXEC names (the RPM's /usr/libexec/moatery), whose package
 # is installed and so is found without PYTHONPATH.
-INSTALLED = os.environ.get("CUSTOMS_LIBEXEC")
+INSTALLED = os.environ.get("MOATERY_LIBEXEC")
 LIBEXEC = Path(INSTALLED) if INSTALLED else CHECKOUT / "libexec"
 PROGRAM_ENV = {} if INSTALLED else {"PYTHONPATH": str(CHECKOUT)}
 
@@ -39,9 +39,9 @@ PLACEHOLDER = "sk-placeholder"
 LOOPBACK_MAP = "169.254.1.3"
 INSPECT_TLS, INSPECT_CLEARTEXT = 8443, 8080
 # What the responder answers every name with where the listeners are in the
-# workload's namespace: customs-box's, which the netns recipe and the
+# workload's namespace: moathut's, which the netns recipe and the
 # sidecar answer too (tests/test_quadlet_example.py, tests/test_sidecar.py).
-from customs_box.units import ANSWER  # noqa: E402, F401
+from moathut.units import ANSWER  # noqa: E402, F401
 RESOLVE_PORT = 8053
 PROVIDER_PORT = 443
 IMAGE = "registry.fedoraproject.org/fedora:44"
@@ -125,7 +125,7 @@ else:
 ELSEWHERE_DNS = "192.0.2.53"
 
 HOME = Path.home()
-RIG = HOME / ".local" / "state" / "customs-rig"
+RIG = HOME / ".local" / "state" / "moatery-rig"
 STUB_CERT, STUB_KEY = RIG / "stub-cert.pem", RIG / "stub-key.pem"
 
 results = []
@@ -174,8 +174,8 @@ def preflight(tools, ports):
 def mint_ca(state):
     """The per-workload CA, once, kept across runs like an SSH host key.
     The operator's job on the host, done the operator's way: by running
-    customs-mint-ca. In the sidecar it is the entrypoint's."""
-    done = run([sys.executable, str(LIBEXEC / "customs-mint-ca"),
+    moat-mint-ca. In the sidecar it is the entrypoint's."""
+    done = run([sys.executable, str(LIBEXEC / "moat-mint-ca"),
                 "--name", NAME, "--state-dir", str(state)],
                env={**os.environ, **PROGRAM_ENV})
     say(f"  {done.stderr.strip()}")
@@ -330,7 +330,7 @@ def origin_rows(secret):
 
 
 def dns_rows(ask, resolver, synthesised, read_status):
-    """The workload's DNS goes to customs-resolve and nowhere else.
+    """The workload's DNS goes to moat-resolve and nowhere else.
 
     `ask(argv)` runs DNS_LOOKUP as the workload, in its netns, and returns what
     it printed; `resolver` is the container's first nameserver; `synthesised`

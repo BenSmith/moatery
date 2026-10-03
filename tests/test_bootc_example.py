@@ -18,7 +18,7 @@ from pathlib import Path
 from tests import REPO_ROOT
 
 BOOTC = Path(REPO_ROOT) / "examples" / "bootc"
-SPEC = Path(REPO_ROOT) / "rpm" / "customs.spec"
+SPEC = Path(REPO_ROOT) / "rpm" / "moatery.spec"
 
 LINT_CALL = re.compile(r"bootc container lint\b(?:[^\n\\]|\\\n)*")
 

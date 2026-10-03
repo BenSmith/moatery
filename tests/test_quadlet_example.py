@@ -12,14 +12,14 @@ import re
 import unittest
 from pathlib import Path
 
-from customs_box.units import ANSWER
+from moathut.units import ANSWER
 from tests import REPO_ROOT
 
 EXAMPLES = Path(REPO_ROOT) / "examples"
 QUADLET = EXAMPLES / "quadlet"
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
-LISTENERS = ("customs-inspect-example.service",
-             "customs-resolve-example.service")
+LISTENERS = ("moat-inspect-example.service",
+             "moat-resolve-example.service")
 DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo")
 
 
@@ -33,8 +33,8 @@ def _keys(path, key):
 def _provided():
     """Unit name → file, with quadlet's generated names."""
     units = {p.name: p for p in QUADLET.glob("*.service")}
-    units["customs-broker.service"] = (
-        EXAMPLES / "systemd" / "customs-broker.service")
+    units["moat-broker.service"] = (
+        EXAMPLES / "systemd" / "moat-broker.service")
     for p in QUADLET.glob("*.container"):
         units[f"{p.stem}.service"] = p
     for p in QUADLET.glob("*.pod"):
@@ -43,8 +43,8 @@ def _provided():
 
 
 def _ruleset(text):
-    body = re.search(r"^table inet customs \{.*?^\}\n^table netdev "
-                     r"customs \{.*?^\}", text, re.S | re.M).group(0)
+    body = re.search(r"^table inet moatery \{.*?^\}\n^table netdev "
+                     r"moatery \{.*?^\}", text, re.S | re.M).group(0)
     return re.sub(r'"\$\w+"', '"$DEV"', body)
 
 
@@ -86,7 +86,7 @@ class TestQuadletExample(unittest.TestCase):
     def test_the_broker_notifies(self):
         """The inspector is After= it, and a brokered request in its first
         moment finds the socket."""
-        broker = EXAMPLES / "systemd" / "customs-broker.service"
+        broker = EXAMPLES / "systemd" / "moat-broker.service"
         self.assertEqual(_keys(broker, "Type"), ["notify"])
 
     def test_the_script_is_given_the_pod_name(self):
@@ -98,7 +98,7 @@ class TestQuadletExample(unittest.TestCase):
         for unit in LISTENERS:
             text = (QUADLET / unit).read_text()
             with self.subTest(unit=unit):
-                self.assertIn(f"customs-pod-netns pid {name})", text)
+                self.assertIn(f"moat-pod-netns pid {name})", text)
         inspect = (QUADLET / LISTENERS[0]).read_text()
         self.assertIn('--netns-pid "$$pid"', inspect)
 
@@ -109,9 +109,9 @@ class TestQuadletExample(unittest.TestCase):
         pod = QUADLET / "example.pod"
         self.assertIn("--share-parent=false", _keys(pod, "PodmanArgs"))
 
-    def test_the_responder_answers_as_customs_box_does(self):
+    def test_the_responder_answers_as_moathut_does(self):
         """One address for the netns placement wherever it is written
-        down: the example, the recipe and customs-box. A copy left on the
+        down: the example, the recipe and moathut. A copy left on the
         loopback works for a container and fails a VM's guest, which
         dials its own."""
         design = DESIGN.read_text().split(
@@ -126,7 +126,7 @@ class TestQuadletExample(unittest.TestCase):
     def test_the_rules_are_the_netns_placements(self):
         design = DESIGN.read_text().split(
             "## Netns:", 1)[1].split("\n## ", 1)[0]
-        script = (QUADLET / "customs-pod-netns").read_text()
+        script = (QUADLET / "moat-pod-netns").read_text()
         self.assertEqual(_ruleset(script), _ruleset(design))
 
 

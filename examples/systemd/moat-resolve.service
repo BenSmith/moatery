@@ -1,0 +1,17 @@
+# The workload's nameserver, started by moat-resolve.socket on the
+# first query. Every name is answered with the address the workload's
+# 443 and 80 are redirected from, and nothing is forwarded. The policy is
+# the inspector's, read to count unlisted names; reload it with the
+# inspector to apply an edit.
+
+[Unit]
+Description=moatery DNS responder
+Requires=moat-resolve.socket
+
+[Service]
+ExecStart=/usr/libexec/moatery/moat-resolve --name example \
+    --address 169.254.1.3 \
+    --policy %E/moatery/policy.json \
+    --status %S/moatery/resolve-status.json
+ExecReload=kill -USR1 $MAINPID
+StateDirectory=moatery

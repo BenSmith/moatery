@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""host_rig.py — does customs work with nothing but a normal user?
+"""host_rig.py — does moatery work with nothing but a normal user?
 
 "Host" in docs/DESIGN.md, as it stands: one rootless podman container
 under pasta, the programs as hand-written user units, the nft rules
@@ -24,7 +24,7 @@ THE ROWS
   premise   the container's bounding set holds no CAP_NET_ADMIN; the rules
             are in its netns. Without the first, the second is a suggestion.
   dns       the workload's queries, to its resolver over UDP and TCP and to
-            any other nameserver, are answered by customs-resolve with the
+            any other nameserver, are answered by moat-resolve with the
             loopback map, for names nothing resolves; an AAAA gets no
             records; the responder's status names the unlisted names and
             not the provider's. The container has no --add-host, so every
@@ -90,7 +90,7 @@ recipe here is what worked:
     `--dns-forward`), not the gateway, followed by the host's own
     nameservers. The redirect catches port 53 whatever the address.
   - the inspector recognises exactly the ports 8080 and 8443 as its planes
-    (customs/egress_plane.py). "Each container gets its own inspector port" is
+    (moatery/egress_plane.py). "Each container gets its own inspector port" is
     not something the program supports; one container per host loopback.
 """
 
@@ -110,20 +110,20 @@ from riglib import (  # noqa
     INSPECT_TLS, LIBEXEC, LOOPBACK_MAP, NAME, PLACEHOLDER, PROGRAM_ENV,
     PROVIDER, RESOLVE_PORT, RIG, STUB_CERT, UNLISTED, row, run, say,
 )
-from customs.egress_ca import ca_cert_path  # noqa
-from customs.egress_record import (  # noqa
+from moatery.egress_ca import ca_cert_path  # noqa
+from moatery.egress_record import (  # noqa
     DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED, DROP_UNREADABLE_REQUEST,
     NOTE_H2_PREFACE,
 )
 
 BROKER_ADDR = "127.129.0.1"
 BROKER_PORT = 8081
-CONTAINER = "customs-rig"
-UNIT = "customs-rig"
+CONTAINER = "moatery-rig"
+UNIT = "moatery-rig"
 BROKER_SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR",
                                     f"/run/user/{os.getuid()}"),
                      UNIT, "broker.sock")
-HOSTS_MARK = "customs-host-rig"
+HOSTS_MARK = "moatery-host-rig"
 
 UNITS = riglib.HOME / ".config" / "systemd" / "user"
 STATE = RIG / "state"
@@ -161,7 +161,7 @@ def write_units(over_tcp):
     (UNITS / f"{UNIT}-broker.service").write_text(
         "# written by tests/manual/host_rig.py — removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={py} {LIBEXEC / 'customs-broker'}"
+        f"ExecStart={py} {LIBEXEC / 'moat-broker'}"
         f" --name {NAME} --listen {endpoint}"
         f" --caller-uid {os.getuid()}"
         f" --host {PROVIDER}={CREDENTIAL}"
@@ -180,7 +180,7 @@ def write_units(over_tcp):
     (UNITS / f"{UNIT}-inspect.service").write_text(
         "# written by tests/manual/host_rig.py — removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={py} {LIBEXEC / 'customs-inspect'}"
+        f"ExecStart={py} {LIBEXEC / 'moat-inspect'}"
         f" --name {NAME} --policy {POLICY} --state-dir {STATE}"
         f" --status {STATUS} --record {RECORD}"
         f" --broker {endpoint}\n"
@@ -193,7 +193,7 @@ def write_units(over_tcp):
     (UNITS / f"{UNIT}-resolve.service").write_text(
         "# written by tests/manual/host_rig.py — removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={py} {LIBEXEC / 'customs-resolve'}"
+        f"ExecStart={py} {LIBEXEC / 'moat-resolve'}"
         f" --name {NAME} --address {LOOPBACK_MAP} --policy {POLICY}"
         f" --status {RESOLVE_STATUS}\n"
         + path)
@@ -312,14 +312,14 @@ def load_rules(pid, neighbour, redirect_dns):
            f"    tcp dport 53  dnat ip to {LOOPBACK_MAP}:{RESOLVE_PORT}\n"
            if redirect_dns else "")
     rules = f"""
-table inet customs {{
+table inet moatery {{
   chain out {{
     type nat hook output priority -100
     tcp dport 443 dnat ip to {LOOPBACK_MAP}:{INSPECT_TLS}
     tcp dport 80  dnat ip to {LOOPBACK_MAP}:{INSPECT_CLEARTEXT}
 {dns}  }}
 }}
-table netdev customs {{
+table netdev moatery {{
   chain egress {{
     type filter hook egress device "{dev}" priority 0; policy drop
 {nd}    ip daddr {LOOPBACK_MAP} tcp dport {ports} accept
@@ -398,7 +398,7 @@ QUIC_UDP = ("192.0.2.1", 443)
 def chain_counter(pid, comment):
     """The egress chain's counter with this comment, in packets, or -1 if
     the chain is absent (as under --without-rules)."""
-    out = in_netns(pid, ["nft", "list", "chain", "netdev", "customs",
+    out = in_netns(pid, ["nft", "list", "chain", "netdev", "moatery",
                          "egress"], check=False).stdout
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
@@ -458,7 +458,7 @@ def probe(pid, dns, secret, over_tcp):
         not net_admin, f"CapBnd={caps:016x}")
     listed = in_netns(pid, ["nft", "list", "tables"], check=False).stdout
     row("premise: the rules are in the container's netns",
-        "table inet customs" in listed,
+        "table inet moatery" in listed,
         listed.strip() or "no tables")
 
     riglib.dns_rows(
@@ -509,7 +509,7 @@ def probe(pid, dns, secret, over_tcp):
                    if ln.lower().startswith("server:")), "no Server")
     row("request: the response names the provider's server, not a broker",
         server == f"Server: {riglib.STUB_SERVER}"
-        and "customs" not in head.lower(), server)
+        and "moatery" not in head.lower(), server)
     env = exec_in(["env"]).stdout
     row("request: the container's environment holds the placeholder only",
         PLACEHOLDER in env and secret not in env,

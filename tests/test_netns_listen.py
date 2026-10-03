@@ -1,4 +1,4 @@
-"""customs-netns-listen: the planes, or the responder's port, bound in
+"""moat-netns-listen: the planes, or the responder's port, bound in
 another process's network namespace and handed to a program in this one.
 
 The cases that join a namespace need unprivileged user namespaces and a
@@ -23,12 +23,12 @@ import unittest.mock
 
 from tests import REPO_ROOT, suppress_fork_warning
 
-from customs import netns_listen
-from customs.egress_plane import CLEARTEXT, RESOLVE_PORT, TLS
+from moatery import netns_listen
+from moatery.egress_plane import CLEARTEXT, RESOLVE_PORT, TLS
 
-LAUNCHER = REPO_ROOT / "libexec" / "customs-netns-listen"
-INSPECTOR = REPO_ROOT / "libexec" / "customs-inspect"
-RESOLVER = REPO_ROOT / "libexec" / "customs-resolve"
+LAUNCHER = REPO_ROOT / "libexec" / "moat-netns-listen"
+INSPECTOR = REPO_ROOT / "libexec" / "moat-inspect"
+RESOLVER = REPO_ROOT / "libexec" / "moat-resolve"
 ENV = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
 
 # What the handed-over program sees: the activation variables and, for
@@ -36,7 +36,7 @@ ENV = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
 # table and in this namespace's own.
 PROBE = """
 import json, os, socket, sys
-from customs.peer_identity import listed_in, netns_tables
+from moatery.peer_identity import listed_in, netns_tables
 pid = int(sys.argv[1])
 socks = [socket.socket(fileno=fd)
          for fd in range(3, 3 + int(os.environ["LISTEN_FDS"]))]
@@ -112,7 +112,7 @@ class TestHandOver(unittest.TestCase):
         script = f"""
 import os, socket, sys
 sys.path.insert(0, {str(REPO_ROOT)!r})
-from customs.netns_listen import hand_over
+from moatery.netns_listen import hand_over
 # Something already on 3 and 4, and a listener that would be overwritten
 # by a naive dup2 onto 3.
 held = [os.open("/dev/null", os.O_RDONLY) for _ in range(2)]
@@ -324,7 +324,7 @@ print(s.recv(4096).split(b"\\r\\n")[0].decode())
 
 
 class TestTheResponderBehindTheLauncher(unittest.TestCase):
-    """The same seam for customs-resolve: its sockets bound in the target,
+    """The same seam for moat-resolve: its sockets bound in the target,
     and a query from inside answered over both transports."""
 
     def test_a_query_in_the_namespace_is_answered(self):

@@ -1,4 +1,4 @@
-"""customs-inspect: the terminated TLS plane.
+"""moat-inspect: the terminated TLS plane.
 
 A spliced connection reads a name and replays the guest's own bytes. This
 plane TERMINATES -- the listener completes the guest's handshake with a leaf
@@ -37,29 +37,29 @@ import unittest.mock
 from pathlib import Path
 
 from tests import assert_bare_refusal, load_script
-from customs.egress_plane import TLS
-from customs.inspect_document import VmPolicyEntry
-from customs.inspect_policy import Policy
-from customs.egress_ca import (
+from moatery.egress_plane import TLS
+from moatery.inspect_document import VmPolicyEntry
+from moatery.inspect_policy import Policy
+from moatery.egress_ca import (
     ca_cert_path, ca_key_path, ca_openssl_argv, leaf_openssl_argv,
 )
-from customs.tls_hello import HelloUnreadable, read_client_hello
-from customs.http_target import (
+from moatery.tls_hello import HelloUnreadable, read_client_hello
+from moatery.http_target import (
     SCHEME_HTTP, SCHEME_HTTPS, host_from_authority, redirect_target,
 )
-from customs.http_framing import (
+from moatery.http_framing import (
     Framing, HTTP_METHOD_MAX, ReadTimedOut, RequestUnreadable, _Stream,
     _is_count,
     is_http_request_start, request_framing, response_framing,
 )
-from customs import egress_upstream
-from customs.egress_upstream import tls_failure
-from customs import inspect_listener
-from customs.inspect_listener import MAX_CONNECTIONS, Listener, build_minter
-from customs.inspect_http import serve_one_request
-from customs import inspect_tls
-from customs.inspect_tls import serve_tls
-from customs.egress_record import (
+from moatery import egress_upstream
+from moatery.egress_upstream import tls_failure
+from moatery import inspect_listener
+from moatery.inspect_listener import MAX_CONNECTIONS, Listener, build_minter
+from moatery.inspect_http import serve_one_request
+from moatery import inspect_tls
+from moatery.inspect_tls import serve_tls
+from moatery.egress_record import (
     DROP_BROKER_UNREACHABLE,
     DROP_CLIENT_CERT,
     DROP_INTERNAL,
@@ -81,7 +81,7 @@ _MOD = None
 def _mod():
     global _MOD
     if _MOD is None:
-        _MOD = load_script("libexec/customs-inspect")
+        _MOD = load_script("libexec/moat-inspect")
     return _MOD
 
 
@@ -263,7 +263,7 @@ class TerminationCase(unittest.TestCase):
                                      self.origin_ca_cert, "origin")
 
     def _minter(self, mod, **kwargs):
-        from customs.egress_mint import Minter
+        from moatery.egress_mint import Minter
         return Minter("demo", self.state, **kwargs)
 
     def _listener(self, mod, origin, *, hosts=("localhost",), trust=True,
@@ -477,7 +477,7 @@ class TestADeniedNameIsBumpedRatherThanClosed(TerminationCase):
         self.assertIsNone(error, f"the handshake must succeed: {error}")
         self.assertIn(b"403 Forbidden", response)
         self.assertNotIn(b"egress allowlist", response)
-        self.assertNotIn(b"customs", response)
+        self.assertNotIn(b"moatery", response)
         self.assertEqual(origin.requests, [],
                          "a denied name must never reach an origin")
         status = listener.status()
@@ -1788,7 +1788,7 @@ class TestTheCachesCannotEvictALeafInFlight(unittest.TestCase):
     """
 
     def test_every_cache_is_larger_than_the_connection_ceiling(self):
-        from customs.egress_mint import DENIAL_CACHE_MAX, LEAF_CACHE_MAX
+        from moatery.egress_mint import DENIAL_CACHE_MAX, LEAF_CACHE_MAX
         for name, size in (("working set", LEAF_CACHE_MAX),
                            ("denial set", DENIAL_CACHE_MAX)):
             with self.subTest(cache=name):

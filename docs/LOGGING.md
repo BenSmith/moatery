@@ -1,4 +1,4 @@
-# What customs reports
+# What moatery reports
 
 The inspector reports in three places, and each answers a different
 question:
@@ -6,7 +6,7 @@ question:
 - **The journal**: a line for each connection and each decision, with
   the reason for every refusal. Use it to ask why something happened.
 - **The record**: one JSON line for each request or refused connection.
-  It is private to the user, and it is what `customs-box log` reads.
+  It is private to the user, and it is what `moathut log` reads.
   Use it to ask what the workload did.
 - **The status file**: counters, replaced every 30 seconds, at a reload
   and at stop. Use it to ask how much, and whether anything is wrong.
@@ -75,7 +75,7 @@ Every reason, as the journal, the record and `drop_reasons` spell it:
 
 **Suspect** marks what no client following its own configuration
 produces: the journal line carries `suspect=yes`, the status file sums
-them as `suspects`, and `customs-box log` ends the line with `suspect`.
+them as `suspects`, and `moathut log` ends the line with `suspect`.
 None needs a change to the policy. Each is worth a look.
 
 ### Notes
@@ -146,7 +146,7 @@ program may rely on. Those most read by hand:
 
 ## The responder
 
-customs-resolve writes a line per query, with the name, the type and
+moat-resolve writes a line per query, with the name, the type and
 what it was answered:
 
 ```
@@ -179,13 +179,13 @@ normal: it measures the clients that would use HTTP/3 if they could.
 ## What to look for
 
 ```
-journalctl --user -u customs-inspect | grep suspect=yes
-journalctl --user -u customs-inspect | grep ' note '
-journalctl --user -u customs-inspect | grep 'id=5c0e81a2f4d3'
+journalctl --user -u moat-inspect | grep suspect=yes
+journalctl --user -u moat-inspect | grep ' note '
+journalctl --user -u moat-inspect | grep 'id=5c0e81a2f4d3'
 jq -c 'select(.decision == "drop")' requests.log
 jq '{suspects, notes, drop_reasons}' status.json
 jq '{unlisted, https, unlisted_names}' resolve-status.json
 ```
 
-For a box, `customs-box log NAME` follows its record, and
-`customs-box log NAME --refused` sums what its policy still refuses.
+For a box, `moathut log NAME` follows its record, and
+`moathut log NAME --refused` sums what its policy still refuses.

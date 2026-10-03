@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""box_rig.py — a customs box, made and run through its command line.
+"""box_rig.py — a moathut box, made and run through its command line.
 
-docs/BOX.md: `customs-box credential add`, `create`, `enter`, `log`,
+docs/BOX.md: `moathut credential add`, `create`, `enter`, `log`,
 `allow`, `policy`, `stop` and `rm`, the box's units run by the user's
 manager and quadlet, the netns placement's rules and listeners in the
 pod's namespace, and the box's broker. Run on the proving host as an
@@ -14,9 +14,9 @@ ordinary user, from a checkout:
                                     [--without-autostart]
                                     [--restarts N]
 
-The tool is the checkout's bin/customs-box running the checkout's
-programs, or, with CUSTOMS_LIBEXEC=/usr/libexec/customs, the installed
-customs-box. riglib's two host facts need sudo and are undone at teardown.
+The tool is the checkout's bin/moathut running the checkout's
+programs, or, with MOATERY_LIBEXEC=/usr/libexec/moatery, the installed
+moathut. riglib's two host facts need sudo and are undone at teardown.
 
 Beside the units `create` writes, the rig writes five drop-ins, and
 removes them before `rm`:
@@ -210,18 +210,18 @@ from riglib import (  # noqa
     CHECKOUT, HOME, LIBEXEC, PROGRAM_ENV, PROVIDER, RIG, UNLISTED, row, run,
     say,
 )
-from customs.egress_ca import ca_cert_path  # noqa
-from customs.inspect_document import (  # noqa
+from moatery.egress_ca import ca_cert_path  # noqa
+from moatery.inspect_document import (  # noqa
     INSPECT_DIGEST_KEY, inspect_policy_digest,
 )
-from customs.egress_record import (  # noqa
+from moatery.egress_record import (  # noqa
     DROP_BROKER_UNREACHABLE, DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED,
     DROP_UNREACHABLE,
 )
-from customs_box.record import ROTATE_BYTES, rotated  # noqa
+from moathut.record import ROTATE_BYTES, rotated  # noqa
 
-BOX = "customs-rig-box"
-UNIT = f"customs-box-{BOX}"
+BOX = "moatery-rig-box"
+UNIT = f"moathut-{BOX}"
 POD_SERVICE = f"{UNIT}-pod.service"
 SERVICE = f"{UNIT}.service"
 INSPECT_SERVICE = f"{UNIT}-inspect.service"
@@ -236,10 +236,10 @@ LISTENERS = {INSPECT_SERVICE, RESOLVE_SERVICE}
 IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
 
 # docs/BOX.md's table of a box's files.
-CONFIG = HOME / ".config" / "customs" / "box" / BOX
-STATE = HOME / ".local" / "state" / "customs" / "box" / BOX
-LOGS = HOME / ".local" / "state" / "log" / "customs" / "box" / BOX
-SHARE = HOME / ".local" / "share" / "customs" / "box" / BOX
+CONFIG = HOME / ".config" / "moatery" / "box" / BOX
+STATE = HOME / ".local" / "state" / "moatery" / "box" / BOX
+LOGS = HOME / ".local" / "state" / "log" / "moatery" / "box" / BOX
+SHARE = HOME / ".local" / "share" / "moatery" / "box" / BOX
 BOX_HOME = SHARE / "home"
 QUADLET = HOME / ".config" / "containers" / "systemd"
 UNITS = HOME / ".config" / "systemd" / "user"
@@ -252,14 +252,14 @@ LAID_OUT = (CONFIG / "policy.json", CONFIG / "bundle.pem",
 STATUS = STATE / "status.json"
 RESOLVE_STATUS = STATE / "resolve-status.json"
 RECORD = LOGS / "requests.log"
-CREDENTIAL = "customs-rig-key"
-CREDENTIAL_ENV = "CUSTOMS_RIG_KEY"
-CREDENTIALS = HOME / ".config" / "customs" / "credentials"
+CREDENTIAL = "moatery-rig-key"
+CREDENTIAL_ENV = "MOATERY_RIG_KEY"
+CREDENTIALS = HOME / ".config" / "moatery" / "credentials"
 SEALED = CREDENTIALS / f"{CREDENTIAL}.cred"
 DESCRIBED = CREDENTIALS / f"{CREDENTIAL}.json"
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR")
                or f"/run/user/{os.getuid()}")
-BROKER_SOCKET = RUNTIME / "customs-box" / BOX / "broker.sock"
+BROKER_SOCKET = RUNTIME / "moathut" / BOX / "broker.sock"
 
 DROP_INS = {"inspect": UNITS / f"{INSPECT_SERVICE}.d" / "rig.conf",
             "broker": UNITS / f"{BROKER_SERVICE}.d" / "rig.conf",
@@ -271,15 +271,15 @@ NO_RULES = "[Service]\nExecStartPost=\n"
 
 # Inside, the box's home is at the user's home's path.
 INSIDE = str(HOME)
-START = ".customs-rig-start"
-STARTS = ".customs-rig-starts"
-KEPT = ".customs-rig-kept"
-WRITTEN = ".customs-rig-written"
-MARKER = HOME / ".customs-rig-marker"
+START = ".moatery-rig-start"
+STARTS = ".moatery-rig-starts"
+KEPT = ".moatery-rig-kept"
+WRITTEN = ".moatery-rig-written"
+MARKER = HOME / ".moatery-rig-marker"
 
 POLICY = RIG / "box-policy.json"
 PLAIN_POLICY = RIG / "box-plain-policy.json"
-# $EDITOR for `customs-box policy`: writes a document the loader refuses.
+# $EDITOR for `moathut policy`: writes a document the loader refuses.
 BAD_EDITOR = RIG / "box-bad-editor"
 # And two that write the rig's plain and brokered documents.
 PLAIN_EDITOR = RIG / "box-plain-editor"
@@ -290,8 +290,8 @@ TTY_EDITOR = RIG / "box-tty-editor"
 TTY_POLICY = RIG / "box-tty-policy.json"
 TTY_RUNS = RIG / "box-tty-runs"
 # A host allowed while a download runs, and one the terminal's edit adds.
-RELOAD_HOST = "customs-rig-reload.example"
-TTY_HOST = "customs-rig-tty.example"
+RELOAD_HOST = "moatery-rig-reload.example"
+TTY_HOST = "moatery-rig-tty.example"
 # The stub's /slow/N: N chunks of 64 KiB, 0.1 s apart (stub_provider.py).
 SLOW_CHUNKS = 80
 SLOW_BYTES = b"".join(bytes([i % 256]) * 65536 for i in range(SLOW_CHUNKS))
@@ -300,17 +300,17 @@ SLOW = RIG / "box-slow"
 PROJECT = RIG / "box-project"
 SUBDIR = PROJECT / "sub"
 READONLY = RIG / "box-ro"
-READONLY_AT = "/srv/customs-rig-ro"
+READONLY_AT = "/srv/moatery-rig-ro"
 STUB_LOG = RIG / "stub.log"
-HOSTS_MARK = "customs-box-rig"
+HOSTS_MARK = "moathut-rig"
 
 if riglib.INSTALLED:
-    TOOL = ["customs-box"]
+    TOOL = ["moathut"]
     TOOL_ENV = dict(os.environ)
 else:
-    TOOL = [sys.executable, str(CHECKOUT / "bin" / "customs-box")]
+    TOOL = [sys.executable, str(CHECKOUT / "bin" / "moathut")]
     TOOL_ENV = {**os.environ, **PROGRAM_ENV,
-                "CUSTOMS_LIBEXEC": str(LIBEXEC)}
+                "MOATERY_LIBEXEC": str(LIBEXEC)}
 
 USER = f"{os.getuid()}:{os.getgid()}"
 
@@ -358,7 +358,7 @@ FILTERED_UDP = ("192.0.2.1", "9")
 QUIC_UDP = ("192.0.2.1", "443")
 SSH = "192.0.2.1:22"
 
-RULES = {"table inet customs", "table netdev customs"}
+RULES = {"table inet moatery", "table netdev moatery"}
 
 SITECUSTOMIZE = """\
 # written by tests/manual/box_rig.py: the broker's interpreter waits
@@ -371,7 +371,7 @@ time.sleep(3)
 # --- the tool and the box ----------------------------------------------------
 
 def box(*args, cwd=RIG, timeout=180, input=None, env=None):
-    """customs-box as the user types it, with `input`, or nothing, on its
+    """moathut as the user types it, with `input`, or nothing, on its
     stdin."""
     stdin = {"input": input} if input is not None else {
         "stdin": subprocess.DEVNULL}
@@ -404,7 +404,7 @@ def exists(kind):
 
 
 def listed():
-    """The box's line in `customs-box ls`, as words, or None."""
+    """The box's line in `moathut ls`, as words, or None."""
     for line in box("ls").stdout.splitlines():
         words = line.split()
         if words and words[0] == BOX:
@@ -492,7 +492,7 @@ def counter(comment):
     pid = infra_pid()
     if pid is None:
         return -1
-    out = in_netns(pid, ["nft", "list", "chain", "netdev", "customs",
+    out = in_netns(pid, ["nft", "list", "chain", "netdev", "moatery",
                          "egress"]).stdout
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
@@ -726,12 +726,12 @@ def premise_rows():
     row("premise: the user in the box holds no capability",
         len(user) == 3 and not any(user.values()),
         ", ".join(f"{k}={v:016x}" for k, v in user.items()))
-    add = sudo_in(["ip", "link", "add", "customs-rig0", "type", "dummy"])
+    add = sudo_in(["ip", "link", "add", "moatery-rig0", "type", "dummy"])
     row("premise: and is refused `ip link add`",
         add.returncode != 0 and "Operation not permitted" in add.stderr,
         f"rc={add.returncode} {add.stderr.strip()}")
     if add.returncode == 0:
-        sudo_in(["ip", "link", "del", "customs-rig0"])
+        sudo_in(["ip", "link", "del", "moatery-rig0"])
     pid = infra_pid()
     found = tables(pid)
     row("premise: the rules are in the pod's namespace", RULES <= found,
@@ -1348,7 +1348,7 @@ def record_rows(without_reopen):
 
 def restart_rows(count, tag):
     say("persist, and workload restarts")
-    exec_in(["sh", "-c", f"echo {tag} > /var/tmp/customs-rig-reset; "
+    exec_in(["sh", "-c", f"echo {tag} > /var/tmp/moatery-rig-reset; "
              f'echo {tag} > "{INSIDE}/{KEPT}"'])
     for i in range(1, count + 1):
         reset_failed()
@@ -1358,7 +1358,7 @@ def restart_rows(count, tag):
                   "was inspected", await_start(before))
         if i == 1:
             seen = exec_in(["sh", "-c",
-                            "cat /var/tmp/customs-rig-reset 2>/dev/null "
+                            "cat /var/tmp/moatery-rig-reset 2>/dev/null "
                             f'|| echo gone; cat "{INSIDE}/{KEPT}"']
                            ).stdout.split()
             row("persist: after a restart, a file outside the home is gone "
@@ -1437,7 +1437,7 @@ def outside_rows():
         "no rules, and enter refuses it",
         now not in (None, pid) and not RULES & found
         and entered.returncode != 0
-        and "no customs rules" in entered.stderr,
+        and "no moatery rules" in entered.stderr,
         f"infra pid {pid} -> {now}: {sorted(found) or 'no tables'}; "
         f"enter rc={entered.returncode} {entered.stderr.strip()[-160:]}")
     box("stop", BOX)
@@ -1663,7 +1663,7 @@ def main():
 
     riglib.preflight(
         ("podman", "nsenter", "openssl", "curl", "ss", "systemctl",
-         "systemd-creds", *(("customs-box",) if riglib.INSTALLED else ())),
+         "systemd-creds", *(("moathut",) if riglib.INSTALLED else ())),
         (riglib.PROVIDER_PORT,))
     state = run(["systemctl", "--user", "is-system-running", "--wait"],
                 check=False, timeout=180).stdout.strip()

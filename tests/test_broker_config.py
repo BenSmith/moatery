@@ -15,9 +15,9 @@ import tempfile
 import unittest
 from unittest import mock
 
-from customs import broker_profiles
-from customs import broker_server
-from customs.sd_notify import notify_ready
+from moatery import broker_profiles
+from moatery import broker_server
+from moatery.sd_notify import notify_ready
 from tests import load_script
 from tests.test_sd_notify import notify_socket
 
@@ -78,8 +78,8 @@ class TestTheListenValueMayBeAPath(unittest.TestCase):
 
     def test_an_absolute_path_is_returned_bare(self):
         self.assertEqual(
-            broker_profiles.listen_endpoint("unix:/run/customs/broker.sock"),
-            "/run/customs/broker.sock")
+            broker_profiles.listen_endpoint("unix:/run/moatery/broker.sock"),
+            "/run/moatery/broker.sock")
 
     def test_a_relative_path_is_refused(self):
         self.assertIn("absolute", refused(
@@ -87,7 +87,7 @@ class TestTheListenValueMayBeAPath(unittest.TestCase):
 
     def test_an_abstract_name_is_refused(self):
         self.assertIn("abstract", refused(
-            broker_profiles.listen_endpoint, "unix:@customs"))
+            broker_profiles.listen_endpoint, "unix:@moatery"))
         self.assertIn("absolute", refused(
             broker_profiles.listen_endpoint, "unix:"))
 
@@ -330,13 +330,13 @@ class TestEntrypointWiring(unittest.TestCase):
                                 "read_timeout")}
         self.addCleanup(lambda: [setattr(broker_server.Handler, k, v)
                                  for k, v in self.saved.items()])
-        self.mod = load_script("libexec/customs-broker")
-        self.env = mock.patch.dict(os.environ, {"CUSTOMS_BROKER_SECRET": "sk-test"},
+        self.mod = load_script("libexec/moat-broker")
+        self.env = mock.patch.dict(os.environ, {"MOATERY_BROKER_SECRET": "sk-test"},
                                    clear=False)
         self.env.start(); self.addCleanup(self.env.stop)
         os.environ.pop("CREDENTIALS_DIRECTORY", None)
 
-    MINIMAL = ["customs-broker", "--name", "agent", "--listen", "127.0.0.1:0",
+    MINIMAL = ["moat-broker", "--name", "agent", "--listen", "127.0.0.1:0",
                "--caller-uid", "10000", "--host", "api.example.com=main-key"]
 
     def _run(self, argv, **patches):
@@ -371,7 +371,7 @@ class TestEntrypointWiring(unittest.TestCase):
         self.assertIs(server.RequestHandlerClass, broker_server.Handler)
         self.assertNotEqual(server.server_address[1], 0, "the port was bound")
         self.assertIn("listening url=http://127.0.0.1:", err)
-        self.assertIn("using CUSTOMS_BROKER_SECRET", err)
+        self.assertIn("using MOATERY_BROKER_SECRET", err)
 
     def test_the_timeouts_default_to_the_servers(self):
         self._run(self.MINIMAL)
@@ -402,12 +402,12 @@ class TestEntrypointWiring(unittest.TestCase):
         self.assertIn("binds every address", str(caught.exception))
 
     def test_the_env_fallback_refuses_a_second_credential(self):
-        """CUSTOMS_BROKER_SECRET is one value, and load_credential gives it
+        """MOATERY_BROKER_SECRET is one value, and load_credential gives it
         for every id: two ids under it sent one provider's key to the other
         provider's host."""
         with self.assertRaises(SystemExit) as caught:
             self._run(self.MINIMAL + ["--host", "api.github.com=gh-key"])
-        self.assertIn("CUSTOMS_BROKER_SECRET", str(caught.exception))
+        self.assertIn("MOATERY_BROKER_SECRET", str(caught.exception))
         self.assertIn("gh-key", str(caught.exception))
         self.assertIn("main-key", str(caught.exception))
 

@@ -1,0 +1,21 @@
+# The nameserver for pod example, its port bound in the pod's namespace.
+# Every name is answered with 198.18.0.1, which is never routed and
+# which the redirect lands on the listeners at 443 and 80. Not the
+# namespace's loopback: a VM's guest would take that for its own.
+
+[Unit]
+Description=moatery DNS responder, port in pod example
+BindsTo=example-pod.service
+After=example-pod.service
+
+[Service]
+Type=notify
+ExecStart=/bin/sh -c 'pid=$$(%h/.local/bin/moat-pod-netns pid example) \
+    && exec /usr/libexec/moatery/moat-netns-listen --pid "$$pid" \
+    --resolver -- \
+    /usr/libexec/moatery/moat-resolve --name example \
+    --address 198.18.0.1 \
+    --policy %E/moatery/policy.json \
+    --status %S/moatery/resolve-status.json'
+ExecReload=kill -USR1 $MAINPID
+StateDirectory=moatery

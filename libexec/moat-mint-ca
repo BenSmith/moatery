@@ -1,0 +1,61 @@
+#!/usr/bin/python3 -s
+"""
+moat-mint-ca: mint a workload's egress CA into the inspector's state
+directory, once.
+
+moat-inspect refuses to start under `tls = "inspect"` without a CA to
+sign its leaves, and does not mint one itself: the workload has to trust
+the certificate before it first runs, so the CA exists before the
+inspector does. This is that step, for a host. The sidecar's entrypoint
+makes the same call on its first start.
+
+Run it again and it does nothing: a CA that is there is kept, because
+the workload's trust bundle was built from it. Either way the
+certificate's path is printed on stdout, for building that bundle.
+
+Usage:
+  moat-mint-ca --name NAME --state-dir DIR
+"""
+
+import argparse
+import sys
+
+# Before the lib imports, for the reason moat-inspect gives.
+sys.dont_write_bytecode = True
+
+from moatery.egress_ca import ca_cert_path
+from moatery.egress_mint import MintFailed, mint_ca
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog="moat-mint-ca",
+        description="mint a workload's egress CA, once")
+    parser.add_argument("--name", required=True,
+                        help="the workload's name, as moat-inspect is "
+                             "given it; carried on the CA's subject")
+    parser.add_argument("--state-dir", required=True,
+                        help="moat-inspect's --state-dir")
+    return parser.parse_args(argv[1:])
+
+
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
+    try:
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code or 0)
+    try:
+        minted = mint_ca(args.name, args.state_dir)
+    except MintFailed as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    cert = ca_cert_path(args.state_dir)
+    print(f"egress CA {'minted' if minted else 'already present, kept'}: "
+          f"{cert}", file=sys.stderr)
+    print(cert)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

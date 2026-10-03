@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""vm_rig.py -- does customs filter a VM's egress?
+"""vm_rig.py -- does moatery filter a VM's egress?
 
 "VM" in docs/DESIGN.md, as it stands: one rootless podman container
 under pasta holding nothing but qemu and its passt backend, the guest's
 egress re-originated by passt as sockets in the container's netns, the
-customs programs as hand-written user units on the host, the nft rules
+moatery programs as hand-written user units on the host, the nft rules
 loaded into the container's netns, and a workload inside the guest that
 reaches the provider carrying the sealed key. Run on the proving host as
 an ordinary user, from a checkout:
@@ -18,7 +18,7 @@ Nothing here needs root except the two host facts every placement needs,
 undone at teardown (see riglib). It needs a KVM host, /dev/kvm readable
 and writable by the user, and a cloud image with cloud-init: the operator
 puts a Fedora Cloud Base Generic qcow2 at
-~/.local/state/customs-rig/vm/guest.qcow2 once, and the rig builds
+~/.local/state/moatery-rig/vm/guest.qcow2 once, and the rig builds
 its own qemu container image from tests/manual/vm.Containerfile.
 
 THE ROWS
@@ -29,7 +29,7 @@ THE ROWS
   egress    the guest's UDP sends return while the container chain's
             `dropped` counter moves: the guest's egress IS the container's.
   dns       the guest's raw queries, over UDP and TCP and to another
-            nameserver, are answered by customs-resolve with the map;
+            nameserver, are answered by moat-resolve with the map;
             an AAAA gets no records; the responder's status names the
             guest's names and not the provider's.
   silent    a filtered UDP send returns rc=0 while the drop counter
@@ -80,16 +80,16 @@ from riglib import (  # noqa
     LIBEXEC, LOOPBACK_MAP, NAME, PLACEHOLDER, PROGRAM_ENV, PROVIDER,
     RESOLVE_PORT, RIG, STUB_CERT, UNLISTED, row, run, say,
 )
-from customs.egress_ca import ca_cert_path  # noqa
-from customs.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
+from moatery.egress_ca import ca_cert_path  # noqa
+from moatery.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
 
 HERE = Path(__file__).resolve().parent
-CONTAINER = "customs-rig-2"
-UNIT = "customs-rig-2"
+CONTAINER = "moatery-rig-2"
+UNIT = "moatery-rig-2"
 BROKER_SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR",
                                     f"/run/user/{os.getuid()}"),
                      UNIT, "broker.sock")
-HOSTS_MARK = "customs-vm-rig"
+HOSTS_MARK = "moatery-vm-rig"
 UNITS = riglib.HOME / ".config" / "systemd" / "user"
 STATE = RIG / "state"
 POLICY = RIG / "inspect-2.json"
@@ -105,9 +105,9 @@ SERIAL = VM_DIR / "serial.log"
 PROBE_LOG = VM_DIR / "probe.log"
 GUEST_SCRIPT = HERE / "vm_guest.py"
 CONTAINERFILE = HERE / "vm.Containerfile"
-QEMU_IMAGE = "localhost/customs-rig-qemu"
+QEMU_IMAGE = "localhost/moatery-rig-qemu"
 VM = "/vm"
-CA_IN_GUEST = "/etc/customs-rig/bundle.pem"
+CA_IN_GUEST = "/etc/moatery-rig/bundle.pem"
 DROP_PORT = 8081
 
 
@@ -132,7 +132,7 @@ def write_units():
     (UNITS / f"{UNIT}-broker.service").write_text(
         "# written by tests/manual/vm_rig.py -- removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={py} {LIBEXEC / 'customs-broker'}"
+        f"ExecStart={py} {LIBEXEC / 'moat-broker'}"
         f" --name {NAME} --listen {endpoint}"
         f" --caller-uid {os.getuid()}"
         f" --host {PROVIDER}={CREDENTIAL}"
@@ -151,7 +151,7 @@ def write_units():
     (UNITS / f"{UNIT}-inspect.service").write_text(
         "# written by tests/manual/vm_rig.py -- removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={py} {LIBEXEC / 'customs-inspect'}"
+        f"ExecStart={py} {LIBEXEC / 'moat-inspect'}"
         f" --name {NAME} --policy {POLICY} --state-dir {STATE}"
         f" --status {STATUS} --record {RECORD}"
         f" --broker {endpoint}\n"
@@ -164,7 +164,7 @@ def write_units():
     (UNITS / f"{UNIT}-resolve.service").write_text(
         "# written by tests/manual/vm_rig.py -- removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={py} {LIBEXEC / 'customs-resolve'}"
+        f"ExecStart={py} {LIBEXEC / 'moat-resolve'}"
         f" --name {NAME} --address {LOOPBACK_MAP} --policy {POLICY}"
         f" --status {RESOLVE_STATUS}\n"
         + path)
@@ -252,14 +252,14 @@ def load_rules(pid, neighbour, redirect_dns):
            f"    tcp dport 53  dnat ip to {LOOPBACK_MAP}:{RESOLVE_PORT}\n"
            if redirect_dns else "")
     rules = f"""
-table inet customs {{
+table inet moatery {{
   chain out {{
     type nat hook output priority -100
     tcp dport 443 dnat ip to {LOOPBACK_MAP}:{INSPECT_TLS}
     tcp dport 80  dnat ip to {LOOPBACK_MAP}:{INSPECT_CLEARTEXT}
 {dns}  }}
 }}
-table netdev customs {{
+table netdev moatery {{
   chain egress {{
     type filter hook egress device "{dev}" priority 0; policy drop
 {nd}    ip daddr {LOOPBACK_MAP} tcp dport {ports} accept
@@ -302,7 +302,7 @@ def write_seed(bundle=BUNDLE, answer=LOOPBACK_MAP):
     expect."""
     VM_DIR.mkdir(parents=True, exist_ok=True)
     (VM_DIR / "meta-data").write_text(
-        f"instance-id: customs-vm-{os.urandom(4).hex()}\n"
+        f"instance-id: moatery-vm-{os.urandom(4).hex()}\n"
         "local-hostname: guest\n")
     profile = "\n".join((
         f"export SSL_CERT_FILE={CA_IN_GUEST}",
@@ -320,38 +320,38 @@ def write_seed(bundle=BUNDLE, answer=LOOPBACK_MAP):
         "    encoding: b64\n"
         "    content: |\n"
         f"      {b64(bundle.read_bytes())}\n"
-        "  - path: /etc/customs-rig/answer\n"
+        "  - path: /etc/moatery-rig/answer\n"
         "    permissions: '0644'\n"
         f"    content: {answer}\n"
-        "  - path: /etc/profile.d/customs-rig.sh\n"
+        "  - path: /etc/profile.d/moatery-rig.sh\n"
         "    permissions: '0644'\n"
         "    content: |\n"
         + "".join(f"      {line}\n" for line in profile.splitlines())
-        + "  - path: /usr/local/bin/customs-vm-guest.py\n"
+        + "  - path: /usr/local/bin/moatery-vm-guest.py\n"
         "    permissions: '0755'\n"
         "    encoding: b64\n"
         "    content: |\n"
         f"      {b64(GUEST_SCRIPT.read_bytes())}\n"
-        "  - path: /usr/local/bin/customs-vm-run\n"
+        "  - path: /usr/local/bin/moatery-vm-run\n"
         "    permissions: '0755'\n"
         "    content: |\n"
         "      #!/bin/bash\n"
-        "      . /etc/profile.d/customs-rig.sh\n"
+        "      . /etc/profile.d/moatery-rig.sh\n"
         "      exec > /dev/ttyS0 2>&1\n"
-        "      echo CUSTOMS-RIG-BOOTED\n"
-        "      python3 /usr/local/bin/customs-vm-guest.py\n"
-        "      echo CUSTOMS-RIG-EXIT=$?\n"
-        "  - path: /etc/systemd/system/customs-vm-probe.service\n"
+        "      echo MOATERY-RIG-BOOTED\n"
+        "      python3 /usr/local/bin/moatery-vm-guest.py\n"
+        "      echo MOATERY-RIG-EXIT=$?\n"
+        "  - path: /etc/systemd/system/moatery-vm-probe.service\n"
         "    permissions: '0644'\n"
         "    content: |\n"
         "      [Unit]\n"
         "      Description=vm rig guest probe\n"
         "      [Service]\n"
         "      Type=simple\n"
-        "      ExecStart=/usr/local/bin/customs-vm-run\n"
+        "      ExecStart=/usr/local/bin/moatery-vm-run\n"
         "runcmd:\n"
         "  - [ bash, -lc, 'systemctl daemon-reload; systemctl start "
-        "customs-vm-probe.service' ]\n"
+        "moatery-vm-probe.service' ]\n"
     )
     (VM_DIR / "user-data").write_text(user_data)
     tool = seed_tool()
@@ -380,7 +380,7 @@ def qemu_argv():
         "-device", "virtio-rng-pci",
         "-device", "virtio-serial-pci",
         "-chardev", f"file,id=probe,path={VM}/probe.log",
-        "-device", "virtserialport,chardev=probe,name=customs-rig",
+        "-device", "virtserialport,chardev=probe,name=moatery-rig",
         "-drive", f"file={VM}/guest.qcow2,if=virtio,format=qcow2,"
                   "snapshot=on",
         "-drive", f"file={VM}/seed.iso,media=cdrom,readonly=on,"
@@ -409,7 +409,7 @@ def create_container(image):
 # --- reading what the guest and the inspector wrote --------------------------
 
 def await_reports(timeout):
-    """The guest's CUSTOMS-RIG lines, once its probe says done, or the
+    """The guest's MOATERY-RIG lines, once its probe says done, or the
     reports so far if the container stops. None on timeout."""
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -417,14 +417,14 @@ def await_reports(timeout):
             if PROBE_LOG.exists() else ""
         reports = []
         for line in text.splitlines():
-            if line.startswith("CUSTOMS-RIG "):
+            if line.startswith("MOATERY-RIG "):
                 try:
-                    reports.append(json.loads(line[len("CUSTOMS-RIG "):]))
+                    reports.append(json.loads(line[len("MOATERY-RIG "):]))
                 except ValueError:
                     pass
         if any(r.get("probe") == "done" for r in reports):
             return reports
-        if "CUSTOMS-RIG-EXIT=" in text:
+        if "MOATERY-RIG-EXIT=" in text:
             return reports
         running = run(["podman", "inspect", "-f", "{{.State.Running}}",
                        CONTAINER], check=False).stdout.strip()
@@ -471,7 +471,7 @@ else:
 def chain_counter(pid, comment):
     """The egress chain's counter with this comment, in packets, or -1 if
     the chain is absent (as under --without-rules)."""
-    out = in_netns(pid, ["nft", "list", "chain", "netdev", "customs",
+    out = in_netns(pid, ["nft", "list", "chain", "netdev", "moatery",
                          "egress"], check=False).stdout
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
@@ -492,7 +492,7 @@ def probe(pid, reports, secret, broker_before, neigh_empty):
         not net_admin, f"CapBnd={caps:016x}")
     listed = in_netns(pid, ["nft", "list", "tables"], check=False).stdout
     row("premise: the rules are in the container's netns",
-        "table inet customs" in listed, listed.strip() or "no tables")
+        "table inet moatery" in listed, listed.strip() or "no tables")
     kvm = []
     for fd in os.listdir(f"/proc/{pid}/fd"):
         try:
@@ -510,7 +510,7 @@ def probe(pid, reports, secret, broker_before, neigh_empty):
     nft = pick(reports, "nft")
     tables = nft.get("tables") or []
     row("premise: the guest's own nft tables hold none of ours",
-        bool(nft) and not any("customs" in line for line in tables),
+        bool(nft) and not any("moatery" in line for line in tables),
         f"guest tables: {tables}")
     row("neighbour: the container's table was empty before the guest's "
         "first packet", neigh_empty,

@@ -2,28 +2,28 @@
 
 ## What this is
 
-`customs` is the egress inspector + credential broker pair for sandboxed
+`moatery` is the egress inspector + credential broker pair for sandboxed
 workloads, lifted out of workloadctl into its own project. workloadctl
-now requires the customs RPM and runs its programs; there is no second
-copy. Read `README.md`, then `docs/DESIGN.md` (placing customs beside a
+now requires the moatery RPM and runs its programs; there is no second
+copy. Read `README.md`, then `docs/DESIGN.md` (placing moatery beside a
 rootless container, as a pod sidecar and for a VM), `docs/POLICY.md`
 (the policy document) and `docs/INTERFACE.md` (the names workloadctl
 imports and the status file paths it reads). `examples/` holds the host
 placement's user units and a logrotate configuration, installed to
-`/usr/libexec/customs/` and run end to end on the proving host.
+`/usr/libexec/moatery/` and run end to end on the proving host.
 
 ## Where the code came from
 
-`customs/`, `libexec/` and the tests began as a copy (2026-09-22) of
+`moatery/`, `libexec/` and the tests began as a copy (2026-09-22) of
 these, in the hypervisor repo checked out beside this one, and the
 responder as a copy (2026-09-24) of workloadctl's. All of them are
 deleted there now; the list is for reading its history:
 
 ```
 ../hypervisor/workloadctl/
-  libexec/agent-broker                # → customs-broker
-  libexec/workload-inspect-listener   # → customs-inspect
-  libexec/workload-vm-resolve         # → customs-resolve
+  libexec/agent-broker                # → moat-broker
+  libexec/workload-inspect-listener   # → moat-inspect
+  libexec/workload-vm-resolve         # → moat-resolve
   lib/                                # the 24-module closure
   lib/dns_wire.py                     # → resolve_wire.py
   lib/resolve_server.py               # → resolve_serve.py
@@ -42,51 +42,51 @@ Design, threat model and operating instructions, still there:
   tests/manual/README.md   # "Writing a row here" preamble, before any rig
 ```
 
-workloadctl requires customs and runs its programs: a dependency, not
+workloadctl requires moatery and runs its programs: a dependency, not
 two copies, because under copies every shared fix is a merge someone
 must remember, and the fixes flow one way (the placements here reach
 code paths workloadctl's layouts never do). A fix is made here and
 reaches workloadctl with a release ("Releasing for workloadctl", below).
 
-The prose is renamed: nothing under `customs/` or `libexec/` says
+The prose is renamed: nothing under `moatery/` or `libexec/` says
 "workloadctl", cites its docs, uses its vocabulary (renderer,
 `validate`, substrate, SELinux labelling) or narrates history. Module
 names, but the responder's two, and every identifier workloadctl imports
 are unchanged (`docs/INTERFACE.md` lists them). "Guest" and "workload"
 remain as the words for the thing behind the inspector. Diffing against
 workloadctl is a diff of prose and messages, the two entrypoints' names,
-the `http2` list (customs relays no HTTP/2 and refuses the list), and
+the `http2` list (moatery relays no HTTP/2 and refuses the list), and
 the sidecar and netns flags: the broker's `--listen unix:PATH`
 (`UnixServer`, `peer_uid_unix`), the inspector's `--broker unix:PATH`,
 `--caller-uid` and `--netns-pid` (`listed_in`, `netns_tables`,
 `namespace_uids`, the lookup's tables and the served uid ranges as
 parameters), and the record naming a unix upstream.
 
-`libexec/customs-netns-listen` is customs-only too: it binds the
+`libexec/moat-netns-listen` is moatery-only too: it binds the
 inspector's planes in a rootless container's network namespace and execs
 the inspector with them (the netns placement). The inspector's
 `--netns-pid` is its other half and reaches workloadctl with the
 dependency.
 
-`libexec/customs-mint-ca` is the one CA mint (`egress_mint.mint_ca`):
+`libexec/moat-mint-ca` is the one CA mint (`egress_mint.mint_ca`):
 the sidecar's first start calls it, and so does workloadctl's
 `workload-ensure-user`, before it builds the seed that carries the CA.
 
 `container/` is the sidecar image: `Containerfile` and
-`customs-sidecar`, the entrypoint that is the unit file as a process.
-It is customs-only and has no workloadctl counterpart.
+`moat-sidecar`, the entrypoint that is the unit file as a process.
+It is moatery-only and has no workloadctl counterpart.
 
-`libexec/customs-resolve` is workloadctl's VM responder made a program
+`libexec/moat-resolve` is workloadctl's VM responder made a program
 of its own: every name answered with `--address`, or from the
 `--static` map, counted against the inspector's policy, never
-forwarded. `customs/resolve_policy.py` is customs'; `resolve_wire` and
+forwarded. `moatery/resolve_policy.py` is moatery'; `resolve_wire` and
 `resolve_serve` began as workloadctl's `dns_wire` and
 `resolve_server`.
 
 ## Releasing for workloadctl
 
-workloadctl's spec has `Requires: customs >= X.Y.Z`, and its
-`hypervisor.Containerfile` pins `ARG CUSTOMS_RPM=<registry>/customs-rpm:X.Y.Z`,
+workloadctl's spec has `Requires: moatery >= X.Y.Z`, and its
+`hypervisor.Containerfile` pins `ARG MOATERY_RPM=<registry>/moatery-rpm:X.Y.Z`,
 verified against this repo's signing key. A flag, a name or a status key
 workloadctl comes to use is therefore a release here first:
 
@@ -97,14 +97,14 @@ workloadctl comes to use is therefore a release here first:
   together.
 - `docs/INTERFACE.md` changes when workloadctl's imports or status reads
   do; `tests/test_interface.py` holds it to the code, and workloadctl's
-  `tests/test_customs_seam.py` holds its side: the flags its units hand
+  `tests/test_moatery_seam.py` holds its side: the flags its units hand
   each program, the names it imports, the keys it reads.
 
-What workloadctl does differently because of customs: it refuses
-`[[vm.network.http2]]` and `[[network.http2]]` by name (customs relays
+What workloadctl does differently because of moatery: it refuses
+`[[vm.network.http2]]` and `[[network.http2]]` by name (moatery relays
 no HTTP/2 and refuses an `http2` list naming a host), writes the
 responder's `--static` map as a file of its own, and mints each
-workload's CA with `customs-mint-ca`.
+workload's CA with `moat-mint-ca`.
 
 ## Conventions carried over from workloadctl
 
@@ -146,18 +146,18 @@ python3 tests/manual/netns_rig.py           # same; listeners in the netns
 python3 tests/manual/sidecar_rig.py         # same; builds container/ first
 python3 tests/manual/vm_rig.py              # same; a VM in the container (/dev/kvm)
 python3 tests/manual/vm_placement_rig.py --placement netns  # or sidecar
-python3 tests/manual/box_rig.py             # same; a box, through customs-box
+python3 tests/manual/box_rig.py             # same; a box, through moathut
 ```
 
 Every push and pull request runs `just lint` and `just coverage`
 (`.forgejo/workflows/unit.yml`); the RPM image's build runs `just test`
 too.
 
-`customs/` is the package, installed to site-packages; the programs
-import `customs.<module>` and the modules import each other relatively.
+`moatery/` is the package, installed to site-packages; the programs
+import `moatery.<module>` and the modules import each other relatively.
 `tests/__init__.py` puts the checkout root on `sys.path`; test modules
 import as `tests.<name>`, and `load_script()` imports the extension-less
 entrypoints. `tests/test_closure.py` holds the package to be exactly the
 programs' closures, with no TOML, no passwd lookup and no derived value.
 The other half, the generator handing every value across, is
-workloadctl's `tests/test_customs_seam.py`.
+workloadctl's `tests/test_moatery_seam.py`.

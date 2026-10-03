@@ -19,8 +19,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from customs import egress_relay
-from customs.egress_ca import ca_openssl_argv, leaf_openssl_argv
+from moatery import egress_relay
+from moatery.egress_ca import ca_openssl_argv, leaf_openssl_argv
 from tests.test_inspect_terminate import _have_openssl, _run
 
 # Past every socket buffer between the two peers, so a relay that serves

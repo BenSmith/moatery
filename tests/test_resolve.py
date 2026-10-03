@@ -1,4 +1,4 @@
-"""customs-resolve: the wire details that present as "DNS is slow", and the
+"""moat-resolve: the wire details that present as "DNS is slow", and the
 one property that is not a wire detail.
 
 Every failure guarded here looks like something else from inside the
@@ -30,11 +30,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from customs import resolve_serve
-from customs import resolve_wire
-from customs.inspect_policy import load_policy
-from customs.resolve_policy import RESOLVE_TTL, Policy, load_static
-from customs.sd_listen import NotSocketActivated
+from moatery import resolve_serve
+from moatery import resolve_wire
+from moatery.inspect_policy import load_policy
+from moatery.resolve_policy import RESOLVE_TTL, Policy, load_static
+from moatery.sd_listen import NotSocketActivated
 from tests import REPO_ROOT, load_script
 from tests.test_closure import RESOLVER, _closure, _lib_modules
 
@@ -132,7 +132,7 @@ def _silenced_log():
 
 def _admits(*patterns):
     """An inspector policy's `admits`, over `hosts` alone."""
-    from customs.inspect_document import hostname_match
+    from moatery.inspect_document import hostname_match
     return lambda name: hostname_match(name, patterns)
 
 
@@ -660,7 +660,7 @@ class TestNoUpstream(unittest.TestCase):
 
     def test_the_scan_reads_the_whole_closure(self):
         names = [p.name for p in self._responder_files()]
-        self.assertIn("customs-resolve", names)
+        self.assertIn("moat-resolve", names)
         self.assertIn("inspect_policy.py", names)
         self.assertEqual(len(names), 8)
 
@@ -703,7 +703,7 @@ class TestNoUpstream(unittest.TestCase):
         Without it the call would create a socket; it is the one module
         of the closure the test above leaves to this one."""
         found = self._socket_constructions(
-            Path(REPO_ROOT) / "customs" / "sd_listen.py")
+            Path(REPO_ROOT) / "moatery" / "sd_listen.py")
         self.assertEqual(len(found), 1, [ast.unparse(c) for c in found])
         self.assertEqual([kw.arg for kw in found[0].keywords], ["fileno"])
         self.assertEqual(found[0].args, [])
@@ -1088,7 +1088,7 @@ class TestEntrypoint(unittest.TestCase):
 
     def setUp(self):
         self.logged = _silenced_log()
-        self.mod = load_script("libexec/customs-resolve")
+        self.mod = load_script("libexec/moat-resolve")
         self.mod.log = self.logged.append
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
@@ -1098,7 +1098,7 @@ class TestEntrypoint(unittest.TestCase):
             {"hosts": ["allowed.example"]}))
 
     def argv(self, *extra):
-        return ["customs-resolve", "--name", "demo", "--address", ADDRESS,
+        return ["moat-resolve", "--name", "demo", "--address", ADDRESS,
                 "--policy", self.policy, "--status", self.status, *extra]
 
     def test_a_query_is_answered_and_counted_into_the_status_file(self):
@@ -1235,7 +1235,7 @@ class TestEntrypoint(unittest.TestCase):
     def test_an_address_of_the_wrong_family_is_refused(self):
         with mock.patch("sys.stderr"):
             self.assertEqual(self.mod.main(
-                ["customs-resolve", "--name", "demo", "--address", ADDRESS6,
+                ["moat-resolve", "--name", "demo", "--address", ADDRESS6,
                  "--policy", self.policy, "--status", self.status]), 2)
             self.assertEqual(self.mod.main(self.argv("--address6", ADDRESS)),
                              2)

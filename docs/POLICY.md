@@ -1,6 +1,6 @@
 # The policy document
 
-A policy says what a workload may send out. customs denies by default:
+A policy says what a workload may send out. moatery denies by default:
 the workload's outbound HTTP and HTTPS are redirected to the inspector,
 which lets a request through only if the policy admits its host, and,
 where the policy narrows that host, the request's method and path.
@@ -11,8 +11,8 @@ which attaches the real one, so the workload never holds it.
 A policy names hosts, not addresses, and is checked against the name the
 workload asked for: the TLS server name, or the `Host` header in
 cleartext. It is one JSON object in a file, written by whoever runs the
-workload and handed to `customs-inspect --policy PATH`.
-`customs-resolve` reads the same file, to count the names the workload
+workload and handed to `moat-inspect --policy PATH`.
+`moat-resolve` reads the same file, to count the names the workload
 looks up that no list admits.
 
 ```json
@@ -111,7 +111,7 @@ used, for every request to the host.
 
 A host that any matching entry gives a `credential` is brokered: every
 request to it that the entries permit goes to the broker named by
-`customs-inspect --broker`, including a request only a credential-less
+`moat-inspect --broker`, including a request only a credential-less
 entry permits, and the broker attaches the real credential. So
 `{"host": "api.x", "methods": ["GET"]}` beside
 `{"host": "api.x", "methods": ["POST"], "credential": "k"}` brokers the
@@ -198,7 +198,7 @@ either way.
 
 ## `internal_expected`
 
-customs does not block private, loopback or link-local destinations
+moatery does not block private, loopback or link-local destinations
 (see [DESIGN.md](DESIGN.md), "Private addresses"), and
 `internal_expected` does not open anything. It matters only on a host that
 has a rule blocking them, with an exception for each name deliberately

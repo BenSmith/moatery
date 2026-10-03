@@ -1,8 +1,8 @@
 # The interface
 
-What customs keeps stable for a program built on it: one that runs
-`customs-broker`, `customs-inspect`, `customs-mint-ca` and
-`customs-resolve`, imports the names below (to write a policy the
+What moatery keeps stable for a program built on it: one that runs
+`moat-broker`, `moat-inspect`, `moat-mint-ca` and
+`moat-resolve`, imports the names below (to write a policy the
 inspector will accept, say, or to lay out a CA where the inspector
 looks for it) and reads the inspector's and the responder's status
 files into its own metrics. `tests/test_interface.py` holds the three
@@ -10,41 +10,41 @@ lists to the code.
 
 ## Imported names
 
-customs is a package, `customs`, installed where Python finds it; the
-programs are in `/usr/libexec/customs/`. These are the names a program
+moatery is a package, `moatery`, installed where Python finds it; the
+programs are in `/usr/libexec/moatery/`. These are the names a program
 may import:
 
 ```
-customs.broker_profiles   BROKER_DEFAULT_AUTH_FORMAT
+moatery.broker_profiles   BROKER_DEFAULT_AUTH_FORMAT
                           BROKER_DEFAULT_AUTH_HEADER
-customs.egress_ca         CA_DIR_NAME DENIAL_DIR_NAME LEAF_DIR_NAME
+moatery.egress_ca         CA_DIR_NAME DENIAL_DIR_NAME LEAF_DIR_NAME
                           ca_cert_path ca_dir ca_key_path
                           ca_openssl_argv denial_dir leaf_dir
-customs.egress_mint       pem_fingerprint
-customs.egress_plane      CLEARTEXT PLANES TLS
-customs.egress_record     DROP_BROKER_UNREACHABLE DROP_MISDIRECTED
+moatery.egress_mint       pem_fingerprint
+moatery.egress_plane      CLEARTEXT PLANES TLS
+moatery.egress_record     DROP_BROKER_UNREACHABLE DROP_MISDIRECTED
                           DROP_MISDIRECTED_LISTED DROP_NOT_HTTP
                           DROP_NOT_HTTP_POLICY DROP_REASONS
                           LOG_ID_FIELD LOG_REQ_FIELD
                           RECORD_DECISIONS RECORD_MODES
-customs.egress_status     BoundedCounts OTHER_KEY STATUS_TOP_N
+moatery.egress_status     BoundedCounts OTHER_KEY STATUS_TOP_N
                           clear_status write_status
-customs.inspect_document  INSPECT_DIGEST_KEY TLS_DEFAULT TLS_MODES
+moatery.inspect_document  INSPECT_DIGEST_KEY TLS_DEFAULT TLS_MODES
                           VmPolicyEntry hostname_control_character
                           hostname_match inspect_policy_digest
                           normalize_hostname patterns_overlap
                           policy_governs
-customs.sd_listen         NotSocketActivated
+moatery.sd_listen         NotSocketActivated
                           inherited_listening_sockets
 ```
 
-Some of these are unused inside customs (`clear_status`, `leaf_dir`,
+Some of these are unused inside moatery (`clear_status`, `leaf_dir`,
 `denial_dir`); they are here for such a program and are not dead code.
 Any other name in the package may be renamed or removed in any release.
 
 ## The inspector's status file
 
-`customs-inspect --status PATH` writes the file at start and replaces it
+`moat-inspect --status PATH` writes the file at start and replaces it
 every thirty seconds, at a reload and on the way out. A reader may rely
 on these paths, dotted through the JSON objects:
 
@@ -85,7 +85,7 @@ release that says so.
 
 ## The responder's status file
 
-`customs-resolve --status PATH` replaces the file every thirty seconds
+`moat-resolve --status PATH` replaces the file every thirty seconds
 and on the way out, under the same promise:
 
 ```

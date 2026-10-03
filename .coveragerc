@@ -1,4 +1,4 @@
-# `just coverage`. The shipped code is what matters: the customs package
+# `just coverage`. The shipped code is what matters: the moatery package
 # and the extension-less entrypoints, never the tests. Subprocess coverage
 # is on, because the entrypoints are run as scripts (load_script execs one
 # per call; the sidecar forks and execs the programs) and a plain
@@ -7,27 +7,27 @@
 [run]
 branch = True
 parallel = True
-# `include` names every file that ships, and nothing else: the customs
-# package, the extension-less entrypoints (which `source = customs` cannot
+# `include` names every file that ships, and nothing else: the moatery
+# package, the extension-less entrypoints (which `source = moatery` cannot
 # name, since they are not importable modules), and the sidecar. `source`
 # is deliberately not set alongside it -- with both, coverage ignores
 # `include` and measures the package alone.
 include =
-    */customs/*.py
-    */customs_box/*.py
-    */bin/customs-box
-    */libexec/customs-*
-    */container/customs-sidecar
+    */moatery/*.py
+    */moathut/*.py
+    */bin/moathut
+    */libexec/moat-*
+    */container/moat-sidecar
 
 [paths]
 # The same file seen through the checkout and through an installed
 # site-packages copy combines into one row.
 source =
-    customs
-    */site-packages/customs
+    moatery
+    */site-packages/moatery
 box =
-    customs_box
-    */site-packages/customs_box
+    moathut
+    */site-packages/moathut
 
 [report]
 # A line that only runs when a syscall fails or a peer misbehaves is not

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sidecar_rig.py — does customs work as a sidecar, with no host install?
+"""sidecar_rig.py — does moatery work as a sidecar, with no host install?
 
 "Sidecar" in docs/DESIGN.md: a podman pod under pasta, the sidecar image
 (the programs, one container, two uids) beside a workload container, the
@@ -28,7 +28,7 @@ THE ROWS
             them, holds no capability.
   dns       the workload's queries, to its resolver over UDP and TCP and to
             any other nameserver, are answered by the sidecar's
-            customs-resolve with the pod's loopback, for names nothing
+            moat-resolve with the pod's loopback, for names nothing
             resolves; an AAAA gets no records; the responder's status names
             the unlisted names and not the provider's. The unlisted row
             below also resolved its name here; the provider's name is in
@@ -108,15 +108,15 @@ from riglib import (  # noqa
     INSPECT_TLS, LOOPBACK_MAP, NAME, PLACEHOLDER, PROVIDER, RESOLVE_PORT,
     RIG, STUB_CERT, UNLISTED, row, run, say,
 )
-from customs.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
+from moatery.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
 
-POD = "customs-rig-pod"
-SIDECAR = "customs-rig-sidecar"
-WORKLOAD = "customs-rig-workload"
-SIDECAR_IMAGE = "localhost/customs-sidecar:rig"
-SECRET = "customs-rig-example"
-VOLUME = "customs-rig-state"
-HOSTS_MARK = "customs-sidecar-rig"
+POD = "moatery-rig-pod"
+SIDECAR = "moatery-rig-sidecar"
+WORKLOAD = "moatery-rig-workload"
+SIDECAR_IMAGE = "localhost/moat-sidecar:rig"
+SECRET = "moatery-rig-example"
+VOLUME = "moatery-rig-state"
+HOSTS_MARK = "moat-sidecar-rig"
 # The image's two uids and their group (container/Containerfile), and the
 # workload's: any uid that is neither, chosen here.
 INSPECT_UID, BROKER_UID, GROUP_GID = 200, 201, 200
@@ -125,11 +125,11 @@ WORKLOAD_UID = 1000
 # their packets, for the egress hook to exempt. One bit in an otherwise
 # unused netns; no other consumer.
 OURS_MARK = "0x1"
-# Inside the sidecar (container/customs-sidecar).
-SOCKET_PATH = "/run/customs/broker.sock"
-STATE_IN_SIDECAR = "/var/lib/customs"
-POLICY_IN_SIDECAR = "/etc/customs/policy.json"
-UPSTREAM_CA_IN_SIDECAR = "/etc/customs/upstream-ca.pem"
+# Inside the sidecar (container/moat-sidecar).
+SOCKET_PATH = "/run/moatery/broker.sock"
+STATE_IN_SIDECAR = "/var/lib/moatery"
+POLICY_IN_SIDECAR = "/etc/moatery/policy.json"
+UPSTREAM_CA_IN_SIDECAR = "/etc/moatery/upstream-ca.pem"
 
 # The drop set docs/DESIGN.md gives for the programs' dials.
 PRIVATE_V4 = ("0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, "
@@ -288,7 +288,7 @@ comment "private"
 comment "private"
 """ if private else ""
     rules = f"""
-table inet customs {{
+table inet moatery {{
   chain out {{
     type nat hook output priority -100
     meta skuid {ours} accept
@@ -301,7 +301,7 @@ table inet customs {{
     meta mark set ct mark
   }}
 }}
-table netdev customs {{
+table netdev moatery {{
   chain egress {{
     type filter hook egress device "{dev}" priority 0; policy drop
 {nd}    meta mark {OURS_MARK} ip daddr {dns} udp dport 53 accept
@@ -391,7 +391,7 @@ QUIC_UDP = ("192.0.2.1", 443)
 def chain_counter(pid, comment):
     """The egress chain's counter with this comment, in packets, or -1 if
     the chain is absent (as under --without-rules)."""
-    out = in_netns(pid, ["nft", "list", "chain", "netdev", "customs",
+    out = in_netns(pid, ["nft", "list", "chain", "netdev", "moatery",
                          "egress"], check=False).stdout
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
@@ -401,7 +401,7 @@ def chain_counter(pid, comment):
 
 
 def egress_rules(pid):
-    return in_netns(pid, ["nft", "-a", "list", "chain", "netdev", "customs",
+    return in_netns(pid, ["nft", "-a", "list", "chain", "netdev", "moatery",
                           "egress"], check=False).stdout
 
 
@@ -443,7 +443,7 @@ def private_rows(sidecar_pid, dns):
 
     handle = handle_of(sidecar_pid, "internal")
     if handle is not None:
-        in_netns(sidecar_pid, ["nft", "delete", "rule", "netdev", "customs",
+        in_netns(sidecar_pid, ["nft", "delete", "rule", "netdev", "moatery",
                                "egress", "handle", handle])
     counted, arrived = private_counter(sidecar_pid), stub_arrivals()
     rc, code, _, err = curl_in(
@@ -463,7 +463,7 @@ def private_rows(sidecar_pid, dns):
 
     first_drop = handle_of(sidecar_pid, "private")
     if first_drop is not None:
-        in_netns(sidecar_pid, ["nft", "insert", "rule", "netdev", "customs",
+        in_netns(sidecar_pid, ["nft", "insert", "rule", "netdev", "moatery",
                                "egress", "position", first_drop,
                                *INTERNAL_ACCEPT.split(),
                                "comment", '"internal"'])
@@ -487,19 +487,19 @@ def probe(sidecar_pid, workload_pid, secret, dns):
     listed = in_netns(sidecar_pid, ["nft", "list", "tables"],
                       check=False).stdout
     row("premise: the rules are in the pod's netns",
-        "table inet customs" in listed, listed.strip() or "no tables")
+        "table inet moatery" in listed, listed.strip() or "no tables")
     top = run(["podman", "top", SIDECAR, "user,args"], check=False).stdout
     who = {}
     for ln in top.splitlines()[1:]:
         user, _, argv = ln.partition(" ")
-        for prog in ("customs-broker", "customs-inspect", "customs-resolve"):
+        for prog in ("moat-broker", "moat-inspect", "moat-resolve"):
             if prog in argv:
                 who[prog] = user.strip()
     inspect = ("inspect", str(INSPECT_UID))
     row("premise: the sidecar's programs run as the two image uids",
-        who.get("customs-broker") in ("broker", str(BROKER_UID))
-        and who.get("customs-inspect") in inspect
-        and who.get("customs-resolve") in inspect,
+        who.get("moat-broker") in ("broker", str(BROKER_UID))
+        and who.get("moat-inspect") in inspect
+        and who.get("moat-resolve") in inspect,
         f"{who}")
     effective = int(next(ln.split()[1] for ln in
                          Path(f"/proc/{sidecar_pid}/status").read_text()
@@ -557,7 +557,7 @@ def probe(sidecar_pid, workload_pid, secret, dns):
                    if ln.lower().startswith("server:")), "no Server")
     row("request: the response names the provider's server, not a broker",
         server == f"Server: {riglib.STUB_SERVER}"
-        and "customs" not in head.lower(), server)
+        and "moatery" not in head.lower(), server)
     env = exec_in(WORKLOAD, ["env"]).stdout
     row("request: the workload's environment holds the placeholder only",
         PLACEHOLDER in env and secret not in env,
@@ -653,7 +653,7 @@ def lifecycle(secret):
     restarts = int(sidecar_state(".RestartCount") or 0)
     top = run(["podman", "top", SIDECAR, "hpid,args"], check=False).stdout
     broker = next((ln.split()[0] for ln in top.splitlines()
-                   if "customs-broker" in ln), None)
+                   if "moat-broker" in ln), None)
     if broker is None:
         row("lifecycle: the broker is running to be killed", False, top)
         return

@@ -1,4 +1,4 @@
-# customs — egress inspector + credential broker
+# moatery — egress inspector + credential broker
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -8,7 +8,7 @@ export PYTHONDONTWRITEBYTECODE := "1"
 test:
     python3 -B -m unittest discover -t . -s tests -p 'test_*.py'
 
-# the unit suite under coverage, of the shipped code only (customs/ and
+# the unit suite under coverage, of the shipped code only (moatery/ and
 # the entrypoints; see .coveragerc). Subprocess children measure
 # themselves, so the scripts load_script execs and the sidecar's forks are
 # counted too. Reports and fails under the configured floor.
@@ -45,14 +45,14 @@ rpm:
         --define "_sourcedir $(pwd)" \
         --define "_builddir $(pwd)/rpmbuild/BUILD" \
         --define "buildserial ${serial}" \
-        rpm/customs.spec
-    find rpmbuild/RPMS -name "customs-*${serial}*.rpm"
+        rpm/moatery.spec
+    find rpmbuild/RPMS -name "moatery-*${serial}*.rpm"
 
-# the RPM as an image, localhost/customs-rpm:VERSION, built and tested in
+# the RPM as an image, localhost/moatery-rpm:VERSION, built and tested in
 # a container from this checkout
 rpm-image:
     podman build --ignorefile rpm/containerignore -f rpm/Containerfile \
-        -t "localhost/customs-rpm:$(cat VERSION)" .
+        -t "localhost/moatery-rpm:$(cat VERSION)" .
 
 rpm-clean:
     rm -rf rpmbuild

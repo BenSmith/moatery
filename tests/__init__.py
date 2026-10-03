@@ -3,7 +3,7 @@
 Test modules are imported as ``tests.<name>``, so this runs before any of them
 and is the one place that knows the checkout layout.
 
-Shipped code is the ``customs`` package. Installed, it is in
+Shipped code is the ``moatery`` package. Installed, it is in
 site-packages; from a checkout the checkout root goes on the path.
 ``tests/`` itself goes on the path too, so sibling helpers (e.g.
 ``covhelper``) import by bare name. The entrypoints under ``libexec/``
@@ -23,7 +23,7 @@ from pathlib import Path
 # Keep the suite safe however it is launched, `just test` or a bare
 # `python3 -m unittest`. The justfile's test recipe passes -B AND exports
 # PYTHONDONTWRITEBYTECODE, but only the export reaches the subprocesses, which
-# is the half that matters: this suite mutation-tests customs/ deliberately
+# is the half that matters: this suite mutation-tests moatery/ deliberately
 # (perturb a file, run, restore it inside the same second), and a child that
 # writes a .pyc during a perturbation window records the original mtime, which
 # a later import then trusts and executes as stale bytecode -- a false failure
@@ -46,7 +46,7 @@ for _dir in (PACKAGE_ROOT, str(TESTS_DIR)):
 
 
 def load_script(relpath, name=None):
-    """Import an extension-less entrypoint, e.g. ``libexec/customs-broker``.
+    """Import an extension-less entrypoint, e.g. ``libexec/moat-broker``.
 
     The scripts guard execution behind ``if __name__ == "__main__"``, so importing
     one under any other name is side-effect free beyond its top-level imports.
@@ -88,7 +88,7 @@ def script_env(**overrides):
     # TESTS_DIR goes on too, so a child finds tests/sitecustomize.py and,
     # under `just coverage`, measures itself (COVERAGE_PROCESS_START is
     # already in this environment when it is set). PACKAGE_ROOT is what
-    # the child needs to import customs from a checkout, as before.
+    # the child needs to import moatery from a checkout, as before.
     env["PYTHONPATH"] = os.pathsep.join([PACKAGE_ROOT, str(TESTS_DIR)])
     env["NO_COLOR"] = "1"
     env.update({key: str(value) for key, value in overrides.items()})

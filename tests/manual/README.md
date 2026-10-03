@@ -5,7 +5,7 @@ invoked by hand, as an ordinary user, from a checkout on the proving host.
 Nothing here is a unit gate; these are the gate the unit suites cannot be.
 
 The host and netns rigs run the checkout's programs, or with
-`CUSTOMS_LIBEXEC=/usr/libexec/customs` the installed RPM's, with no
+`MOATERY_LIBEXEC=/usr/libexec/moatery` the installed RPM's, with no
 `PYTHONPATH`; the premise line names which.
 
 ## Writing a row here
@@ -61,7 +61,7 @@ bundle, the policy, the two sudo facts and their teardown, and the rows
 every placement has (the workload's DNS, the origin's 401 and 200). A
 rig owns its placement and its rows.
 
-## host_rig.py — customs with nothing but a normal user
+## host_rig.py — moatery with nothing but a normal user
 
 `docs/DESIGN.md`, "Host": one rootless podman container under pasta,
 the programs as hand-written user units, the nft rules loaded into the
@@ -85,7 +85,7 @@ purpose, so the provider has to answer there. The stub
 body which `Authorization` arrived, so "200" means the substitution
 happened and the placeholder alone measurably gets 401.
 
-The per-workload CA is minted once into `~/.local/state/customs-rig/` and
+The per-workload CA is minted once into `~/.local/state/moatery-rig/` and
 kept, like an SSH host key; everything else is rebuilt per run. `--keep`
 leaves the container for inspection.
 
@@ -129,7 +129,7 @@ the host recipe as `DESIGN.md` had it, which is now corrected:
 And two facts for the packaging step: the entrypoints find their modules
 by `sys.path` only, so a checkout needs `PYTHONPATH` in the unit (an
 install puts the package where Python looks); and nothing minted the CA, so the operator had
-to, before the socket was first activated. `customs-mint-ca` is that
+to, before the socket was first activated. `moat-mint-ca` is that
 step now.
 
 `SO_ORIGINAL_DST` on a host socket whose DNAT happened a namespace away
@@ -169,7 +169,7 @@ defect in the pair. Two in the rows as first written:
 `docs/DESIGN.md`, "Netns": host_rig's container under plain pasta, with
 no loopback map, and host_rig's broker unit. The inspector and the responder
 are transient user units started between `podman init` and `podman
-start`, through `customs-netns-listen`, which binds their sockets in the
+start`, through `moat-netns-listen`, which binds their sockets in the
 container's network namespace and execs each program with its own.
 
 ```bash
@@ -226,7 +226,7 @@ crosses the egress device, so the chain accepts nothing: the neighbour
 row, which queried pasta's forwarder, went with the resolver's lines,
 and `--without-neighbour-discovery` with it.
 
-## sidecar_rig.py — customs as a sidecar, with no host install
+## sidecar_rig.py — moatery as a sidecar, with no host install
 
 `docs/DESIGN.md`, "Sidecar": a podman pod under pasta, the sidecar image
 (`container/`: the programs, one container, two uids) beside a workload
@@ -337,12 +337,12 @@ The name is asked of a nameserver that does not exist now, which only
 the redirect answers. `--without-rules` also turns neighbour and
 private red, which its note had left out.
 
-## vm_rig.py — customs under a VM
+## vm_rig.py — moatery under a VM
 
 `docs/DESIGN.md`, "VM": one rootless podman container under pasta whose
 only payload is qemu and the passt backend qemu starts itself, the
 guest's egress re-originated by passt as sockets in the container's
-netns, customs as host_rig's hand-written user units on the host, the
+netns, moatery as host_rig's hand-written user units on the host, the
 nft rules loaded into the container's netns, and a workload inside the
 guest that reaches the provider carrying the sealed key.
 
@@ -357,7 +357,7 @@ python3 tests/manual/vm_rig.py --keep           # leave the container
 
 Runs as the user, on a KVM host with `/dev/kvm` readable and writable.
 The operator puts a Fedora Cloud Base Generic qcow2 at
-`~/.local/state/customs-rig/vm/guest.qcow2` once (44-1.7 was used);
+`~/.local/state/moatery-rig/vm/guest.qcow2` once (44-1.7 was used);
 the rig builds its own qemu image from `vm.Containerfile`. The guest
 probe (`vm_guest.py`) goes in through the NoCloud seed with the CA
 bundle and the agent's environment, and reports on a virtio-serial port
@@ -404,7 +404,7 @@ defect in the pair. Four facts, all in the guest half:
 vm_rig.py's qemu container and guest, moved into the two placements whose
 listeners are in the workload's namespace: netns_rig's host side (the
 broker a user unit, the listeners bound in the qemu container's namespace
-by customs-netns-listen), or sidecar_rig's pod with the qemu container as
+by moat-netns-listen), or sidecar_rig's pod with the qemu container as
 its workload, uid 1000 with every capability dropped.
 
 ```bash
@@ -416,7 +416,7 @@ python3 tests/manual/vm_placement_rig.py --placement netns --no-build
 ```
 
 It needs what vm_rig needs. The guest reads the address the responder
-answers with from the seed (`/etc/customs-rig/answer`) and dials whatever
+answers with from the seed (`/etc/moatery-rig/answer`) and dials whatever
 it is given, so a wrong answer is a failed request and not a skipped one.
 The sidecar's qemu runs as a subordinate uid, so the serial and probe
 files are made first, writable by anyone, and its `/proc` is read through
@@ -431,7 +431,7 @@ guest holds the placeholder only). The unlisted row. A guest connect to
 another port at the answered address times out. The counters.
 
 **What it found, first runs, 2026-10-03.** One defect: the netns
-placement, customs-box and the sidecar answered every name with the
+placement, moathut and the sidecar answered every name with the
 namespace's `127.0.0.1`, which a container dials into its own namespace
 and a guest into its own stack, where passt never carries it. 14/20 in
 both placements: DNS green, request, unlisted and drop red, the guest's
@@ -462,14 +462,14 @@ Outside the rig, the same day, two more ways to hold a VM:
   a dropped port fails in the guest at once (curl 7) instead of timing
   out; a listener on the host's end of it saw nothing.
 
-## box_rig.py — a customs box, through its command line
+## box_rig.py — a moathut box, through its command line
 
-`docs/BOX.md`: `customs-box credential add`, `create`, `enter`, `log`,
+`docs/BOX.md`: `moathut credential add`, `create`, `enter`, `log`,
 `allow`, `policy`, `stop` and `rm`, the box's units run by the user's
 manager and quadlet, the netns placement's rules and listeners in the
 pod's namespace, and the box's broker.
-The tool is the checkout's `bin/customs-box`, or with
-`CUSTOMS_LIBEXEC=/usr/libexec/customs` the installed one.
+The tool is the checkout's `bin/moathut`, or with
+`MOATERY_LIBEXEC=/usr/libexec/moatery` the installed one.
 
 ```bash
 python3 tests/manual/box_rig.py                     # every row green
@@ -558,7 +558,7 @@ record; `create`, with a policy naming no credential, finds the home
 again and writes no broker; `rm --home` removes it; then `credential rm`
 removes the credential.
 
-**What it found, first runs, 2026-09-29.** Three defects in customs-box,
+**What it found, first runs, 2026-09-29.** Three defects in moathut,
 none of which the unit suite could see:
 
 - `enter NAME --root -- COMMAND`, the documented form, handed `--root`

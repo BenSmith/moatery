@@ -13,12 +13,12 @@ whose listeners are inside the namespace:
 
   netns     netns_rig.py's host side: the broker a user unit, the
             inspector and the responder bound in the qemu container's
-            namespace by customs-netns-listen, that rig's rules.
+            namespace by moat-netns-listen, that rig's rules.
   sidecar   sidecar_rig.py's pod: the sidecar image, its rules, and the
             qemu container as the workload, uid 1000, every capability
             dropped.
 
-Both answer every name with riglib.ANSWER, customs-box's, which passt
+Both answer every name with riglib.ANSWER, moathut's, which passt
 carries out of the guest and the redirect lands on the listeners by
 port. `--loopback-answer` (netns only) answers with the namespace's
 127.0.0.1 instead, which the guest takes for its own: request, unlisted
@@ -26,7 +26,7 @@ and drop must go red.
 
 The guest, the seed and the qemu image are vm_rig.py's; it needs what
 that rig needs (a KVM host, the guest qcow2), and the sidecar image
-sidecar_rig.py builds (`localhost/customs-sidecar:rig`).
+sidecar_rig.py builds (`localhost/moat-sidecar:rig`).
 
 THE ROWS
 
@@ -67,8 +67,8 @@ from riglib import (  # noqa
     CREDENTIAL, LOOPBACK_MAP, PLACEHOLDER, PROVIDER, RIG, UNLISTED, row,
     run, say,
 )
-from customs.egress_ca import ca_cert_path  # noqa
-from customs.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
+from moatery.egress_ca import ca_cert_path  # noqa
+from moatery.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
 
 CONTAINER = vm_rig.CONTAINER
 VM_DIR = vm_rig.VM_DIR
@@ -187,7 +187,7 @@ PLACEMENTS = {
 
 def chain_counter(ns_pid, comment):
     out = vm_rig.in_netns(ns_pid, ["nft", "list", "chain", "netdev",
-                                   "customs", "egress"], check=False).stdout
+                                   "moatery", "egress"], check=False).stdout
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
             fields = line.split()
@@ -212,7 +212,7 @@ def probe(ns_pid, qemu_pid, reports, secret, answer, reads):
     listed = vm_rig.in_netns(ns_pid, ["nft", "list", "tables"],
                              check=False).stdout
     row("premise: the rules are in the namespace",
-        "table inet customs" in listed, listed.strip() or "no tables")
+        "table inet moatery" in listed, listed.strip() or "no tables")
     # Through `podman unshare`: the sidecar's qemu runs as a subordinate
     # uid, whose /proc entries the user cannot read.
     links = run(["podman", "unshare", "sh", "-c",

@@ -1,4 +1,4 @@
-"""customs-inspect: the socket-activated listener.
+"""moat-inspect: the socket-activated listener.
 
 The listener's shape, which everything else rides on: that the plane comes
 from getsockname() and not the fd name, that the socket is never opened by
@@ -24,7 +24,7 @@ import unittest.mock
 from pathlib import Path
 
 from tests import assert_bare_refusal, load_script
-from customs.inspect_document import (
+from moatery.inspect_document import (
     INSPECT_DIGEST_KEY,
     TLS_DEFAULT,
     inspect_policy_digest,
@@ -32,36 +32,36 @@ from customs.inspect_document import (
     normalize_hostname,
     VmPolicyEntry,
 )
-from customs.egress_plane import CLEARTEXT, TLS, plane_for_port
+from moatery.egress_plane import CLEARTEXT, TLS, plane_for_port
 from tests.policy_document import policy_document
-from customs.inspect_policy import Policy, load_policy
-from customs.sd_listen import NotSocketActivated
-from customs.tls_hello import (
+from moatery.inspect_policy import Policy, load_policy
+from moatery.sd_listen import NotSocketActivated
+from moatery.tls_hello import (
     ALPN_KEPT, HelloUnreadable, TLS_EXT_ECH, read_client_hello,
 )
-from customs.http_target import (
+from moatery.http_target import (
     host_from_authority, normalise_path, normalise_target)
-from customs.http_framing import (
+from moatery.http_framing import (
     DRAIN_MAX, MAX_TRAILER_LINES, RELAY_CHUNK, RequestUnreadable, _Stream,
     copy_body,
 )
-from customs import egress_mint
-from customs import egress_record
-from customs import egress_relay
-from customs import egress_upstream
-from customs import inspect_http
-from customs import inspect_listener
-from customs import inspect_tls
-from customs import peer_identity
-from customs.inspect_tls import serve_tls, serve_terminated
-from customs.inspect_http import INTERIM_MAX, serve_cleartext
-from customs.inspect_listener import Ceiling, Listener, build_minter
-from customs import sd_listen
-from customs.egress_upstream import (
+from moatery import egress_mint
+from moatery import egress_record
+from moatery import egress_relay
+from moatery import egress_upstream
+from moatery import inspect_http
+from moatery import inspect_listener
+from moatery import inspect_tls
+from moatery import peer_identity
+from moatery.inspect_tls import serve_tls, serve_terminated
+from moatery.inspect_http import INTERIM_MAX, serve_cleartext
+from moatery.inspect_listener import Ceiling, Listener, build_minter
+from moatery import sd_listen
+from moatery.egress_upstream import (
     BROKER_UPSTREAM_KEY, UPSTREAM_ALPN, UPSTREAMS_MAX,
     dial_failure_reason,
 )
-from customs.egress_record import (
+from moatery.egress_record import (
     DROP_CEILING,
     DROP_CLIENT_CERT,
     DROP_CALLER_CLOSED,
@@ -84,10 +84,10 @@ from customs.egress_record import (
 )
 
 ROOT = Path(__file__).resolve().parent.parent
-LISTENER_FILE = ROOT / "libexec" / "customs-inspect"
-LISTENER_LIB = ROOT / "customs" / "inspect_listener.py"
-TLS_LIB = ROOT / "customs" / "inspect_tls.py"
-HTTP_LIB = ROOT / "customs" / "inspect_http.py"
+LISTENER_FILE = ROOT / "libexec" / "moat-inspect"
+LISTENER_LIB = ROOT / "moatery" / "inspect_listener.py"
+TLS_LIB = ROOT / "moatery" / "inspect_tls.py"
+HTTP_LIB = ROOT / "moatery" / "inspect_http.py"
 
 
 _MOD = None
@@ -102,7 +102,7 @@ def _mod():
     checks for. Caching keeps the class identity stable across the test."""
     global _MOD
     if _MOD is None:
-        _MOD = load_script("libexec/customs-inspect")
+        _MOD = load_script("libexec/moat-inspect")
     return _MOD
 
 
@@ -992,9 +992,9 @@ class TestPolicyLoading(unittest.TestCase):
         bare path; a relative one is a usage error, not a dial from
         wherever the unit's cwd happens to be."""
         mod = _mod()
-        self.assertEqual(mod.broker_endpoint("unix:/run/customs/broker.sock"),
-                         "/run/customs/broker.sock")
-        for bad in ("unix:broker.sock", "unix:", "unix:@customs"):
+        self.assertEqual(mod.broker_endpoint("unix:/run/moatery/broker.sock"),
+                         "/run/moatery/broker.sock")
+        for bad in ("unix:broker.sock", "unix:", "unix:@moatery"):
             with self.assertRaises(argparse.ArgumentTypeError, msg=bad):
                 mod.broker_endpoint(bad)
 
@@ -1651,10 +1651,10 @@ class TestEntrypointWiring(unittest.TestCase):
 
     def test_the_broker_path_reaches_the_upstream(self):
         rc, listener, _ = self._started(
-            ["--broker", "unix:/run/customs/broker.sock"])
+            ["--broker", "unix:/run/moatery/broker.sock"])
         self.assertEqual(rc, 0)
         self.assertEqual(listener.inspection.upstream._broker_endpoint,
-                         "/run/customs/broker.sock")
+                         "/run/moatery/broker.sock")
 
     def _bound(self):
         sock = socket.socket()
@@ -2431,7 +2431,7 @@ class TestPolicyEnforcement(_CleartextRig):
         body_unlisted = sent_unlisted.split(b"\r\n\r\n", 1)[1]
         self.assertEqual(body_refused, body_unlisted)
         for body in (sent_refused, sent_unlisted):
-            for leak in (b"egress", b"allowlist", b"policy", b"customs"):
+            for leak in (b"egress", b"allowlist", b"policy", b"moatery"):
                 self.assertNotIn(leak, body)
 
     def test_a_policy_host_is_reachable_without_appearing_in_hosts(self):
@@ -2568,7 +2568,7 @@ class TestCleartextAuthorisation(unittest.TestCase):
         # The refused host is named for the operator, in the journal -- never in
         # the guest-facing body, which would tell the guest it is filtered.
         self.assertNotIn(b"denied.example", got)
-        self.assertNotIn(b"customs", got)
+        self.assertNotIn(b"moatery", got)
         self.assertIn('host=denied.example reason="not allowlisted"', log)
 
     def test_the_matcher_is_the_one_the_tls_plane_uses(self):
@@ -3070,7 +3070,7 @@ class TestCleartextPerRequest(unittest.TestCase):
 
         with unittest.mock.patch.object(inspect_tls, "_is_http",
                                         lambda *a, **k: True), \
-             unittest.mock.patch("customs.inspect_http.serve_one_request",
+             unittest.mock.patch("moatery.inspect_http.serve_one_request",
                                  one_request):
             serve_terminated(listener.inspection, object(), where, "a.example", None)
         self.assertEqual(seen["upstreams"], {},
@@ -3081,7 +3081,7 @@ class TestCleartextPerRequest(unittest.TestCase):
         origin, far = self._pair()
         with unittest.mock.patch.object(inspect_tls, "_is_http",
                                         lambda *a, **k: True), \
-             unittest.mock.patch("customs.inspect_http.serve_one_request",
+             unittest.mock.patch("moatery.inspect_http.serve_one_request",
                                  one_request):
             serve_terminated(listener.inspection, object(), where, "a.example",
                                        _Stream(origin))
@@ -3188,7 +3188,7 @@ class TestCleartextPerRequest(unittest.TestCase):
         self.assertIs(up.sock, near)
 
     def test_a_quiet_connection_on_a_high_descriptor_is_reused(self):
-        """customs-inspect raises its fd limit past FD_SETSIZE, so under load
+        """moat-inspect raises its fd limit past FD_SETSIZE, so under load
         a pooled connection sits on a descriptor over 1023. select() refuses
         those, and the check read every such connection as gone: the pool
         redialled everything, the origin leg opened before the guest's
@@ -4131,7 +4131,7 @@ class TestCounters(unittest.TestCase):
         source = "\n".join(
             re.sub(r"from \.egress_record import \([^)]*\)", "", f.read_text())
             for f in (LISTENER_LIB, TLS_LIB, HTTP_LIB,
-                      ROOT / "customs" / "egress_upstream.py"))
+                      ROOT / "moatery" / "egress_upstream.py"))
         self.assertNotIn("from .egress_record import (", source)
         named = {arg.strip() for arg in re.findall(_DROP_CALL, source)
                  if arg.strip().startswith("DROP_")}
@@ -4762,7 +4762,7 @@ class TestCallerIdentity(unittest.TestCase):
     into the workload's egress records, so the records described traffic the
     workload never sent.
 
-    The identification is `customs/peer_identity.py` (shared with the broker),
+    The identification is `moatery/peer_identity.py` (shared with the broker),
     which reads /proc/net rather than using SO_PEERCRED -- that is AF_UNIX-only
     and yields nothing on a listener bound to an address.
     """

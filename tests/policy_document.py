@@ -1,6 +1,6 @@
 """The inspector's policy document, rendered by hand for the tests.
 
-customs ships the READER of the document (customs/inspect_policy.py) and not a
+moatery ships the READER of the document (moatery/inspect_policy.py) and not a
 writer: whatever configures a workload renders one, in whatever grammar it
 has. The listener's tests still need a writer to test the reader against
 -- a listener reading a key nothing writes is a policy that loads clean and
@@ -10,13 +10,13 @@ tests were written for: a network table with `hosts`, `tls`, and
 `policy` as a list of entry tables. The table's `internal` is rendered as
 the document's `internal_expected`, the key the reader takes.
 
-What it normalises is what the document's vocabulary (customs/inspect_document)
+What it normalises is what the document's vocabulary (moatery/inspect_document)
 says a writer normalises: `methods` uppercased, `methods` and `paths` null
 where absent and never an empty list in their place, and `credential`
 carried only on the entries that set one.
 """
 
-from customs.inspect_document import TLS_DEFAULT
+from moatery.inspect_document import TLS_DEFAULT
 
 
 def _hosts_of(net, key):

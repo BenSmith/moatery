@@ -2,7 +2,7 @@
 .reference/
 __pycache__/
 rpmbuild/
-examples/bootc/customs.rpm
+examples/bootc/moatery.rpm
 .coverage
 .coverage.*
 coverage.xml

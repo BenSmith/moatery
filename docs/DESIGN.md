@@ -1,16 +1,16 @@
-# Placing customs
+# Placing moatery
 
-customs inspects what a workload sends out and brokers the credentials
+moatery inspects what a workload sends out and brokers the credentials
 it uses, without the workload's cooperation and without root. This
 document is how its programs are placed around a workload: what they
 need from the host, what is the same wherever they run, and four
 placements, each run end to end on a real host.
 
 [POLICY.md](POLICY.md) is the policy document, [LOGGING.md](LOGGING.md)
-what customs reports, and [BOX.md](BOX.md) customs-box, which lays out
+what moatery reports, and [BOX.md](BOX.md) moathut, which lays out
 the netns placement below for you.
 
-## What customs needs from the host
+## What moatery needs from the host
 
 Something outside the workload has to own the workload's outbound
 sockets, so that rules can select them without the workload's
@@ -72,7 +72,7 @@ leaves no namespace to hold the rules, the second no egress to inspect.
 
 Three programs run beside each workload, the same in every placement:
 
-- **`customs-inspect`**, the egress inspector. The workload's outbound
+- **`moat-inspect`**, the egress inspector. The workload's outbound
   443 and 80 are redirected into it. It reads the name the workload
   asked for, matches it against the policy, terminates TLS under a CA
   the workload trusts (or, for a spliced host, passes it through
@@ -80,26 +80,26 @@ Three programs run beside each workload, the same in every placement:
   sends a request for a brokered host to the broker instead of the
   origin. It is socket-activated: it is handed its two listeners
   (`LISTEN_FDS`), `:8443` for TLS and `:8080` for cleartext
-  (`customs/egress_plane.py`), and never binds them, so where they are
+  (`moatery/egress_plane.py`), and never binds them, so where they are
   is the placement's choice. It serves only the workload's callers,
   looked up in the kernel's socket table.
-- **`customs-broker`**, the credential broker. It holds the real key,
+- **`moat-broker`**, the credential broker. It holds the real key,
   read from `$CREDENTIALS_DIRECTORY`, and the inspector is its only
   caller: it listens on a filesystem socket (`--listen unix:PATH`) the
   workload has no path to, and serves one uid (`--caller-uid`), checked
   with `SO_PEERCRED`. It discards whatever credential header a request
   carries, attaches the real one, and dials the provider itself.
-- **`customs-resolve`**, the workload's nameserver. The workload's port
+- **`moat-resolve`**, the workload's nameserver. The workload's port
   53 is redirected to it, on `:8053`, UDP and TCP. It answers and never
   forwards ("DNS" below). It is socket-activated like the inspector.
 
 Two programs set them up:
 
-- **`customs-mint-ca`** makes the workload's CA once, in the inspector's
+- **`moat-mint-ca`** makes the workload's CA once, in the inspector's
   `--state-dir`, before the inspector first starts. It keeps a CA that
   is already there and prints the certificate's path either way. The
   inspector refuses to start without one, and says so.
-- **`customs-netns-listen`** binds the inspector's or the responder's
+- **`moat-netns-listen`** binds the inspector's or the responder's
   listeners inside a container's network namespace and hands them over
   ("Netns" below).
 
@@ -132,7 +132,7 @@ And three pieces of configuration:
   holds a placeholder in its place.
 
 Where the programs run on the host as the user, the broker's caller
-check comes down to "is me". That is enough: the line customs draws is
+check comes down to "is me". That is enough: the line moatery draws is
 the namespace, and the user is on the trusted side of it.
 
 ## The rules
@@ -147,12 +147,12 @@ container; a unit's `ExecStartPre=`, or a quadlet pod's
 There are two tables. Each placement's recipe below gives them in full,
 since what they redirect to and what they accept differ:
 
-- **The redirect**, `table inet customs`, a nat output chain: TCP 443 to
+- **The redirect**, `table inet moatery`, a nat output chain: TCP 443 to
   the inspector's `:8443`, TCP 80 to its `:8080`, and port 53, UDP and
   TCP, to the responder's `:8053`. Port 53 is redirected whatever the
   address, since pasta's forwarder is the first nameserver in the
   container's `resolv.conf` and the host's own nameservers follow it.
-- **The drop**, `table netdev customs`, an egress chain on the
+- **The drop**, `table netdev moatery`, an egress chain on the
   namespace's egress device with `policy drop`. It is a netdev egress
   hook, not an output filter: an output `policy drop` fails a UDP send
   with `EPERM`, a tell no real network gives, where the egress hook
@@ -172,7 +172,7 @@ falls back to TCP is served on the fallback, so the counter is where
 the attempt shows. Both are read in the namespace:
 
 ```
-podman unshare nsenter -t PID -n nft list chain netdev customs egress
+podman unshare nsenter -t PID -n nft list chain netdev moatery egress
 ```
 
 A `log` statement would write nothing: the kernel discards netfilter's
@@ -190,7 +190,7 @@ workload puts data in query names and reads data back in answers.
 Dropping port 53 does not close it without breaking the workload, whose
 clients need a name to resolve before they dial it at all.
 
-So the workload's nameserver is `customs-resolve`, which asks no one. It
+So the workload's nameserver is `moat-resolve`, which asks no one. It
 answers every A query, for any name, with one address (`--address`), and
 every AAAA with a v6 address if it is given one (`--address6`) and no
 records if not; every other type gets NOERROR and no records. The
@@ -201,7 +201,7 @@ workload that names its own nameserver reaches it too.
 The redirect is by port, so the address need only be one the workload's
 traffic leaves its own stack for. In the host placement it is the
 loopback map. Where the listeners are in the workload's namespace
-(netns, sidecar, customs-box) it is `198.18.0.1`, in `198.18.0.0/15`,
+(netns, sidecar, moathut) it is `198.18.0.1`, in `198.18.0.0/15`,
 which is set aside for benchmarking and never routed. It is not the
 namespace's `127.0.0.1`, although the listeners are bound there: a VM's
 guest takes that address for its own and never sends it out, and a
@@ -244,9 +244,9 @@ What remains:
   otherwise seeds the file from the host's, which answers a name with
   the host's address for it.
 
-## Private addresses: the host's job, not customs'
+## Private addresses: the host's job, not moatery'
 
-customs decides by name. It does not look at the address an allowed
+moatery decides by name. It does not look at the address an allowed
 name resolves to, and neither the inspector nor the broker refuses a
 loopback, private or link-local destination. If an allowed name
 resolves to one — a wildcard over a domain where anyone can register a
@@ -257,7 +257,7 @@ as the user, a name that resolves to `127.0.0.1` reaches whatever the
 user has listening on the host's loopback.
 
 Stopping that is a rule on the programs' own outbound sockets, and
-customs loads no rules. Whoever places it writes one, where the
+moatery loads no rules. Whoever places it writes one, where the
 placement gives them somewhere to put it:
 
 - **Host and netns**, and a VM in either, with the programs on the
@@ -316,7 +316,7 @@ loaded that dial succeeds, and the list only changes the report.
 - **Netns** keeps every other uid off the listeners, and gives every
   container its own. Its listeners belong to one start of the container,
   so they are started with it; [examples/quadlet/](../examples/quadlet/)
-  does that with a unit holding the namespace, and customs-box
+  does that with a unit holding the namespace, and moathut
   ([BOX.md](BOX.md)) is built on it.
 - **Sidecar** needs no host install: the programs are an image. It
   needs more rules, since the programs' own dials leave through the
@@ -346,14 +346,14 @@ every name with it.
   unchecked: another uid can ask it names, learns the one address it
   gives everyone, and its questions are counted with the workload's.
 - The broker listens on a path in the user's runtime directory (`--listen
-  unix:%t/customs/broker.sock`), which is `0700`. The container's mount
+  unix:%t/moatery/broker.sock`), which is `0700`. The container's mount
   namespace has no such path and no other uid on the host can traverse
   to it, so the only caller that can reach the broker is the user. A
   loopback address other than `127.0.0.1` would also be out of the
   container's reach, since pasta maps only the one, but every uid on
   the host could dial it.
 - The inspector recognises exactly `:8080` and `:8443` as its listeners
-  (`customs/egress_plane.py`), so this is one inspected container per
+  (`moatery/egress_plane.py`), so this is one inspected container per
   host loopback. A second needs the ports to become a flag, or a second
   loopback address the socket unit binds and pasta maps.
 
@@ -361,26 +361,26 @@ every name with it.
 
 ```
 # 1. the policy, the credential, the CA and the bundle (examples/README.md)
-customs-mint-ca --name x --state-dir DIR    # the inspector's --state-dir
+moat-mint-ca --name x --state-dir DIR    # the inspector's --state-dir
 # 2. broker, user unit; started once it is listening
 Type=notify
-ExecStart=customs-broker --name x --listen unix:%t/customs/broker.sock \
+ExecStart=moat-broker --name x --listen unix:%t/moatery/broker.sock \
     --caller-uid %U \
     --host api.example.com=example --placeholder example=sk-placeholder \
     --auth-header example=Authorization \
     "--auth-format=example=Bearer {secret}"
-LoadCredentialEncrypted=example:%E/customs/example.cred
-RuntimeDirectory=customs
+LoadCredentialEncrypted=example:%E/moatery/example.cred
+RuntimeDirectory=moatery
 RuntimeDirectoryMode=0700
 # 3. inspector, user .socket + .service
 ListenStream=127.0.0.1:8443
 ListenStream=127.0.0.1:8080
-ExecStart=customs-inspect --name x --policy … --state-dir DIR --status … \
-    --record … --broker unix:%t/customs/broker.sock
+ExecStart=moat-inspect --name x --policy … --state-dir DIR --status … \
+    --record … --broker unix:%t/moatery/broker.sock
 #    and the responder, user .socket + .service
 ListenDatagram=127.0.0.1:8053
 ListenStream=127.0.0.1:8053
-ExecStart=customs-resolve --name x --address 169.254.1.3 --policy … \
+ExecStart=moat-resolve --name x --address 169.254.1.3 --policy … \
     --status …
 # 4. the container, created but not started
 podman create --network pasta:--map-host-loopback=169.254.1.3 \
@@ -394,7 +394,7 @@ podman init NAME          # the namespace exists, the workload does not
 DEV=$(ip route show default | awk '{print $5}')
 podman unshare nsenter -t "$(podman inspect -f '{{.State.Pid}}' NAME)" \
   -n nft -f - <<NFT
-table inet customs {
+table inet moatery {
   chain out {
     type nat hook output priority -100
     tcp dport 443 dnat ip to 169.254.1.3:8443
@@ -403,7 +403,7 @@ table inet customs {
     tcp dport 53  dnat ip to 169.254.1.3:8053
   }
 }
-table netdev customs {
+table netdev moatery {
   chain egress {
     type filter hook egress device "$DEV" priority 0; policy drop
     meta protocol arp accept
@@ -445,7 +445,7 @@ inspector still dials its upstreams from the host's namespace.
 **The bind.** A rootless container's network namespace belongs to a
 user namespace the user owns. Joining a network namespace needs
 `CAP_SYS_ADMIN` over it and in the joiner's own user namespace, which
-the user holds only inside the one it owns. `customs-netns-listen --pid
+the user holds only inside the one it owns. `moat-netns-listen --pid
 PID — COMMAND` forks a child that joins both, by a pidfd of the
 container's process, binds `127.0.0.1:8443` and `:8080` there, sends the
 two listeners back over a socket pair and exits. The launcher itself
@@ -490,7 +490,7 @@ PID=$(podman inspect -f '{{.State.Pid}}' NAME)
 # 4. the rules, landing on the namespace's loopback
 DEV=$(ip route show default | awk '{print $5}')
 podman unshare nsenter -t "$PID" -n nft -f - <<NFT
-table inet customs {
+table inet moatery {
   chain out {
     type nat hook output priority -100
     tcp dport 443 dnat ip to 127.0.0.1:8443
@@ -499,7 +499,7 @@ table inet customs {
     tcp dport 53  dnat ip to 127.0.0.1:8053
   }
 }
-table netdev customs {
+table netdev moatery {
   chain egress {
     type filter hook egress device "$DEV" priority 0; policy drop
     udp dport 443 counter comment "quic"
@@ -508,22 +508,22 @@ table netdev customs {
 }
 NFT
 # 5. the inspector and the responder, transient user units for this start
-systemd-run --user --unit customs-inspect-NAME -p Type=notify \
-  customs-netns-listen --pid "$PID" -- \
-  customs-inspect --name x --policy … --state-dir … --status … \
-    --record … --broker "unix:$XDG_RUNTIME_DIR/customs/broker.sock" \
+systemd-run --user --unit moat-inspect-NAME -p Type=notify \
+  moat-netns-listen --pid "$PID" -- \
+  moat-inspect --name x --policy … --state-dir … --status … \
+    --record … --broker "unix:$XDG_RUNTIME_DIR/moatery/broker.sock" \
     --netns-pid "$PID"
-systemd-run --user --unit customs-resolve-NAME -p Type=notify \
-  customs-netns-listen --pid "$PID" --resolver -- \
-  customs-resolve --name x --address 198.18.0.1 --policy … --status …
+systemd-run --user --unit moat-resolve-NAME -p Type=notify \
+  moat-netns-listen --pid "$PID" --resolver -- \
+  moat-resolve --name x --address 198.18.0.1 --policy … --status …
 podman start NAME
 # and at the container's stop
-systemctl --user stop customs-inspect-NAME customs-resolve-NAME
+systemctl --user stop moat-inspect-NAME moat-resolve-NAME
 ```
 
 `create → init → rules → listeners → start`: the workload's first
 packet meets both the redirect and a listener. `Type=notify` is what
-makes the listener step finish when they are bound: customs-netns-listen
+makes the listener step finish when they are bound: moat-netns-listen
 sends `READY=1` after the bind and before the exec, so `systemd-run`, or
 a unit the workload's is ordered after, returns only then. As
 `Type=simple` the unit is started when forked, and a first dial can
@@ -552,9 +552,9 @@ neighbour discovery.
 
 **Proved by** `tests/manual/netns_rig.py`, which runs this recipe;
 [examples/quadlet/](../examples/quadlet/) is it as a quadlet pod, and
-`tests/manual/box_rig.py` proves customs-box, which lays it out per box.
+`tests/manual/box_rig.py` proves moathut, which lays it out per box.
 
-## Sidecar: customs in the workload's pod
+## Sidecar: moatery in the workload's pod
 
 **What runs where.** The three programs run in one container, the
 sidecar, in a `podman pod` beside the workload's container. The pod
@@ -578,7 +578,7 @@ placements do not have:
 2. **Reaching the broker.** The inspector needs a way to the broker that
    the workload lacks. The broker runs in the same container as the
    inspector and listens on a filesystem socket in the sidecar's own
-   tmpfs, `/run/customs/broker.sock`. The workload's container has no
+   tmpfs, `/run/moatery/broker.sock`. The workload's container has no
    path to it — not by rule, by there being no such file in its mount
    namespace — and `SO_PEERCRED` stays the caller check. (A path
    socket, not an abstract one: abstract socket names live in the
@@ -598,10 +598,10 @@ the inspector's uid. `setuid()` clears every capability, so no
 with.
 
 **The entrypoint.** The image is `container/Containerfile`, built from
-the checkout root, and its entrypoint `container/customs-sidecar` is the
+the checkout root, and its entrypoint `container/moat-sidecar` is the
 unit file as a process. As the container's root it binds the two
 listeners and the responder's port on the pod's loopback; starts the
-broker as 201 on `unix:/run/customs/broker.sock` with
+broker as 201 on `unix:/run/moatery/broker.sock` with
 `CREDENTIALS_DIRECTORY=/run/secrets`; mints the CA into the state volume
 on the first start; then starts the inspector as 200 with its listeners
 as fds 3 and 4 and `LISTEN_PID`/`LISTEN_FDS` set, and the responder as
@@ -618,15 +618,15 @@ other flag to the broker untouched.
 podman pod create --name POD --hosts-file image --share-parent=false
 podman run -d --pod POD --name sidecar --restart on-failure \
     --cap-drop all --cap-add chown,dac_override,setgid,setuid \
-    -v policy.json:/etc/customs/policy.json:ro,Z \
-    -v customs-state:/var/lib/customs \
+    -v policy.json:/etc/moatery/policy.json:ro,Z \
+    -v moatery-state:/var/lib/moatery \
     --secret KEY,target=CRED,uid=201,gid=200,mode=0400 \
-    customs-sidecar --name NAME --caller-uid 1000 \
+    moat-sidecar --name NAME --caller-uid 1000 \
     --host api.example.com=CRED --placeholder CRED=sk-placeholder
 DEV=$(ip route show default | awk '{print $5}')
 podman unshare nsenter -t $(podman inspect -f '{{.State.Pid}}' sidecar) -n \
     nft -f - <<RULES
-table inet customs {
+table inet moatery {
   chain out {
     type nat hook output priority -100
     meta skuid { 200, 201 } accept
@@ -641,7 +641,7 @@ table inet customs {
     meta mark set ct mark
   }
 }
-table netdev customs {
+table netdev moatery {
   chain egress {
     type filter hook egress device "$DEV" priority 0; policy drop
     meta protocol arp accept
@@ -662,7 +662,7 @@ podman run -d --pod POD --name workload --user 1000:1000 --cap-drop all \
 ```
 
 The bundle the workload trusts is built from the CA the sidecar minted
-(`podman exec sidecar cat /var/lib/customs/ca/egress-ca.crt`) over the
+(`podman exec sidecar cat /var/lib/moatery/ca/egress-ca.crt`) over the
 system store.
 
 Both image uids are exempt from the redirect and the drop, since their
@@ -718,7 +718,7 @@ The pod's `/proc/self/uid_map` is a rootless one, with the inside and
 outside columns different. The inspector's and the broker's start-up
 checks read the inside column, which is the uid the told `--caller-uid`
 is in. The record's `upstream` for a brokered request reads
-`unix:/run/customs/broker.sock`.
+`unix:/run/moatery/broker.sock`.
 
 **What it buys and costs.** The programs become an image, not a host
 install. On a host that already carries the RPM, the netns placement
@@ -773,7 +773,7 @@ select them with `meta skuid`. Nothing has to be loaded into a
 namespace, and every workload's rules sit in one place, where the host's
 root writes them.
 
-workloadctl lays customs out this way. It creates a user per workload,
+workloadctl lays moatery out this way. It creates a user per workload,
 writes system units, and runs the inspector as the workload's user and
 the broker under `DynamicUser=`, whose uid systemd draws from a range
 disjoint from the workloads', so the credential is decrypted only where
@@ -781,19 +781,19 @@ that uid can read it. Its records of the decisions are its ADRs 007
 to 009.
 
 The programs are the same here as in every placement: the same flags,
-policy, trust bundle and status files. customs ships no root layout;
+policy, trust bundle and status files. moatery ships no root layout;
 workloadctl is one.
 
-## What customs does not do
+## What moatery does not do
 
 The programs allocate no uid, write no units, load no rules, install
 nothing in the workload. They mint the CA
-only when told to (`customs-mint-ca`, or the sidecar's first start).
+only when told to (`moat-mint-ca`, or the sidecar's first start).
 Those are host management: they depend on how a host is laid out, and
 whoever lays it out does them. `tests/test_closure.py` holds the
 programs to importing nothing that knows what a workload is.
 
-customs-box is one such layout, shipped in the same RPM: it writes a
+moathut is one such layout, shipped in the same RPM: it writes a
 box's units and loads its rules ([BOX.md](BOX.md)). It stands beside
 the programs; they never import it.
 

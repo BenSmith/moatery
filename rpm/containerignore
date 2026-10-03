@@ -6,4 +6,4 @@ rpmbuild
 .ruff_cache
 .idea
 .reference
-examples/bootc/customs.rpm
+examples/bootc/moatery.rpm

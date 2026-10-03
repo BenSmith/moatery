@@ -4,7 +4,7 @@
 The guest half of tests/manual/vm_rig.py. The NoCloud seed writes it
 into the guest and a small systemd unit runs it; it reports raw
 observations -- an answer, a status, a send outcome -- as
-``CUSTOMS-RIG {json}`` lines on a virtio-serial port the host reads as a
+``MOATERY-RIG {json}`` lines on a virtio-serial port the host reads as a
 file. The serial console stays for boot diagnostics, because writing
 results there competes with the kernel console and the getty.
 
@@ -30,23 +30,23 @@ import time
 PROVIDER = "provider.test"
 UNLISTED = "unlisted.test"
 MAP = "169.254.1.3"
-ANSWER_FILE = "/etc/customs-rig/answer"
+ANSWER_FILE = "/etc/moatery-rig/answer"
 ELSEWHERE = "192.0.2.53"
-CA = "/etc/customs-rig/bundle.pem"
+CA = "/etc/moatery-rig/bundle.pem"
 PLACEHOLDER = "sk-placeholder"
 DROP_PORT = 8081
 TEST_NET = "192.0.2.1"
 TRUST_VARS = ("SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
               "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO", "PIP_CERT",
               "EXAMPLE_API_KEY")
-PORTS = ("/dev/virtio-ports/customs-rig", "/dev/vport0p1")
+PORTS = ("/dev/virtio-ports/moatery-rig", "/dev/vport0p1")
 
 _out = None
 
 
 def emit(probe, **fields):
     global _out
-    line = ("CUSTOMS-RIG " + json.dumps({"probe": probe, **fields})
+    line = ("MOATERY-RIG " + json.dumps({"probe": probe, **fields})
             + "\n").encode()
     if _out is None:
         for path in PORTS:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""customs-box: the units it writes name each other and hand the programs
+"""moathut: the units it writes name each other and hand the programs
 flags their parsers take; the rules are the netns placement's; what a
 mount may not touch; and each command against a fake podman and systemctl.
 
@@ -22,17 +22,17 @@ from unittest import mock
 from tests import REPO_ROOT, load_script
 from tests.test_quadlet_example import _ruleset
 
-from customs.egress_record import DROP_MISDIRECTED
-from customs.inspect_document import INSPECT_DIGEST_KEY, inspect_policy_digest
-from customs.inspect_policy import load_policy
-from customs_box import commands, document, netns, record
-from customs_box.cli import main, parse
-from customs_box.credentials import (Broker, Credential, CredentialError,
+from moatery.egress_record import DROP_MISDIRECTED
+from moatery.inspect_document import INSPECT_DIGEST_KEY, inspect_policy_digest
+from moatery.inspect_policy import load_policy
+from moathut import commands, document, netns, record
+from moathut.cli import main, parse
+from moathut.credentials import (Broker, Credential, CredentialError,
                                      brokering, describe)
-from customs_box.mounts import Mount, MountRefused, parse_mount, refuse
-from customs_box.paths import (Box, boxes_root, credentials_root, described,
+from moathut.mounts import Mount, MountRefused, parse_mount, refuse
+from moathut.paths import (Box, boxes_root, credentials_root, described,
                                protected, sealed, user_dirs, valid_name)
-from customs_box.units import (ALL_CAPABILITIES, ANSWER, CAPABILITIES,
+from moathut.units import (ALL_CAPABILITIES, ANSWER, CAPABILITIES,
                                Settings, container_unit, interpreter, render)
 
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
@@ -43,7 +43,7 @@ TRUST = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 def _settings(home, **over):
     values = dict(image="registry.example/image:1", trust_path=TRUST,
                   home_path=str(home), uid=1000, gid=1000, mounts=(),
-                  tool=("/usr/bin/python3", "/opt/cb/bin/customs-box"),
+                  tool=("/usr/bin/python3", "/opt/cb/bin/moathut"),
                   python="/usr/bin/python3", libexec="/opt/cb/libexec",
                   pythonpath=None)
     values.update(over)
@@ -53,7 +53,7 @@ def _settings(home, **over):
 def _credential(id="anthropic", hosts=("api.anthropic.com",),
                 env="ANTHROPIC_API_KEY"):
     return Credential(id, tuple(hosts), env, "x-api-key", "{secret}",
-                      f"customs-placeholder-{id}")
+                      f"moatery-placeholder-{id}")
 
 
 def _policy(case, entries, hosts=()):
@@ -90,11 +90,11 @@ class TestNamesAndPaths(unittest.TestCase):
                           "XDG_STATE_HOME": "relative",
                           "XDG_RUNTIME_DIR": "/run/user/7"})
         box = Box("a", dirs)
-        self.assertEqual(box.policy, Path("/c/customs/box/a/policy.json"))
-        self.assertEqual(box.state, Path("/h/.local/state/customs/box/a"))
-        self.assertEqual(box.home, Path("/h/.local/share/customs/box/a/home"))
+        self.assertEqual(box.policy, Path("/c/moatery/box/a/policy.json"))
+        self.assertEqual(box.state, Path("/h/.local/state/moatery/box/a"))
+        self.assertEqual(box.home, Path("/h/.local/share/moatery/box/a/home"))
         self.assertEqual(box.pod_file,
-                         Path("/c/containers/systemd/customs-box-a.pod"))
+                         Path("/c/containers/systemd/moathut-a.pod"))
         self.assertIn(Path("/run/user/7"), protected(dirs))
 
     def test_the_credentials_are_beside_the_boxes_and_protected(self):
@@ -117,8 +117,8 @@ class TestMounts(unittest.TestCase):
         self.run_dir = root / "run"
         for d in (self.home / "projects" / "p", self.home / ".config"
                   / "containers" / "systemd", self.home / ".config"
-                  / "customs" / "box" / "a", self.home / ".local" / "share"
-                  / "customs" / "box" / "b" / "home", self.run_dir):
+                  / "moatery" / "box" / "a", self.home / ".local" / "share"
+                  / "moatery" / "box" / "b" / "home", self.run_dir):
             d.mkdir(parents=True)
         self.dirs = user_dirs({"HOME": str(self.home),
                                "XDG_RUNTIME_DIR": str(self.run_dir)})
@@ -144,8 +144,8 @@ class TestMounts(unittest.TestCase):
 
     def test_what_holds_units_keys_and_sockets_is_refused(self):
         for spec in (".config", ".config/containers/systemd",
-                     ".config/customs/box/a",
-                     ".local/share/customs/box/b/home", str(self.run_dir)):
+                     ".config/moatery/box/a",
+                     ".local/share/moatery/box/b/home", str(self.run_dir)):
             with self.subTest(spec=spec):
                 self.assertIn("overlaps", self._refused(spec))
 
@@ -169,10 +169,10 @@ class TestUnits(unittest.TestCase):
             "/home/u", mounts=(Mount(Path("/home/u/p"), "/w", True),))
         self.units = {p.name: t for p, t in
                       render(self.box, self.settings, None).items()}
-        self.pod = self.units["customs-box-agent.pod"]
-        self.work = self.units["customs-box-agent.container"]
-        self.inspect = self.units["customs-box-agent-inspect.service"]
-        self.resolve = self.units["customs-box-agent-resolve.service"]
+        self.pod = self.units["moathut-agent.pod"]
+        self.work = self.units["moathut-agent.container"]
+        self.inspect = self.units["moathut-agent-inspect.service"]
+        self.resolve = self.units["moathut-agent-resolve.service"]
 
     def test_every_unit_named_is_one_the_box_provides(self):
         for name, text in self.units.items():
@@ -192,7 +192,7 @@ class TestUnits(unittest.TestCase):
                 for text in self.units.values():
                     self.assertNotIn(unit, _keys(text, "Requires"))
                     self.assertNotIn(unit, _keys(text, "BindsTo"))
-        self.assertEqual(_keys(self.work, "Pod"), ["customs-box-agent.pod"])
+        self.assertEqual(_keys(self.work, "Pod"), ["moathut-agent.pod"])
 
     def test_the_listeners_are_bound_to_the_pod_and_notify(self):
         """As Type=simple a listener unit is started when forked, and the
@@ -210,22 +210,22 @@ class TestUnits(unittest.TestCase):
         again on; the examples' units send the same."""
         units = [self.inspect, self.resolve] + [
             (REPO_ROOT / "examples" / d / f).read_text()
-            for d, f in (("systemd", "customs-inspect.service"),
-                         ("systemd", "customs-resolve.service"),
-                         ("quadlet", "customs-inspect-example.service"),
-                         ("quadlet", "customs-resolve-example.service"))]
+            for d, f in (("systemd", "moat-inspect.service"),
+                         ("systemd", "moat-resolve.service"),
+                         ("quadlet", "moat-inspect-example.service"),
+                         ("quadlet", "moat-resolve-example.service"))]
         for text in units:
             self.assertEqual(_keys(text, "ExecReload"),
                              ["kill", "-USR1", "$MAINPID"])
-        for program in ("customs-inspect", "customs-resolve"):
+        for program in ("moat-inspect", "moat-resolve"):
             self.assertIn("signal.signal(signal.SIGUSR1, lambda",
                           (REPO_ROOT / "libexec" / program).read_text())
 
     def test_the_pod_starts_the_rotation_which_stops_with_it(self):
         """The timer starts its service by their shared name, and that
         runs `unit rotate` on this box, as the command line takes it."""
-        timer = self.units["customs-box-agent-rotate.timer"]
-        service = self.units["customs-box-agent-rotate.service"]
+        timer = self.units["moathut-agent-rotate.timer"]
+        service = self.units["moathut-agent-rotate.service"]
         self.assertIn(self.box.rotate_timer, _keys(self.pod, "Wants"))
         self.assertEqual(_keys(timer, "PartOf"), [self.box.pod_service])
         self.assertEqual(_keys(timer, "Unit"), [])
@@ -234,7 +234,7 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(_keys(service, "Type"), ["oneshot"])
         words = _exec_words(service, "ExecStart")
         self.assertEqual(words[:2], list(self.settings.tool))
-        from customs_box import cli
+        from moathut import cli
         with mock.patch.object(cli, "unit_rotate") as rotate:
             cli.run_command(parse(words[2:]), tool=(), environ={},
                             cwd="/", isatty=False)
@@ -254,9 +254,9 @@ class TestUnits(unittest.TestCase):
                 self.assertEqual(
                     _keys(text, "WantedBy"),
                     ["default.target"]
-                    if name == "customs-box-agent.container" else [])
+                    if name == "moathut-agent.container" else [])
                 self.assertEqual(text.count("[Install]"),
-                                 name == "customs-box-agent.container")
+                                 name == "moathut-agent.container")
 
     def test_the_pod_loads_the_rules_and_has_no_cgroup_or_host_names(self):
         self.assertEqual(_exec_words(self.pod, "ExecStartPost"),
@@ -309,7 +309,7 @@ class TestUnits(unittest.TestCase):
                          ("unit", "exec", "agent"))
         argv = [w.replace(netns.PID, "4242") for w in args.argv]
         self.assertEqual(argv[:2], interpreter(self.settings))
-        listen = load_script("libexec/customs-netns-listen")
+        listen = load_script("libexec/moat-netns-listen")
         return listen.parse_args(argv[2:])
 
     def test_the_inspector_is_handed_flags_its_parser_takes(self):
@@ -317,7 +317,7 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(launched.pid, 4242)
         self.assertFalse(launched.resolver)
         self.assertEqual(launched.command[:2], interpreter(self.settings))
-        args = load_script("libexec/customs-inspect").parse_args(
+        args = load_script("libexec/moat-inspect").parse_args(
             launched.command[2:])
         self.assertEqual(args.netns_pid, 4242)
         self.assertEqual(args.name, "agent")
@@ -330,7 +330,7 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(launched.pid, 4242)
         self.assertTrue(launched.resolver)
         self.assertEqual(launched.command[:2], interpreter(self.settings))
-        args = load_script("libexec/customs-resolve").parse_args(
+        args = load_script("libexec/moat-resolve").parse_args(
             launched.command[2:])
         self.assertEqual(args.policy, str(self.box.policy))
         self.assertEqual(args.address, ANSWER)
@@ -341,16 +341,16 @@ class TestUnits(unittest.TestCase):
         settings = _settings("/home/a b%c$d",
                              pythonpath="/src/a b", tool=("/py", "/t x"))
         units = {p.name: t for p, t in render(box, settings, None).items()}
-        pod = units["customs-box-agent.pod"]
+        pod = units["moathut-agent.pod"]
         self.assertEqual(_exec_words(pod, "ExecStartPost"),
                          ["/py", "/t x", "unit", "rules", "agent"])
         self.assertIn('Environment="PYTHONPATH=/src/a b"', pod)
-        inspect = units["customs-box-agent-inspect.service"]
-        self.assertIn("/home/a b%c$d/.config/customs/box/agent/policy.json",
+        inspect = units["moathut-agent-inspect.service"]
+        self.assertIn("/home/a b%c$d/.config/moatery/box/agent/policy.json",
                       _exec_words(inspect, "ExecStart"))
-        work = units["customs-box-agent.container"]
+        work = units["moathut-agent.container"]
         self.assertIn(
-            "\nVolume=/home/a b%%c$d/.local/share/customs/box/agent/home:"
+            "\nVolume=/home/a b%%c$d/.local/share/moatery/box/agent/home:"
             "/home/a b%%c$d:z\n", work)
 
 
@@ -453,9 +453,9 @@ class TestBrokerUnits(unittest.TestCase):
         self.broker = Broker((("api.a.com", "a"), ("up.b.com", "b")), (a, b))
         self.units = {p.name: t for p, t in render(
             self.box, self.settings, self.broker).items()}
-        self.inspect = self.units["customs-box-agent-inspect.service"]
-        self.work = self.units["customs-box-agent.container"]
-        self.unit = self.units["customs-box-agent-broker.service"]
+        self.inspect = self.units["moathut-agent-inspect.service"]
+        self.work = self.units["moathut-agent.container"]
+        self.unit = self.units["moathut-agent-broker.service"]
 
     def test_every_unit_named_is_one_the_box_provides(self):
         for name, text in self.units.items():
@@ -482,13 +482,13 @@ class TestBrokerUnits(unittest.TestCase):
             self.assertEqual(_keys(self.unit, key), [], key)
 
     def test_the_inspector_dials_the_socket_the_broker_binds(self):
-        broker = load_script("libexec/customs-broker").parse_args(
+        broker = load_script("libexec/moat-broker").parse_args(
             _exec_words(self.unit, "ExecStart")[2:])
         words = [w.replace(netns.PID, "4242")
                  for w in _exec_words(self.inspect, "ExecStart")]
         command = words[words.index("--", words.index("--") + 1) + 1:]
         self.assertEqual(command[:2], interpreter(self.settings))
-        inspect = load_script("libexec/customs-inspect").parse_args(
+        inspect = load_script("libexec/moat-inspect").parse_args(
             command[2:])
         self.assertEqual(broker.listen, f"unix:{self.box.broker_socket}")
         self.assertEqual(inspect.broker, str(self.box.broker_socket))
@@ -499,20 +499,20 @@ class TestBrokerUnits(unittest.TestCase):
 
     def test_the_broker_loads_each_credential_its_hosts_name(self):
         """It reads $CREDENTIALS_DIRECTORY/ID for each --host's ID."""
-        broker = load_script("libexec/customs-broker").parse_args(
+        broker = load_script("libexec/moat-broker").parse_args(
             _exec_words(self.unit, "ExecStart")[2:])
         self.assertEqual(broker.host, ["api.a.com=a", "up.b.com=b"])
         loaded = dict(v.split(":", 1)
                       for v in _keys(self.unit, "LoadCredentialEncrypted"))
         self.assertEqual(loaded, {c: str(sealed(self.dirs, c))
                                   for c in ("a", "b")})
-        self.assertIn("a=customs-placeholder-a", broker.placeholder)
+        self.assertIn("a=moatery-placeholder-a", broker.placeholder)
         self.assertIn("b=x-api-key", broker.auth_header)
 
     def test_the_workload_holds_each_placeholder(self):
         env = _keys(self.work, "Environment")
-        self.assertIn("A_KEY=customs-placeholder-a", env)
-        self.assertIn("B_KEY=customs-placeholder-b", env)
+        self.assertIn("A_KEY=moatery-placeholder-a", env)
+        self.assertIn("B_KEY=moatery-placeholder-b", env)
 
     def test_a_box_without_credentials_has_no_broker(self):
         units = render(self.box, self.settings, None)
@@ -557,7 +557,7 @@ class TestRules(unittest.TestCase):
                 netns.load_rules(77, runner)
 
     def test_loaded_means_both_tables(self):
-        runner, _ = self._runner({"netdev customs": (1, "")})
+        runner, _ = self._runner({"netdev moatery": (1, "")})
         self.assertFalse(netns.rules_loaded(5, runner))
         runner, _ = self._runner({})
         self.assertTrue(netns.rules_loaded(5, runner))
@@ -779,7 +779,7 @@ class TestRecordReading(unittest.TestCase):
 
 
 class FakeHost:
-    """podman, systemctl and customs-mint-ca, as far as the commands ask."""
+    """podman, systemctl and moat-mint-ca, as far as the commands ask."""
 
     def __init__(self, state_root, rules=True, load_state="loaded",
                  unshare=True, broker=True, broker_state="active",
@@ -826,12 +826,12 @@ class FakeHost:
         elif argv[:3] == ["systemctl", "--user", "reload"] and \
                 argv[-1].endswith("-inspect.service"):
             if self.dirs and self.reloads:
-                box = Box(argv[-1].removeprefix("customs-box-")
+                box = Box(argv[-1].removeprefix("moathut-")
                           .removesuffix("-inspect.service"), self.dirs)
                 box.status.write_text(json.dumps({
                     INSPECT_DIGEST_KEY:
                         inspect_policy_digest(box.policy.read_text())}))
-        elif "customs-mint-ca" in line:
+        elif "moat-mint-ca" in line:
             ca = Path(argv[argv.index("--state-dir") + 1]) / "ca.pem"
             ca.write_text("BOX CA\n")
             out = f"{ca}\n"
@@ -903,19 +903,19 @@ class TestCommands(unittest.TestCase):
         """The mint runs as the user, like every program a box starts;
         units.interpreter says why the flag."""
         _, host = self._create()
-        (mint,) = [a for a in host.calls if "customs-mint-ca" in " ".join(a)]
-        self.assertEqual(mint[:3], ["/py", "-s", "/lx/customs-mint-ca"])
+        (mint,) = [a for a in host.calls if "moat-mint-ca" in " ".join(a)]
+        self.assertEqual(mint[:3], ["/py", "-s", "/lx/moat-mint-ca"])
 
-    def test_the_units_call_customs_box_with_the_user_site_off(self):
-        from customs_box import cli
+    def test_the_units_call_moathut_with_the_user_site_off(self):
+        from moathut import cli
         with mock.patch.object(cli, "run_command",
                                return_value=0) as run_command:
-            cli.main(["/opt/cb/customs-box", "ls"], environ=self.env)
+            cli.main(["/opt/cb/moathut", "ls"], environ=self.env)
         tool = run_command.call_args.kwargs["tool"]
-        self.assertEqual(tool[1:], ("-s", "/opt/cb/customs-box"))
+        self.assertEqual(tool[1:], ("-s", "/opt/cb/moathut"))
 
     def test_the_command_line_hands_autostart_on(self):
-        from customs_box import cli
+        from moathut import cli
         for words, want in ((["--autostart"], True), ([], False)):
             args = parse(["create", "agent", "--policy", "p", *words])
             with mock.patch.object(cli, "create") as create, \
@@ -978,7 +978,7 @@ class TestCommands(unittest.TestCase):
                        isatty=True, runner=host,
                        execvp=lambda f, argv: ran.append(argv))
         self.assertIn(["systemctl", "--user", "start",
-                       "customs-box-agent.service"], host.calls)
+                       "moathut-agent.service"], host.calls)
         (argv,) = ran
         self.assertEqual(argv[:4], ["podman", "exec", "-i", "-t"])
         self.assertEqual(argv[argv.index("--user") + 1], "1000:1000")
@@ -989,7 +989,7 @@ class TestCommands(unittest.TestCase):
 
     def test_enter_refuses_a_box_without_its_rules(self):
         self._create()
-        with self.assertRaisesRegex(commands.BoxError, "no customs rules"):
+        with self.assertRaisesRegex(commands.BoxError, "no moatery rules"):
             commands.enter("agent", ["id"], root=False, dirs=self.dirs,
                            cwd=self.home, environ=self.env, isatty=False,
                            runner=FakeHost(self.home, rules=False),
@@ -1153,7 +1153,7 @@ class TestCommands(unittest.TestCase):
                            warn=said.append)
             with self.subTest(works=works):
                 self.assertIn(["systemctl", "--user", "start",
-                               "customs-box-agent-broker.service"],
+                               "moathut-agent-broker.service"],
                               host.calls)
                 self.assertEqual(len(ran), 1)
                 self.assertEqual(bool(said), not works)
@@ -1218,7 +1218,7 @@ class TestCommands(unittest.TestCase):
 
     def test_the_secret_is_read_from_a_pipe_or_asked_for(self):
         """Asked without echo at a terminal; never an argument."""
-        from customs_box import cli
+        from moathut import cli
         pipe = mock.Mock(isatty=lambda: False, read=lambda: "sk-piped\n")
         self.assertEqual(cli._secret("k", pipe), "sk-piped\n")
         tty = mock.Mock(isatty=lambda: True)
@@ -1228,7 +1228,7 @@ class TestCommands(unittest.TestCase):
         asked.assert_called_once_with("k: ")
 
     def test_credential_add_says_which_boxes_hold_it(self):
-        from customs_box import cli
+        from moathut import cli
         args = parse(["credential", "add", "k"])
         stdin = mock.Mock(isatty=lambda: False, read=lambda: "sk-new")
         with mock.patch.object(cli, "credential_add",
@@ -1242,7 +1242,7 @@ class TestCommands(unittest.TestCase):
 
     def test_the_command_line_reports_a_refusal_and_exits_1(self):
         with mock.patch("sys.stderr") as err:
-            code = main(["customs-box", "stop", "nosuch"], environ=self.env)
+            code = main(["moathut", "stop", "nosuch"], environ=self.env)
         self.assertEqual(code, 1)
         self.assertIn("no box nosuch",
                       "".join(c.args[0] for c in err.write.call_args_list))
@@ -1445,8 +1445,8 @@ class TestCommands(unittest.TestCase):
                            runner=host, execvp=lambda f, a: ran.append(a),
                            warn=said.append)
             with self.subTest(works=works):
-                for unit in ("customs-box-agent-inspect.service",
-                             "customs-box-agent-resolve.service"):
+                for unit in ("moathut-agent-inspect.service",
+                             "moathut-agent-resolve.service"):
                     self.assertLess(
                         host.calls.index(["systemctl", "--user",
                                           "reset-failed", unit]),
@@ -1500,7 +1500,7 @@ class TestCommands(unittest.TestCase):
         self.assertFalse(box.record.exists())
 
     def test_the_command_line_takes_the_policy_loop(self):
-        from customs_box import cli
+        from moathut import cli
         args = parse(["allow", "agent", "api.x", "--method", "GET",
                       "--method", "post", "--path", "/v1/*"])
         self.assertEqual((args.name, args.host, args.method, args.path),
@@ -1527,7 +1527,7 @@ class TestCommands(unittest.TestCase):
                             environ=self.env, cwd=self.home, isatty=False)
         said = "".join(c.args[0] for c in out.write.call_args_list)
         self.assertIn("evil.example  (not allowlisted)", said)
-        self.assertIn("customs-box allow agent HOST", said)
+        self.assertIn("moathut allow agent HOST", said)
 
 
 if __name__ == "__main__":

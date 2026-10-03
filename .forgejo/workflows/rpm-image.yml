@@ -1,4 +1,4 @@
-# The RPM as an image, REGISTRY/customs-rpm:VERSION, for the hypervisor
+# The RPM as an image, REGISTRY/moatery-rpm:VERSION, for the hypervisor
 # image to COPY --from. REGISTRY is the Actions variable naming the
 # local registry. A tag vVERSION builds, tests, signs and pushes it; a
 # manual run builds and tests only. A version is pushed once: a second
@@ -20,7 +20,7 @@ concurrency:
 
 env:
   REGISTRY: ${{ vars.REGISTRY }}
-  IMAGE_NAME: customs-rpm
+  IMAGE_NAME: moatery-rpm
 
 jobs:
   build:
@@ -71,12 +71,12 @@ jobs:
           sudo podman push \
             --sign-by-sigstore-private-key "${CREDS}/cosign-key" \
             --sign-passphrase-file "${CREDS}/cosign-pass" \
-            --digestfile /tmp/customs-rpm.digest "${IMAGE}:${VERSION}"
-          DIGEST=$(cat /tmp/customs-rpm.digest)
+            --digestfile /tmp/moatery-rpm.digest "${IMAGE}:${VERSION}"
+          DIGEST=$(cat /tmp/moatery-rpm.digest)
           printf '{"default":[{"type":"reject"}],"transports":{"docker":{"%s":[{"type":"sigstoreSigned","keyPath":"%s","signedIdentity":{"type":"matchRepository"}}]}}}' \
-            "${IMAGE}" "$(pwd)/rpm/cosign.pub" > /tmp/customs-rpm-policy.json
+            "${IMAGE}" "$(pwd)/rpm/cosign.pub" > /tmp/moatery-rpm-policy.json
           sudo podman pull -q \
-            --signature-policy=/tmp/customs-rpm-policy.json \
+            --signature-policy=/tmp/moatery-rpm-policy.json \
             "${IMAGE}:${VERSION}" >/dev/null
           echo "pushed and verified: ${IMAGE}:${VERSION} (${DIGEST})" \
             | tee -a "$GITHUB_STEP_SUMMARY"

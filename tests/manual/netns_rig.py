@@ -4,7 +4,7 @@
 "Netns" in docs/DESIGN.md: one rootless podman container under plain
 pasta, the broker as a hand-written user unit, the inspector and the
 responder as transient user units started between `podman init` and
-`podman start` through customs-netns-listen, which binds their sockets in
+`podman start` through moat-netns-listen, which binds their sockets in
 the container's network namespace. Run on the proving host as an
 ordinary user, from a checkout:
 
@@ -26,7 +26,7 @@ THE ROWS
             and both are rows in the container's socket table, none in the
             host's.
   dns       the workload's queries, to its resolver over UDP and TCP and to
-            any other nameserver, are answered by customs-resolve with the
+            any other nameserver, are answered by moat-resolve with the
             namespace's loopback, for names nothing resolves; an AAAA gets
             no records; the responder's status names the unlisted names and
             not the provider's. The container has no --add-host, so every
@@ -85,16 +85,16 @@ from riglib import (  # noqa
     INSPECT_TLS, LIBEXEC, NAME, PLACEHOLDER, PROGRAM_ENV, PROVIDER,
     RESOLVE_PORT, RIG, STUB_CERT, UNLISTED, row, run, say,
 )
-from customs.egress_ca import ca_cert_path  # noqa
-from customs.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
-from customs.peer_identity import PROC_NET_TCP, netns_tables  # noqa
+from moatery.egress_ca import ca_cert_path  # noqa
+from moatery.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
+from moatery.peer_identity import PROC_NET_TCP, netns_tables  # noqa
 
-CONTAINER = "customs-rig-netns"
-UNIT = "customs-rig-netns"
+CONTAINER = "moatery-rig-netns"
+UNIT = "moatery-rig-netns"
 BROKER_SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR",
                                     f"/run/user/{os.getuid()}"),
                      UNIT, "broker.sock")
-HOSTS_MARK = "customs-netns-rig"
+HOSTS_MARK = "moatery-netns-rig"
 
 UNITS = riglib.HOME / ".config" / "systemd" / "user"
 STATE = RIG / "state"
@@ -126,7 +126,7 @@ def start_broker():
     (UNITS / f"{UNIT}-broker.service").write_text(
         "# written by tests/manual/netns_rig.py — removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={sys.executable} {LIBEXEC / 'customs-broker'}"
+        f"ExecStart={sys.executable} {LIBEXEC / 'moat-broker'}"
         f" --name {NAME} --listen unix:%t/{UNIT}/broker.sock"
         f" --caller-uid {os.getuid()}"
         f" --host {PROVIDER}={CREDENTIAL}"
@@ -178,9 +178,9 @@ def start_inspector(pid, netns_pid, notify):
     run(["systemd-run", "--user", "--quiet", "--unit", f"{UNIT}-inspect",
          *unit_type(notify),
          *(f"--setenv={k}={v}" for k, v in ENV.items()),
-         sys.executable, str(LIBEXEC / "customs-netns-listen"),
+         sys.executable, str(LIBEXEC / "moat-netns-listen"),
          "--pid", str(pid), "--",
-         sys.executable, str(LIBEXEC / "customs-inspect"),
+         sys.executable, str(LIBEXEC / "moat-inspect"),
          "--name", NAME, "--policy", str(POLICY), "--state-dir", str(STATE),
          "--status", str(STATUS), "--record", str(RECORD),
          "--broker", f"unix:{BROKER_SOCKET}", *extra])
@@ -200,9 +200,9 @@ def start_responder(pid, notify, address=riglib.ANSWER):
     run(["systemd-run", "--user", "--quiet", "--unit", f"{UNIT}-resolve",
          *unit_type(notify),
          *(f"--setenv={k}={v}" for k, v in PROGRAM_ENV.items()),
-         sys.executable, str(LIBEXEC / "customs-netns-listen"),
+         sys.executable, str(LIBEXEC / "moat-netns-listen"),
          "--pid", str(pid), "--resolver", "--",
-         sys.executable, str(LIBEXEC / "customs-resolve"),
+         sys.executable, str(LIBEXEC / "moat-resolve"),
          "--name", NAME, "--address", address, "--policy", str(POLICY),
          "--status", str(RESOLVE_STATUS)])
     READY["responder"] = [listening(pid, proto, RESOLVE_PORT)
@@ -284,14 +284,14 @@ def load_rules(pid, redirect_dns):
            f"    tcp dport 53  dnat ip to 127.0.0.1:{RESOLVE_PORT}\n"
            if redirect_dns else "")
     rules = f"""
-table inet customs {{
+table inet moatery {{
   chain out {{
     type nat hook output priority -100
     tcp dport 443 dnat ip to 127.0.0.1:{INSPECT_TLS}
     tcp dport 80  dnat ip to 127.0.0.1:{INSPECT_CLEARTEXT}
 {dns}  }}
 }}
-table netdev customs {{
+table netdev moatery {{
   chain egress {{
     type filter hook egress device "{dev}" priority 0; policy drop
     udp dport 443 counter comment "quic"
@@ -359,7 +359,7 @@ QUIC_UDP = ("192.0.2.1", 443)
 
 
 def chain_counter(pid, comment):
-    out = in_netns(pid, ["nft", "list", "chain", "netdev", "customs",
+    out = in_netns(pid, ["nft", "list", "chain", "netdev", "moatery",
                          "egress"], check=False).stdout
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
@@ -404,7 +404,7 @@ def probe(pid, dns, secret):
         not caps & (1 << 12), f"CapBnd={caps:016x}")
     listed = in_netns(pid, ["nft", "list", "tables"], check=False).stdout
     row("premise: the rules are in the container's netns",
-        "table inet customs" in listed, listed.strip() or "no tables")
+        "table inet moatery" in listed, listed.strip() or "no tables")
 
     say("inspector")
     ipid = unit_pid()

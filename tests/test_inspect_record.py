@@ -27,9 +27,9 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from customs import egress_record
-from customs.egress_plane import CLEARTEXT, TLS, plane_for_port
-from customs.egress_record import (
+from moatery import egress_record
+from moatery.egress_plane import CLEARTEXT, TLS, plane_for_port
+from moatery.egress_record import (
     DROP_NOT_ALLOWLISTED,
     DROP_NOT_TLS,
     DROP_UNREADABLE_REQUEST,
@@ -40,8 +40,8 @@ from customs.egress_record import (
     Where,
     format_endpoint,
 )
-from customs.inspect_listener import Listener
-from customs.inspect_policy import Policy
+from moatery.inspect_listener import Listener
+from moatery.inspect_policy import Policy
 
 ID = re.compile(r"\bid=([0-9a-f]{12})\b")
 REQ = re.compile(r"\breq=(\d+)\b")

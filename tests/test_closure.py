@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""The customs package is exactly the programs' import closures, and
+"""The moatery package is exactly the programs' import closures, and
 nothing in it knows what a workload is.
 
 There is no other side here to hold a line against: every module in the
-package must be reachable from customs-broker, customs-inspect,
-customs-resolve or customs-netns-listen, and no closure may reach anything
+package must be reachable from moat-broker, moat-inspect,
+moat-resolve or moat-netns-listen, and no closure may reach anything
 but the package and the standard library. The
 workload-side property survives as absences -- no TOML reader, no passwd
 lookup, no address or path derivation -- because a copy of one of those
@@ -28,16 +28,16 @@ from pathlib import Path
 
 from tests import REPO_ROOT
 
-LIB = Path(REPO_ROOT) / "customs"
-BROKER = Path(REPO_ROOT) / "libexec" / "customs-broker"
-INSPECTOR = Path(REPO_ROOT) / "libexec" / "customs-inspect"
-MINT_CA = Path(REPO_ROOT) / "libexec" / "customs-mint-ca"
-NETNS_LISTEN = Path(REPO_ROOT) / "libexec" / "customs-netns-listen"
-RESOLVER = Path(REPO_ROOT) / "libexec" / "customs-resolve"
-SIDECAR = Path(REPO_ROOT) / "container" / "customs-sidecar"
-BOX_LIB = Path(REPO_ROOT) / "customs_box"
-BOX = Path(REPO_ROOT) / "bin" / "customs-box"
-SPEC = Path(REPO_ROOT) / "rpm" / "customs.spec"
+LIB = Path(REPO_ROOT) / "moatery"
+BROKER = Path(REPO_ROOT) / "libexec" / "moat-broker"
+INSPECTOR = Path(REPO_ROOT) / "libexec" / "moat-inspect"
+MINT_CA = Path(REPO_ROOT) / "libexec" / "moat-mint-ca"
+NETNS_LISTEN = Path(REPO_ROOT) / "libexec" / "moat-netns-listen"
+RESOLVER = Path(REPO_ROOT) / "libexec" / "moat-resolve"
+SIDECAR = Path(REPO_ROOT) / "container" / "moat-sidecar"
+BOX_LIB = Path(REPO_ROOT) / "moathut"
+BOX = Path(REPO_ROOT) / "bin" / "moathut"
+SPEC = Path(REPO_ROOT) / "rpm" / "moatery.spec"
 
 BROKER_FLAGS = frozenset({
     "--name", "--listen", "--caller-uid", "--host",
@@ -68,12 +68,12 @@ def _lib_modules():
 
 
 def _package_module(node):
-    """The customs modules one import statement names, bare."""
+    """The moatery modules one import statement names, bare."""
     if isinstance(node, ast.ImportFrom):
-        if node.level == 0 and node.module == "customs" or (
+        if node.level == 0 and node.module == "moatery" or (
                 node.level == 1 and not node.module):
             return {alias.name for alias in node.names}
-        if node.level == 0 and node.module.startswith("customs."):
+        if node.level == 0 and node.module.startswith("moatery."):
             return {node.module.split(".")[1]}
         if node.level == 1:
             return {node.module.split(".")[0]}
@@ -81,7 +81,7 @@ def _package_module(node):
 
 
 def _imports(path):
-    """The modules a file imports, at any depth of nesting: customs'
+    """The modules a file imports, at any depth of nesting: moatery'
     bare, anything else by its top-level name. Nested imports count: a
     deferred import resolves at call time and is invisible to a
     fresh-interpreter import test."""
@@ -113,7 +113,7 @@ def _closure(entrypoint, mods):
 
 
 def _foreign(files, mods):
-    """Imports that are neither customs nor the standard library."""
+    """Imports that are neither moatery nor the standard library."""
     stdlib = set(sys.stdlib_module_names)
     out = set()
     for f in files:
@@ -137,7 +137,7 @@ class TestTheScannerSeesTheTree(unittest.TestCase):
         self.assertGreaterEqual(len(_closure(INSPECTOR, mods)), 20)
 
     def test_the_walk_sees_a_nested_import(self):
-        src = ("def f():\n    from customs import egress_ca\n"
+        src = ("def f():\n    from moatery import egress_ca\n"
                "def g():\n    from .egress_plane import TLS\n")
         path = Path(self.enterContext(
             __import__("tempfile").TemporaryDirectory())) / "m.py"
@@ -155,14 +155,14 @@ class TestThePackageIsTheClosure(unittest.TestCase):
                      | _closure(RESOLVER, mods) | _closure(NETNS_LISTEN, mods))
         self.assertEqual(sorted(set(mods) - reachable), [])
 
-    def test_the_closures_reach_only_customs_and_the_stdlib(self):
+    def test_the_closures_reach_only_moatery_and_the_stdlib(self):
         mods = _lib_modules()
         files = ([BROKER, INSPECTOR, MINT_CA, NETNS_LISTEN, RESOLVER]
                  + [mods[m] for m in mods])
         self.assertEqual(sorted(_foreign(files, mods)), [])
 
     def test_the_ca_minter_is_inside_the_inspector_closure(self):
-        """customs-mint-ca is the inspector's first-start step run on its
+        """moat-mint-ca is the inspector's first-start step run on its
         own, and brings no module of its own into the package."""
         mods = _lib_modules()
         minter = _closure(MINT_CA, mods)
@@ -170,7 +170,7 @@ class TestThePackageIsTheClosure(unittest.TestCase):
         self.assertEqual(sorted(minter - _closure(INSPECTOR, mods)), [])
 
     def test_the_launcher_reaches_only_the_planes(self):
-        """customs-netns-listen binds and execs. The port numbers are the
+        """moat-netns-listen binds and execs. The port numbers are the
         one thing it shares with the inspector, the readiness notice the
         one it shares with the broker, and nothing that parses a byte a
         workload sent is in it."""
@@ -179,7 +179,7 @@ class TestThePackageIsTheClosure(unittest.TestCase):
                          ["egress_plane", "netns_listen", "sd_notify"])
 
     def test_the_resolver_reaches_no_dialling_module(self):
-        """customs-resolve answers from memory. Its closure is its own three
+        """moat-resolve answers from memory. Its closure is its own three
         modules, the policy reader it counts names against, and the status
         writer; nothing that opens a connection is in it."""
         mods = _lib_modules()
@@ -206,7 +206,7 @@ class TestThePackageIsTheClosure(unittest.TestCase):
 
 
 def _box_imports(path):
-    """(customs_box modules, customs modules, other top-level names) one
+    """(moathut modules, moatery modules, other top-level names) one
     file of the box's imports."""
     box, lib, other = set(), set(), set()
     for node in ast.walk(ast.parse(path.read_text())):
@@ -216,9 +216,9 @@ def _box_imports(path):
                 box |= {alias.name for alias in node.names}
             elif node.level == 1:
                 box.add(module.split(".")[0])
-            elif module.startswith("customs_box."):
+            elif module.startswith("moathut."):
                 box.add(module.split(".")[1])
-            elif module.startswith("customs."):
+            elif module.startswith("moatery."):
                 lib.add(module.split(".")[1])
             else:
                 other.add(module.split(".")[0])
@@ -228,7 +228,7 @@ def _box_imports(path):
 
 
 class TestTheBoxStandsBeside(unittest.TestCase):
-    """customs-box is a host layout over the programs. It may import the
+    """moathut is a host layout over the programs. It may import the
     package; nothing in the package or the programs imports it."""
 
     def _closure(self):
@@ -245,7 +245,7 @@ class TestTheBoxStandsBeside(unittest.TestCase):
                 todo.append(mods[name])
         return mods, seen, lib, other
 
-    def test_every_box_module_is_reachable_from_customs_box(self):
+    def test_every_box_module_is_reachable_from_moathut(self):
         mods, seen, _, _ = self._closure()
         self.assertEqual(sorted(set(mods) - seen), [])
 
@@ -260,7 +260,7 @@ class TestTheBoxStandsBeside(unittest.TestCase):
         files = ([BROKER, INSPECTOR, MINT_CA, NETNS_LISTEN, RESOLVER]
                  + list(mods.values()))
         holders = sorted(f.name for f in files
-                         if "customs_box" in _imports(f))
+                         if "moathut" in _imports(f))
         self.assertEqual(holders, [])
 
 
@@ -276,8 +276,8 @@ class TestTheRpmCarriesEverything(unittest.TestCase):
         spec = SPEC.read_text()
         loop = re.search(r"^for pkg in (.*); do$", spec, re.M)
         self.assertEqual(set(loop.group(1).split()),
-                         {"customs", "customs_box"})
-        for pkg in ("customs", "customs_box"):
+                         {"moatery", "moathut"})
+        for pkg in ("moatery", "moathut"):
             self.assertIn(f"%{{python3_sitelib}}/{pkg}/", self._files())
 
     @staticmethod
@@ -296,7 +296,7 @@ class TestTheRpmCarriesEverything(unittest.TestCase):
             self.assertEqual(set(loop.replace("\\", " ").split()),
                              programs)
         for name in programs:
-            self.assertIn(f"%{{_libexecdir}}/customs/{name}", self._files())
+            self.assertIn(f"%{{_libexecdir}}/moatery/{name}", self._files())
         for path in self._programs("bin"):
             with self.subTest(program=path.name):
                 self.assertIn(f"%{{_bindir}}/{path.name}", self._files())
@@ -310,7 +310,7 @@ class TestTheRpmCarriesEverything(unittest.TestCase):
         directory in the user's home can be a box's mount. Under SELinux
         the probe is also a denial logged on every start."""
         programs = [*self._programs("libexec"), *self._programs("bin"),
-                    Path(REPO_ROOT) / "container" / "customs-sidecar"]
+                    Path(REPO_ROOT) / "container" / "moat-sidecar"]
         for path in programs:
             with self.subTest(program=path.name):
                 self.assertEqual(path.read_text().split("\n", 1)[0],
@@ -395,7 +395,7 @@ class TestTheFlagsAreTheContract(unittest.TestCase):
 
 
 class TestNoProgramWritesBytecode(unittest.TestCase):
-    """Every program turns bytecode off before its first customs import. The
+    """Every program turns bytecode off before its first moatery import. The
     install directory is not the process's to write, and under a
     confining policy every start would log the attempt. The broker had
     no such line while the inspector did."""
@@ -405,7 +405,7 @@ class TestNoProgramWritesBytecode(unittest.TestCase):
         for i, node in enumerate(tree.body):
             if _package_module(node) or (
                     isinstance(node, ast.ImportFrom) and node.module
-                    and node.module.startswith("customs_box")):
+                    and node.module.startswith("moathut")):
                 return i
         return None
 

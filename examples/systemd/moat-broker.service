@@ -1,0 +1,32 @@
+# The credential broker for one workload, as a user unit. Edit the
+# --host, --placeholder and --auth-* flags and the credential line for
+# the provider; `moat-broker --help` lists them all.
+#
+# --caller-uid is %U: the broker's one caller is the inspector,
+# which runs as this user. The socket is in the user's runtime directory,
+# which the container has no path to and no other uid can enter.
+# Type=notify: started once the socket is listening, so the inspector,
+# ordered after it, finds it there.
+#
+# A stop or restart while the credential is being decrypted leaves the
+# user manager's workspace for it behind, and every start after fails on
+# it: README.md, "A stop while the broker starts".
+
+[Unit]
+Description=moatery credential broker
+
+[Service]
+Type=notify
+ExecStart=/usr/libexec/moatery/moat-broker --name example \
+    --listen unix:%t/moatery/broker.sock --caller-uid %U \
+    --host api.example.com=example \
+    --placeholder example=sk-placeholder \
+    --auth-header example=Authorization \
+    "--auth-format=example=Bearer {secret}"
+LoadCredentialEncrypted=example:%E/moatery/example.cred
+RuntimeDirectory=moatery
+RuntimeDirectoryMode=0700
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

@@ -10,23 +10,23 @@ units, bound to the pod's, start again with it.
 
 The one-time setup is the user units' ([../README.md](../README.md),
 "Once"): the policy, the credential, the CA and the bundle. The broker
-is their unit, `../systemd/customs-broker.service`; the inspector's
+is their unit, `../systemd/moat-broker.service`; the inspector's
 and the responder's socket units are not used.
 
 | file | goes to | |
 |---|---|---|
-| `customs-pod-netns` | `~/.local/bin/` | the pod's namespace pid, and the rules |
+| `moat-pod-netns` | `~/.local/bin/` | the pod's namespace pid, and the rules |
 | `example.pod` | `~/.config/containers/systemd/` | the pod, loading the rules at start |
 | `example.container` | `~/.config/containers/systemd/` | the workload |
-| `customs-inspect-example.service` | `~/.config/systemd/user/` | the inspector, listeners in the pod |
-| `customs-resolve-example.service` | `~/.config/systemd/user/` | the responder, port in the pod |
-| `../systemd/customs-broker.service` | `~/.config/systemd/user/` | the broker |
+| `moat-inspect-example.service` | `~/.config/systemd/user/` | the inspector, listeners in the pod |
+| `moat-resolve-example.service` | `~/.config/systemd/user/` | the responder, port in the pod |
+| `../systemd/moat-broker.service` | `~/.config/systemd/user/` | the broker |
 
 ```
-install -m 0755 customs-pod-netns ~/.local/bin/
+install -m 0755 moat-pod-netns ~/.local/bin/
 cp example.pod example.container ~/.config/containers/systemd/
-cp customs-inspect-example.service customs-resolve-example.service \
-    ../systemd/customs-broker.service ~/.config/systemd/user/
+cp moat-inspect-example.service moat-resolve-example.service \
+    ../systemd/moat-broker.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user start example.service
 ```
@@ -45,4 +45,4 @@ drops `SSL_CERT_FILE`, trusts the egress CA too. That path is Fedora's;
 
 The record, the status files and the journal are the user units'
 ([../README.md](../README.md), "What it writes"); the journal's units are
-`customs-inspect-example` and `customs-resolve-example`.
+`moat-inspect-example` and `moat-resolve-example`.

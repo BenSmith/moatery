@@ -1,0 +1,25 @@
+# The inspector for pod example, its listeners bound in the pod's
+# namespace. Bound to the pod: a new start of the pod is a new
+# namespace, and the pod's unit starts this again with it.
+
+[Unit]
+Description=moatery egress inspector, listeners in pod example
+BindsTo=example-pod.service
+After=example-pod.service
+Wants=moat-broker.service
+After=moat-broker.service
+
+[Service]
+Type=notify
+ExecStart=/bin/sh -c 'pid=$$(%h/.local/bin/moat-pod-netns pid example) \
+    && exec /usr/libexec/moatery/moat-netns-listen --pid "$$pid" -- \
+    /usr/libexec/moatery/moat-inspect --name example \
+    --policy %E/moatery/policy.json \
+    --state-dir %S/moatery \
+    --status %S/moatery/status.json \
+    --record %L/moatery/requests.log \
+    --broker unix:%t/moatery/broker.sock \
+    --netns-pid "$$pid"'
+ExecReload=kill -USR1 $MAINPID
+StateDirectory=moatery
+LogsDirectory=moatery

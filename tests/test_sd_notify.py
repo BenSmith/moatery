@@ -9,7 +9,7 @@ import tempfile
 import time
 import unittest
 
-from customs.sd_notify import notify_ready
+from moatery.sd_notify import notify_ready
 
 
 def notify_socket(case):
@@ -33,7 +33,7 @@ class TestNotifyReady(unittest.TestCase):
         self.assertEqual(environ, {"OTHER": "1"})
 
     def test_an_abstract_socket_is_reached(self):
-        name = f"customs-test-{os.getpid()}-{time.monotonic_ns()}"
+        name = f"moatery-test-{os.getpid()}-{time.monotonic_ns()}"
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.addCleanup(sock.close)
         sock.bind("\0" + name)

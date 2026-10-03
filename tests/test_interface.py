@@ -4,7 +4,7 @@
 Three lists: the published names, each defined in its module, and the
 two status files' paths, each present in a file the inspector or the
 responder wrote. A name or a key renamed without the list following
-would pass every other test and break a program built on customs (as
+would pass every other test and break a program built on moatery (as
 workloadctl is): an import error for a name, a figure that silently
 reads zero for a key.
 """
@@ -19,13 +19,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from customs.egress_mint import mint_ca
-from customs.egress_record import DROP_REASONS, NOTE_KINDS, SUSPECT_REASONS
-from customs.inspect_document import VmPolicyEntry
-from customs.inspect_listener import Listener, build_minter
-from customs.inspect_policy import Policy
-from customs.resolve_policy import Policy as ResolvePolicy
-from customs.resolve_serve import Counters, emit_status
+from moatery.egress_mint import mint_ca
+from moatery.egress_record import DROP_REASONS, NOTE_KINDS, SUSPECT_REASONS
+from moatery.inspect_document import VmPolicyEntry
+from moatery.inspect_listener import Listener, build_minter
+from moatery.inspect_policy import Policy
+from moatery.resolve_policy import Policy as ResolvePolicy
+from moatery.resolve_serve import Counters, emit_status
 from tests import REPO_ROOT
 
 INTERFACE = Path(REPO_ROOT) / "docs" / "INTERFACE.md"
@@ -63,8 +63,8 @@ class TestPublishedInterface(unittest.TestCase):
     def test_the_list_is_read(self):
         """A parser that found nothing would pass the check below."""
         names = published()
-        self.assertIn("customs.egress_ca", names)
-        self.assertIn("patterns_overlap", names["customs.inspect_document"])
+        self.assertIn("moatery.egress_ca", names)
+        self.assertIn("patterns_overlap", names["moatery.inspect_document"])
         self.assertGreater(sum(map(len, names.values())), 40)
 
     def test_every_published_name_is_defined(self):
@@ -135,7 +135,7 @@ class TestPublishedResolverStatusPaths(unittest.TestCase):
         self.assertIn(("unlisted_names",), paths)
 
     def test_every_published_path_is_in_the_file(self):
-        from customs import resolve_wire
+        from moatery import resolve_wire
         resolve_wire.log = lambda _line: None
         counters = Counters()
         policy = ResolvePolicy("192.0.2.1",

@@ -25,9 +25,9 @@ import unittest
 from email.message import Message
 from unittest import mock
 
-from customs import broker_profiles
-from customs import broker_request
-from customs import broker_server
+from moatery import broker_profiles
+from moatery import broker_request
+from moatery import broker_server
 
 
 def headers(**pairs):
@@ -668,7 +668,7 @@ class TestARelayedResponseIsWellFormed(TestAnUpstreamDyingMidResponse):
                          "the upstream's length survived the re-framing")
         self.assertIn(b"Server: upstream-edge/2", received)
         self.assertIn(b"Date: Mon, 01 Jan 2035 00:00:00 GMT", received)
-        self.assertNotIn(b"customs", received.lower(),
+        self.assertNotIn(b"moatery", received.lower(),
                          "the broker named itself to the sandbox")
         self.assertTrue(received.endswith(b"{}"))
 

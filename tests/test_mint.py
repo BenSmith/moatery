@@ -21,14 +21,14 @@ from unittest import mock
 
 import shutil
 
-from customs import egress_ca
-from customs import egress_mint
+from moatery import egress_ca
+from moatery import egress_mint
 from tests import REPO_ROOT
 
 
 def _rmtree(path):
     shutil.rmtree(path, ignore_errors=True)
-from customs.egress_ca import (LeafRefused, ca_openssl_argv, leaf_openssl_argv,
+from moatery.egress_ca import (LeafRefused, ca_openssl_argv, leaf_openssl_argv,
                        leaf_san)
 
 
@@ -465,7 +465,7 @@ class TestMinting(_MinterCase):
         puts it. Prose in this module spells
         counter names in backticks, so a comment does not satisfy it.
         """
-        source = (REPO_ROOT / "customs" / "egress_mint.py").read_text()
+        source = (REPO_ROOT / "moatery" / "egress_mint.py").read_text()
         head, _, rest = source.partition("self.stats = {")
         declaration, _, tail = rest.partition("}")
         elsewhere = head + tail
@@ -649,7 +649,7 @@ class TestTheMinterKnowsNothingAboutTheGuest(unittest.TestCase):
         source (`clock=time.monotonic`) or the paragraph that says why the
         minter does not ask about the guest. No outcome, no counter, no
         keyword."""
-        source = (REPO_ROOT / "customs" / "egress_mint.py").read_text()
+        source = (REPO_ROOT / "moatery" / "egress_mint.py").read_text()
         for token in ("clock_check", "CLOCK_", "REMEDY_", "_remedy",
                       "remedy_acted", "remedy_unavailable", "remedy_failed",
                       "clock_resync", "clock_unavailable", "clock_failed"):
@@ -865,7 +865,7 @@ class TestTheCountersAreWrittenUnderTheLockTheyAreReadWith(unittest.TestCase):
             "only place that takes the lock `snapshot` reads with")
 
 class TestTheCAIsMintedOnce(unittest.TestCase):
-    """egress_mint.mint_ca: the one mint, shared by customs-mint-ca and the
+    """egress_mint.mint_ca: the one mint, shared by moat-mint-ca and the
     sidecar's entrypoint. Real openssl, as for the leaves."""
 
     def setUp(self):
@@ -936,12 +936,12 @@ class TestTheCAIsMintedOnce(unittest.TestCase):
         self.assertFalse(self.cert.exists())
 
 
-class TestCustomsMintCa(unittest.TestCase):
+class TestMoatMintCa(unittest.TestCase):
     """The entrypoint: the mint, and the certificate's path on stdout."""
 
     def setUp(self):
         from tests import load_script
-        self.mod = load_script("libexec/customs-mint-ca")
+        self.mod = load_script("libexec/moat-mint-ca")
         self.state = Path(self.enterContext(tempfile.TemporaryDirectory()))
 
     def _run(self, *argv):
@@ -949,7 +949,7 @@ class TestCustomsMintCa(unittest.TestCase):
         import io
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = self.mod.main(["customs-mint-ca", *argv])
+            code = self.mod.main(["moat-mint-ca", *argv])
         return code, out.getvalue(), err.getvalue()
 
     def test_it_mints_and_prints_the_certificate(self):

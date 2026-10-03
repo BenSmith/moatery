@@ -15,8 +15,8 @@ import threading
 import unittest
 from unittest import mock
 
-from customs import broker_server
-from customs import peer_identity
+from moatery import broker_server
+from moatery import peer_identity
 
 
 def proc_row(local, remote, uid, inode, state="01"):

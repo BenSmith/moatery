@@ -1,7 +1,7 @@
-# customs-box
+# moathut
 
-customs-box makes long-lived, inspected containers, called boxes:
-`customs-box create NAME --policy FILE`, then `customs-box enter NAME`.
+moathut makes long-lived, inspected containers, called boxes:
+`moathut create NAME --policy FILE`, then `moathut enter NAME`.
 Each box is the netns placement ([DESIGN.md](DESIGN.md)) laid out as
 [examples/quadlet/](../examples/quadlet/): a unit that holds the
 network namespace and loads the rules when it starts (a quadlet `.pod`,
@@ -24,23 +24,23 @@ so git over ssh cannot leave a box, and git over https can.
 ## Commands
 
 ```
-customs-box create NAME --policy FILE [--image IMAGE]
+moathut create NAME --policy FILE [--image IMAGE]
                    [--mount SRC[:DST][:ro]]... [--autostart]
-customs-box enter NAME [--root] [-- COMMAND...]
-customs-box log NAME [--refused]
-customs-box allow NAME HOST [--method M]... [--path P]...
-customs-box policy NAME
-customs-box credential add ID [--host HOST]... [--env VARIABLE]
+moathut enter NAME [--root] [-- COMMAND...]
+moathut log NAME [--refused]
+moathut allow NAME HOST [--method M]... [--path P]...
+moathut policy NAME
+moathut credential add ID [--host HOST]... [--env VARIABLE]
                    [--auth-header FIELD] [--auth-format FORMAT]
-customs-box credential ls
-customs-box credential rm ID
-customs-box stop NAME
-customs-box rm NAME [--home]
-customs-box ls
+moathut credential ls
+moathut credential rm ID
+moathut stop NAME
+moathut rm NAME [--home]
+moathut ls
 ```
 
 **create** writes the box's files (below), mints its CA with
-`customs-mint-ca`, builds its bundle, and runs `systemctl --user
+`moat-mint-ca`, builds its bundle, and runs `systemctl --user
 daemon-reload`. Nothing starts. The image defaults to
 `registry.fedoraproject.org/fedora-toolbox:44`, Fedora's own, which has
 the git, Python, ssh client and manual pages `fedora:44` leaves out.
@@ -52,7 +52,7 @@ at the next login.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
 order, the namespace's unit, the rules, the broker and the listeners,
-and the workload. It then checks that the namespace holds both customs
+and the workload. It then checks that the namespace holds both moatery
 tables, and refuses if it does not, before `podman exec -it` as the user
 (or uid 0 with `--root`). A listener that is not running is started
 again, and so is a box's broker. If one does not start, `enter` says so
@@ -93,7 +93,7 @@ host the workload reaches has to be listed.
   not load is refused, and opened again if there is a terminal to ask
   on.
 - Either checks the edited document with the inspector's own loader
-  (`customs.inspect_policy.load_policy`), and its credentials as
+  (`moatery.inspect_policy.load_policy`), and its credentials as
   `create` does, before it replaces the file, so a mistake is an error
   at the command and not a box whose inspector will not start. A policy
   that names a credential for the first time gains a broker, and one that
@@ -159,16 +159,16 @@ For box NAME, credential ID:
 
 | what | where |
 |---|---|
-| policy | `~/.config/customs/box/NAME/policy.json` |
-| bundle | `~/.config/customs/box/NAME/bundle.pem` |
-| CA, certificates, status files | `~/.local/state/customs/box/NAME/` |
-| record | `~/.local/state/log/customs/box/NAME/requests.log`, and `.1` to `.4.gz` |
-| the box's home | `~/.local/share/customs/box/NAME/home/` |
-| namespace, workload | `~/.config/containers/systemd/customs-box-NAME.{pod,container}` |
-| inspector, responder, broker | `~/.config/systemd/user/customs-box-NAME-{inspect,resolve,broker}.service` |
-| the record's rotation | `~/.config/systemd/user/customs-box-NAME-rotate.{service,timer}` |
-| broker's socket | `$XDG_RUNTIME_DIR/customs-box/NAME/broker.sock` |
-| credential | `~/.config/customs/credentials/ID.{cred,json}` |
+| policy | `~/.config/moatery/box/NAME/policy.json` |
+| bundle | `~/.config/moatery/box/NAME/bundle.pem` |
+| CA, certificates, status files | `~/.local/state/moatery/box/NAME/` |
+| record | `~/.local/state/log/moatery/box/NAME/requests.log`, and `.1` to `.4.gz` |
+| the box's home | `~/.local/share/moatery/box/NAME/home/` |
+| namespace, workload | `~/.config/containers/systemd/moathut-NAME.{pod,container}` |
+| inspector, responder, broker | `~/.config/systemd/user/moathut-NAME-{inspect,resolve,broker}.service` |
+| the record's rotation | `~/.config/systemd/user/moathut-NAME-rotate.{service,timer}` |
+| broker's socket | `$XDG_RUNTIME_DIR/moathut/NAME/broker.sock` |
+| credential | `~/.config/moatery/credentials/ID.{cred,json}` |
 
 The container is named NAME, and so is podman's object for its
 namespace, so `podman` commands take the box's name; `create` refuses a
@@ -177,19 +177,19 @@ among them, where they would be a box's directory.
 
 ## The units
 
-customs-box writes, for each box, the units
+moathut writes, for each box, the units
 [examples/quadlet/](../examples/quadlet/) has as files:
-`customs-box-NAME.pod` for `example.pod`, `customs-box-NAME.container`
-for `example.container`, `customs-box-NAME-inspect.service` and
+`moathut-NAME.pod` for `example.pod`, `moathut-NAME.container`
+for `example.container`, `moathut-NAME-inspect.service` and
 `-resolve.service` for the example's two listener units, and
-`-broker.service` for `customs-broker.service`. The namespace is made
+`-broker.service` for `moat-broker.service`. The namespace is made
 as the example's is: pasta, `UserNS=keep-id`, `--hosts-file=image`, so
 the host's hosts file does not answer the workload's names, and no
 cgroup of its own. The units differ from the example's in these ways:
 
-- The tool loads the rules (`customs-box unit rules NAME`) and starts
-  the listeners in the namespace (`customs-box unit exec NAME`), where
-  the example has `customs-pod-netns`; both are among the commands for
+- The tool loads the rules (`moathut unit rules NAME`) and starts
+  the listeners in the namespace (`moathut unit exec NAME`), where
+  the example has `moat-pod-netns`; both are among the commands for
   the units' use. The egress device is read inside the namespace, not
   on the host.
 - The workload `Wants=` the listeners, where the example's `Requires=`
@@ -226,7 +226,7 @@ cgroup of its own. The units differ from the example's in these ways:
   the container (`ExecStartPost=`), giving the user sudo without a
   password: the image's own rule asks for one, and the user has none.
   Root in a box is filtered as the user is.
-- The record is rotated by the tool (`customs-box unit rotate NAME`),
+- The record is rotated by the tool (`moathut unit rotate NAME`),
   from a timer the namespace's unit `Wants=` and that is `PartOf=` it, a
   minute after that unit starts and every ten after, where the example
   has logrotate. Past 32 MiB the record is moved to `.1`, and the
@@ -243,7 +243,7 @@ cgroup of its own. The units differ from the example's in these ways:
 - No `[Install]` unless `--autostart`: without it a box runs from
   `enter` to `stop`.
 
-What starts what: `enter` starts `customs-box-NAME.service`, which
+What starts what: `enter` starts `moathut-NAME.service`, which
 `Wants=` and is `After=` the inspector and the responder; they are
 `BindsTo=` and `After=` the namespace's unit, which is active only once
 its `ExecStartPost=` has loaded the rules. A rules load that fails fails
@@ -262,7 +262,7 @@ them; one that dies is started again (`Restart=on-failure`).
 `create` refuses:
 
 - a mount that is, or contains, `$HOME`;
-- a mount that overlaps `$XDG_RUNTIME_DIR`, a customs directory above,
+- a mount that overlaps `$XDG_RUNTIME_DIR`, a moatery directory above,
   or podman's or systemd's user configuration and storage: those hold
   the broker's socket, the CA's key, the sealed credentials, and the
   units that load a box's rules, which a box able to write them could
@@ -300,17 +300,17 @@ would turn that start into a failure; that is untested.
 
 ## Where it lives
 
-`customs-box` is a host layout, the thing DESIGN.md says customs is not.
-Its code is its own package, `customs_box`, beside `customs`. It may
-import `customs` (the policy loader); the programs never import it,
-which `tests/test_closure.py` holds. The customs RPM
-carries it, `/usr/bin/customs-box` and the package beside `customs` in
+`moathut` is a host layout, the thing DESIGN.md says moatery is not.
+Its code is its own package, `moathut`, beside `moatery`. It may
+import `moatery` (the policy loader); the programs never import it,
+which `tests/test_closure.py` holds. The moatery RPM
+carries it, `/usr/bin/moathut` and the package beside `moatery` in
 site-packages; there is no separate package. `tests/test_closure.py`
 holds the RPM's spec to installing both packages and every program.
 
 ## Requirements
 
-The customs programs; podman 5.0 or later (quadlet `.pod` units);
+The moatery programs; podman 5.0 or later (quadlet `.pod` units);
 systemd 256 or later (`LoadCredentialEncrypted=` in a user unit); a
 lingering user (`loginctl enable-linger`) for a box to outlive the login
 session.

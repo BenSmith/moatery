@@ -1,9 +1,0 @@
-[Unit]
-Description=Rotate the customs request record
-
-[Timer]
-OnCalendar=hourly
-Persistent=true
-
-[Install]
-WantedBy=timers.target
