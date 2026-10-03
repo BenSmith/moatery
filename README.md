@@ -14,9 +14,10 @@ workload never sees.
 
 ## What it is
 
-Two programs do the work, in stdlib Python. They take everything on the
-command line but the inspector's policy, one JSON document, and the
-broker's keys, which systemd hands it in `$CREDENTIALS_DIRECTORY`:
+Six programs, stdlib Python. Three run beside each workload and take
+everything on the command line but the inspector's policy, one JSON
+document; the responder's `--static` map, a file; and the broker's keys,
+which systemd hands it in `$CREDENTIALS_DIRECTORY`:
 
 - **customs-inspect** — a transparent egress inspector. Outbound 443
   (and 80) from the workload is redirected into it; it reads the SNI or
@@ -29,22 +30,24 @@ broker's keys, which systemd hands it in `$CREDENTIALS_DIRECTORY`:
   instead of the origin. The broker discards whatever header the workload
   sent (a placeholder, so the SDK is happy), attaches the real one, and
   dials the provider itself, from outside the workload. The placeholder
-  never leaves loopback; the key never enters the workload.
+  never leaves the host; the key never enters the workload.
+- **customs-resolve** — the workload's nameserver. It answers every name
+  with the address the redirect catches, or from the `--static` map, and
+  asks no one, so the workload's DNS is not a way out.
 
-A third, **customs-resolve**, is the workload's nameserver: it answers
-every name with the address the redirect catches, or from a `--static`
-map file, and asks no one, so the workload's DNS is not a way out.
-**customs-mint-ca** makes the per-workload CA once, before the inspector
-first starts, and
-**customs-netns-listen** binds the inspector's or the responder's
-listeners inside a rootless container's network namespace and hands them
-over (shape 1n).
+Two put them in place:
 
-**customs-box** puts them together for command-line work: `customs-box
-create NAME --policy FILE` makes a long-lived box, a rootless container
-with its own home, inspector and responder, and a broker once its policy
-names a credential; `customs-box enter NAME` runs a shell or a command
-in it.
+- **customs-mint-ca** makes the per-workload CA once, before the
+  inspector first starts.
+- **customs-netns-listen** binds the inspector's or the responder's
+  listeners inside a rootless container's network namespace and hands
+  them over (shape 1n).
+
+And **customs-box** puts them all together for command-line work:
+`customs-box create NAME --policy FILE` makes a long-lived box, a rootless
+container with its own home, inspector and responder, and a broker once
+its policy names a credential; `customs-box enter NAME` runs a shell or a
+command in it.
 
 The workload cannot name the broker, cannot choose to use it, and cannot
 be pointed at another workload's. The only thing that dials the broker is
@@ -114,7 +117,7 @@ every push and pull request.
 
 ## Status
 
-Version 0.5.1. Both programs have run end to end on a real host in
+Version 0.5.1. The programs have run end to end on a real host in
 four shapes: a rootless container (`tests/manual/shape1_rig.py`), the
 same with the listeners in the container (`tests/manual/shape1n_rig.py`),
 a sidecar in a pod (`tests/manual/shape1b_rig.py`), and a VM inside the
