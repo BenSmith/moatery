@@ -24,6 +24,42 @@ processes hold no `CAP_NET_ADMIN`, so they cannot touch what was
 loaded. The rules see only the container's traffic. A VM is placed
 the same way, as one more process inside such a container.
 
+### Root in a user namespace
+
+A user namespace maps a range of uids to the host's. Rootless podman
+keeps one per user: the user's own uid is 0 inside it, and the user's
+subordinate uids (`/etc/subuid`) fill the rest. `podman unshare` runs a
+command in it, as that uid 0, with every capability.
+
+Those capabilities count only over what the user namespace owns, and a
+namespace is owned by the user namespace it was made in. The network
+namespace podman makes for a container is made in the user's, so root
+there may, in that network namespace alone:
+
+- load, list and delete nft tables, chains and their counters;
+- add addresses and routes, and bring links up and down;
+- bind ports below 1024;
+- join it (`nsenter -n`), which takes `CAP_SYS_ADMIN` over its owner,
+  and is why the recipes run `nsenter` under `podman unshare`.
+
+It may not do any of that in the host's network namespace, which the
+host's initial user namespace owns: no host rule, route or address, and
+no host-wide setting (the kernel's netfilter logging from other
+namespaces, below, is one). Outside the network stack it is the user:
+files are reached through the uid map, so it reads and writes what the
+user and the subordinate uids own, and nothing more. It is not root on
+the host, and needs none of the host's.
+
+The workload's processes run in the same user namespace, or in one
+podman makes inside it, and may be uid 0 there too. What keeps them
+off the rules is not their uid but their capabilities: podman's default
+set leaves out `CAP_NET_ADMIN`, and a process cannot gain one its
+bounding set lacks, by `sudo`, a setuid binary or file capabilities.
+A namespace the workload makes for itself (`unshare -rn`) is its own
+and has no route out but through the container's, whose rules it
+meets. A container given `CAP_NET_ADMIN` (`--cap-add net_admin`,
+`--privileged`) can delete the rules, and is out of scope.
+
 A uid cannot be the selector without root. Every socket the user opens
 — pasta's, the inspector's, the broker's, the user's editor's — has
 the user's uid, so a rule on the uid selects nothing. With root it can
@@ -722,8 +758,8 @@ workloadctl lays customs out this way. It creates a user per workload,
 writes system units, and runs the inspector as the workload's user and
 the broker under `DynamicUser=`, whose uid systemd draws from a range
 disjoint from the workloads', so the credential is decrypted only where
-that uid can read it. Its records of the decisions are its ADRs 007 to
-009.
+that uid can read it. Its records of the decisions are its ADRs 007 
+to 009.
 
 The programs are the same here as in every placement: the same flags,
 policy, trust bundle and status files. customs ships no root layout;
