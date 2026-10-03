@@ -44,10 +44,11 @@ Two put them in place:
   them over (shape 1n).
 
 And **customs-box** puts them all together for command-line work:
-`customs-box create NAME --policy FILE` makes a long-lived box, a rootless
-container with its own home, inspector and responder, and a broker once
-its policy names a credential; `customs-box enter NAME` runs a shell or a
-command in it.
+`customs-box create NAME --policy FILE` makes a long-lived rootless 
+container with its own home, inspector and responder, and a broker 
+once its policy names a credential; `customs-box enter NAME` runs a 
+shell or a command in it. A lot like toolbx or distrobox, with some 
+handles to manage and monitor ingress and egress.
 
 The workload cannot name the broker, cannot choose to use it, and cannot
 be pointed at another workload's. The only thing that dials the broker is
@@ -63,7 +64,7 @@ sockets, so rules can select them without the workload's cooperation.
   by that uid, and `meta skuid` selects them.
 - Without root there is no uid to spend, so the owner is a **network
   namespace you are root in and the workload is not**. A rootless podman
-  container is the cheapest way to get one; rules go inside its netns via
+  container is an inexpensive way to get one; rules go inside its netns via
   `podman unshare nsenter`, and the container's own processes hold no
   `CAP_NET_ADMIN` to undo them. A VM is one more process inside such a
   container.
@@ -76,10 +77,11 @@ flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
 
 - [docs/POLICY.md](docs/POLICY.md): the policy document the inspector
   reads.
-- [docs/DESIGN.md](docs/DESIGN.md): placing the pair: a rootless
-  container, with the inspector's listeners on the host or in the
-  container; a sidecar in a pod; a VM; and what the host has to do
-  that customs does not (private addresses among it).
+- [docs/DESIGN.md](docs/DESIGN.md): placing customs beside a rootless
+  container, with its listeners on the host or in the container's
+  network namespace; as a sidecar in a pod; and for a VM. Also how the
+  workload's DNS is answered, and what the host has to do that customs
+  does not (private addresses among it).
 - [docs/BOX-GUIDE.md](docs/BOX-GUIDE.md): customs-box, long-lived
   inspected containers for command-line work, as a user's guide;
   [docs/BOX.md](docs/BOX.md) is its reference.
