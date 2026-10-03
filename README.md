@@ -77,7 +77,7 @@ host ([DESIGN.md](docs/DESIGN.md)):
   network namespace (what customs-box uses);
 - **sidecar**: the programs as a second container in the workload's
   pod, with no host install;
-- **VM**: qemu as the workload of a host-placed container.
+- **VM**: qemu as the workload of a container in any of the three.
 
 The policy, the trust bundle and the sealed credential are the same in
 every placement.
@@ -137,7 +137,7 @@ coverage` on every push and pull request.
 
 Version 0.5.1. Each placement, and customs-box, has a rig that runs it
 end to end on a real host: `tests/manual/host_rig.py`, `netns_rig.py`,
-`sidecar_rig.py`, `vm_rig.py` and `box_rig.py`
+`sidecar_rig.py`, `vm_rig.py`, `vm_placement_rig.py` and `box_rig.py`
 ([tests/manual/README.md](tests/manual/README.md)).
 
 ## Licence

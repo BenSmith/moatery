@@ -260,11 +260,11 @@ Stopping that is a rule on the programs' own outbound sockets, and
 customs loads no rules. Whoever places it writes one, where the
 placement gives them somewhere to put it:
 
-- **Host, netns and VM**, with the programs on the host: there is no
-  rule to write without root. The programs' sockets are the user's, like
-  everything else the user runs, and the host has no namespace of
-  theirs to hold a rule. Here the policy is the whole control: keep
-  wildcards off domains other people can add names under.
+- **Host and netns**, and a VM in either, with the programs on the
+  host: there is no rule to write without root. The programs' sockets
+  are the user's, like everything else the user runs, and the host has
+  no namespace of theirs to hold a rule. Here the policy is the whole
+  control: keep wildcards off domains other people can add names under.
 - **Sidecar**: the pod's namespace holds the programs' sockets, and the
   recipe already marks their connections (`ct mark 0x1`, copied onto
   every packet as `meta mark 0x1`) so the drop chain can exempt them.
@@ -308,7 +308,7 @@ loaded that dial succeeds, and the list only changes the report.
 | host | user units on the host | the host's `127.0.0.1`, through a loopback address pasta maps | every uid on the host; the inspector refuses them |
 | netns | user units on the host | the container's own loopback | nothing outside the container |
 | sidecar | a second container in the workload's pod | the pod's loopback | nothing outside the pod |
-| VM | as host, with qemu as the workload | as host | as host |
+| VM | as the placement it is in, with qemu as the workload | as that placement | as that placement |
 
 - **Host** is the plainest: a socket unit binds the listeners, and
   [examples/](../examples/) has its units. The inspector's ports are
@@ -321,7 +321,8 @@ loaded that dial succeeds, and the list only changes the report.
 - **Sidecar** needs no host install: the programs are an image. It
   needs more rules, since the programs' own dials leave through the
   workload's namespace.
-- **VM** is the host placement with qemu as the workload.
+- **VM** is any of the three with qemu as the workload; the guest's
+  egress is the container's.
 
 ## Host: a rootless podman container, listeners on the host
 
