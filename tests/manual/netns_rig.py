@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""shape1n_rig.py — shape 1 with the inspector's listeners in the container.
+"""netns_rig.py — the inspector's listeners in the container's netns.
 
-Shape 1n of docs/DESIGN.md: one rootless podman container under plain
+"Netns" in docs/DESIGN.md: one rootless podman container under plain
 pasta, the broker as a hand-written user unit, the inspector and the
 responder as transient user units started between `podman init` and
 `podman start` through customs-netns-listen, which binds their sockets in
 the container's network namespace. Run on the proving host as an
 ordinary user, from a checkout:
 
-    python3 tests/manual/shape1n_rig.py [--keep] [--without-rules]
+    python3 tests/manual/netns_rig.py [--keep] [--without-rules]
                                         [--without-dns-redirect]
                                         [--without-netns-pid]
                                         [--without-notify]
 
-The two host facts riglib needs sudo for are shape 1's, undone at teardown.
+The two host facts riglib needs sudo for are host_rig's, undone at teardown.
 
 THE ROWS
 
@@ -89,21 +89,21 @@ from customs.egress_ca import ca_cert_path  # noqa
 from customs.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
 from customs.peer_identity import PROC_NET_TCP, netns_tables  # noqa
 
-CONTAINER = "customs-rig-1n"
-UNIT = "customs-rig-1n"
+CONTAINER = "customs-rig-netns"
+UNIT = "customs-rig-netns"
 BROKER_SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR",
                                     f"/run/user/{os.getuid()}"),
                      UNIT, "broker.sock")
-HOSTS_MARK = "customs-shape1n-rig"
+HOSTS_MARK = "customs-netns-rig"
 
 UNITS = riglib.HOME / ".config" / "systemd" / "user"
 STATE = RIG / "state"
-POLICY = RIG / "inspect-1n.json"
-STATUS = RIG / "inspect-1n-status.json"
-RESOLVE_STATUS = RIG / "resolve-1n-status.json"
-RECORD = RIG / "egress-1n.jsonl"
-BUNDLE = RIG / "bundle-1n.pem"
-CRED = RIG / f"{CREDENTIAL}-1n.cred"
+POLICY = RIG / "inspect-netns.json"
+STATUS = RIG / "inspect-netns-status.json"
+RESOLVE_STATUS = RIG / "resolve-netns-status.json"
+RECORD = RIG / "egress-netns.jsonl"
+BUNDLE = RIG / "bundle-netns.pem"
+CRED = RIG / f"{CREDENTIAL}-netns.cred"
 
 # PYTHONPATH when the programs are the checkout's. SSL_CERT_FILE hands both
 # programs the stub's certificate and replaces their trust store, which is
@@ -120,11 +120,11 @@ def seal_credential(secret):
 
 
 def start_broker():
-    """Shape 1's broker unit, unchanged: the placement of the listeners
+    """host_rig's broker unit, unchanged: the placement of the listeners
     does not touch it."""
     UNITS.mkdir(parents=True, exist_ok=True)
     (UNITS / f"{UNIT}-broker.service").write_text(
-        "# written by tests/manual/shape1n_rig.py — removed at teardown\n"
+        "# written by tests/manual/netns_rig.py — removed at teardown\n"
         "[Service]\n"
         f"ExecStart={sys.executable} {LIBEXEC / 'customs-broker'}"
         f" --name {NAME} --listen unix:%t/{UNIT}/broker.sock"
@@ -275,7 +275,7 @@ def default_route_device():
 
 
 def load_rules(pid, redirect_dns):
-    """Shape 1's rules with the listeners in the netns: the redirect lands
+    """host_rig's rules with the listeners in the netns: the redirect lands
     443, 80 and 53 on this namespace's loopback, which never crosses the
     egress device, so the egress chain accepts nothing. `redirect_dns`
     false leaves the port-53 lines out, for the `dns` rows to go red."""

@@ -17,7 +17,7 @@ Requires:       python(abi) = %{python3_version}
 # The command line: the CA and every per-host certificate are openssl
 # invocations.
 Requires:       openssl >= 3.5
-# The container shapes: rules loaded into the workload's netns with nft,
+# The container placements: rules loaded into the workload's netns with nft,
 # its traffic carried by pasta.
 Recommends:     podman
 Recommends:     passt

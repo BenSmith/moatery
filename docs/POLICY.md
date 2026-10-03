@@ -167,7 +167,7 @@ Go send none unless configured to. A terminated connection takes ECH:
 the inspector completes that handshake itself.
 
 Under `"inspect"` the workload must trust the inspector's CA before it
-first runs; see [DESIGN.md](DESIGN.md), "The same in every shape".
+first runs; see [DESIGN.md](DESIGN.md), "The same in every placement".
 
 ## HTTP/2
 

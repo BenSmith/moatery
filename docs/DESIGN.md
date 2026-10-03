@@ -3,17 +3,25 @@
 customs needs one thing from the host: something outside the workload
 that owns the workload's outbound sockets, so rules can select them
 without the workload's cooperation. This is how to get that with nothing
-but a normal user, for each shape that matters. The policy document is
-described in [POLICY.md](POLICY.md); ready-made user units for shape 1
-are in [examples/](../examples/).
+but a normal user, for each placement that matters:
 
-## The same in every shape
+- **host**: a rootless podman container, with customs' listeners on the
+  host's loopback;
+- **netns**: the same, with the listeners inside the container's network
+  namespace;
+- **sidecar**: customs as a second container in the workload's pod;
+- **VM**: a VM run inside a container placed as above.
+
+The policy document is described in [POLICY.md](POLICY.md); ready-made
+user units for the host placement are in [examples/](../examples/).
+
+## The same in every placement
 
 - The programs. Flags only, stdlib. The inspector and the responder
   (`customs-resolve`, the workload's nameserver) are socket-activated
   (`LISTEN_FDS`), so where they listen is the `.socket` unit's business,
-  not the program's (in shape 1n, `customs-netns-listen` takes the unit's
-  place).
+  not the program's (in the netns placement, `customs-netns-listen` takes
+  the unit's place).
 - The policy document the inspector reads (`--policy`):
 
   ```json
@@ -104,15 +112,15 @@ link-local destination. If an allowed name resolves to one -- a wildcard
 over a domain where anyone can register a subdomain, a DNS answer that
 changes between the check and the dial, or plain misconfiguration -- the
 inspector dials it on 443 or 80, and so does the broker for a brokered
-host. In shape 1 the programs run on the host as the user, so a name
-that resolves to `127.0.0.1` reaches whatever the user has listening on
-the host's loopback.
+host. In the host placement the programs run on the host as the user, so
+a name that resolves to `127.0.0.1` reaches whatever the user has
+listening on the host's loopback.
 
 Stopping that is a rule on the programs' own outbound sockets, and
-customs loads no rules. Whoever runs it writes one, where the shape gives
-them somewhere to put it:
+customs loads no rules. Whoever runs it writes one, where the placement
+gives them somewhere to put it:
 
-- **Shape 1b (sidecar):** the pod's netns holds the programs' sockets, and
+- **Sidecar:** the pod's netns holds the programs' sockets, and
   the recipe below already marks their connections (`ct mark 0x1`, copied
   onto every packet as `meta mark 0x1`) so the egress chain can exempt
   them. The rule goes in that egress chain after the resolver's lines and
@@ -140,11 +148,11 @@ them somewhere to put it:
   resolver is there, and so is the host's loopback if the pod maps it
   (`--map-host-loopback`).
 
-  `tests/manual/shape1b_rig.py` runs these lines, with an accept line
+  `tests/manual/sidecar_rig.py` runs these lines, with an accept line
   for its stand-in provider on the host's mapped loopback: without that
   line the provider's dial is dropped and never arrives, and the
   programs' own DNS query is answered.
-- **Shapes 1, 1n, 2 and 3 with the programs on the host:** there is no rule
+- **Host, netns and VM, with the programs on the host:** there is no rule
   to write without root. The programs' sockets are the user's, like
   everything else the user runs, and the host has no namespace of theirs
   to hold a rule. Here the allowlist is the whole control: keep wildcards
@@ -187,14 +195,15 @@ What remains:
 
 - Everything the workload dials resolves to the inspector's address, so
   a port other than 443 and 80 meets the egress drop, by name as by
-  address. Nothing but those two ports leaves in any shape here.
+  address. Nothing but those two ports leaves in any placement here.
 - A name in `--static` is the exception, for a caller whose own filter
   lets a destination past the inspector: it is answered with the
   addresses the map gives, and none for a family the map lacks, since
   the synthesised address does not serve that destination's port. Such
   a name counts as listed.
-- The programs' own lookups are not the responder's. In shapes 1 and 1n
-  they are the host's; in 1b they go to pasta's forwarder, and the
+- The programs' own lookups are not the responder's. In the host and
+  netns placements they are the host's; as a sidecar they go to pasta's
+  forwarder, and the
   egress chain accepts port 53 for the programs' mark alone.
 - The responder counts, in its status file, the queries for names no
   list in the inspector's policy admits (`unlisted`, and the first
@@ -204,7 +213,7 @@ What remains:
 - A name in the workload's hosts file is never asked: hence
   `--hosts-file image`, which keeps the host's entries out.
 
-## Shape 1: a rootless podman container
+## Host: a rootless podman container, listeners on the host
 
 ```
 # 1. CA + bundle + policy.json (examples/README.md)
@@ -303,26 +312,26 @@ inspector completes the handshake under a leaf its own CA minted for the
 refused name and answers 403, so the workload's client sees a real
 refusal. The reason is in the record, not the body.
 
-`tests/manual/shape1_rig.py` is this recipe as a rig, and the rig is
+`tests/manual/host_rig.py` is this recipe as a rig, and the rig is
 where each line above was checked.
 
 IPv6: `--map-host-loopback` takes a v6 address as well, and the filter
 chain above is `inet`, so a v6 dial with no rule for it is dropped rather
 than leaked. Either rule both families or run pasta `-4`.
 
-## Shape 1n: shape 1 with the listeners in the container's netns
+## Netns: the listeners in the container's network namespace
 
-Shape 1, with the inspector's two listeners and the responder's port
-bound inside the container's network namespace instead of on the host's
-loopback. The inspector process still runs on the host as the user and
-dials its upstreams from the host's namespace. The broker is shape 1's,
-unchanged.
+The host placement, with the inspector's two listeners and the
+responder's port bound inside the container's network namespace instead
+of on the host's loopback. The inspector process still runs on the host
+as the user and dials its upstreams from the host's namespace. The
+broker is the host placement's, unchanged.
 
-Against shape 1 this buys:
+Against the host placement this buys:
 
 - No other uid on the host can reach the planes. Nothing listens on the
   host at all; the only processes that can dial the listeners are the
-  container's own. In shape 1 every uid can connect, and the caller
+  container's own. On the host every uid can connect, and the caller
   check is what refuses them.
 - No loopback map. The container gets plain `--network pasta`, so no
   address in it reaches the host's `127.0.0.1`.
@@ -338,8 +347,9 @@ And costs:
   with it; one left running holds listeners nothing can reach.
 - They are visible from inside. The container's `/proc/net/tcp` (and so
   `ss -ltn`) lists `127.0.0.1:8443`, `:8080` and `:8053` as listening,
-  with no process in the container owning them. Shape 1b's listeners
-  show the same way; shape 1's are not in the container's table.
+  with no process in the container owning them. The sidecar's listeners
+  show the same way; the host placement's are not in the container's
+  table.
 
 **The bind.** A rootless container's network namespace belongs to a user
 namespace the user owns. Joining a netns needs `CAP_SYS_ADMIN` over it
@@ -350,7 +360,7 @@ child that joins both, by a pidfd of the container's process, binds
 socket pair and exits. The launcher itself never joins: it puts the
 listeners on fds 3 and 4, sets `LISTEN_PID` and `LISTEN_FDS`, and execs
 the command. The inspector still never binds; the bind is a short-lived
-process's, as it is the socket unit's in shape 1. With `--resolver` it
+process's, as it is the socket unit's on the host. With `--resolver` it
 binds the responder's `127.0.0.1:8053`, UDP and TCP, instead. No podman
 is involved
 past `podman inspect` for the pid, and the pidfd makes a pid that exits
@@ -374,7 +384,7 @@ would look every caller up in the host's table, find none, and admit
 them all unnamed.
 
 ```
-# 1–2. as shape 1: CA + bundle + policy.json; the broker's user unit
+# 1–2. as on the host: CA + bundle + policy.json; the broker's user unit
 # 3. the container, created but not started; plain pasta, no map
 podman create --network pasta --hosts-file image \
   -v bundle.pem:/usr/local/share/ca-certificates/egress-ca.crt:ro,Z \
@@ -383,7 +393,7 @@ podman create --network pasta --hosts-file image \
   -e EXAMPLE_API_KEY=sk-placeholder  IMAGE
 podman init NAME
 PID=$(podman inspect -f '{{.State.Pid}}' NAME)
-# 4. rules into the netns: shape 1's, landing on the netns's loopback
+# 4. rules into the netns: the host's, landing on the netns's loopback
 DEV=$(ip route show default | awk '{print $5}')
 podman unshare nsenter -t "$PID" -n nft -f - <<NFT
 table inet customs {
@@ -425,15 +435,16 @@ the workload's is ordered after) returns only then. As `Type=simple`
 the unit is started when forked, and a first dial can find nothing
 listening and be refused. Nothing the workload may send
 crosses the egress device, so the chain accepts nothing, not even the
-neighbour discovery shape 1 needs for the map. IPv6 is as in shape 1:
+neighbour discovery the host placement needs for the map. IPv6 is as
+there:
 the listeners and the redirect are v4, and a v6 dial falls to the
 egress drop.
 
-`tests/manual/shape1n_rig.py` is this recipe as a rig, and
+`tests/manual/netns_rig.py` is this recipe as a rig, and
 [examples/quadlet/](../examples/quadlet/) as a quadlet pod, which holds
 the namespace across restarts of the workload.
 
-## Shape 1b: a sidecar in a pod
+## Sidecar: customs in the workload's pod
 
 Same container, but the inspector is a second container in a `podman
 pod` rather than a host process. `podman pod create` starts the infra
@@ -608,26 +619,26 @@ The pod's `/proc/self/uid_map` is a rootless one, with the inside and
 outside columns different. Both programs' start-up checks read the
 inside column, which is the uid the told `--caller-uid` is in.
 
-What the sidecar buys is distribution: the programs become an image, not a
-host install. On a host that already carries the RPM, shape 1 is
-strictly simpler. In either sidecar variant the CA private key lives
-in the pod; a workload-container escape is a host escape, so this is not
-a new exposure, but it is worth saying.
+What the sidecar buys is distribution: the programs become an image, not
+a host install. On a host that already carries the RPM, the host
+placement is strictly simpler. In either sidecar variant the CA private
+key lives in the pod; a workload-container escape is a host escape, so
+this is not a new exposure, but it is worth saying.
 
-Proved by `tests/manual/shape1b_rig.py`, red without the rules. The
+Proved by `tests/manual/sidecar_rig.py`, red without the rules. The
 probe that is new here: from the workload, the broker's socket path is
 ENOENT -- not ECONNREFUSED, which would mean the path exists and the
 mount is shared -- and nothing but the two planes and the responder's
 port listens on TCP in the pod.
 
-## Shape 2: a VM
+## VM: a VM inside a rootless container
 
-Run qemu inside a shape-1 container with `--device /dev/kvm` and
-`-netdev passt` (or `passt --socket` + `-netdev stream`). The guest's
-egress is now the container's egress and the recipe applies verbatim.
-`tests/manual/shape2_rig.py` is this recipe as a rig.
-Guest root can rewrite the guest's own nft all day; the rules that matter
-are one namespace out, where qemu and passt hold no `CAP_NET_ADMIN`.
+Run qemu inside the host placement's container with `--device /dev/kvm`
+and `-netdev passt` (or `passt --socket` + `-netdev stream`). The
+guest's egress is now the container's egress and the recipe applies
+verbatim. `tests/manual/vm_rig.py` is this recipe as a rig. Guest root
+can rewrite the guest's own nft all day; the rules that matter are one
+namespace out, where qemu and passt hold no `CAP_NET_ADMIN`.
 
 Guest-side touches, both via the cloud-init seed: the CA bundle plus the
 env vars, and the placeholder in the agent's environment.
@@ -636,12 +647,13 @@ Friction to expect: SELinux on `/dev/kvm` inside `container_t`
 (`container_use_devices` or a label opt-out); virtiofs/9p if a shared
 directory is wanted.
 
-The other two VM shapes, for the record:
+The other two ways to place a VM, for the record:
 
 - **Session libvirt / user-run qemu with passt on the host.** No selector
   exists: passt re-originates as the user, the guest owns its own netns,
   and there is no namespace of the user's to hold rules. Wrapping
-  qemu+passt in a hand-made `pasta` netns is shape 2 without the image.
+  qemu+passt in a hand-made `pasta` netns is this placement without the
+  image.
 - **System libvirt on a bridge (root).** Selector is the tap or the
   bridge, rules in `prerouting`/`forward` on the host from a libvirt hook,
   inspector bound on the bridge address. Works and needs root, but
@@ -650,11 +662,11 @@ The other two VM shapes, for the record:
   identity.
 
 This looks backwards — a VM in a container to filter it — but it is the
-same move as every other shape: turn forwarded packets into originated
-sockets so something outside the guest owns them. With root the owner
-can be a uid; without root it has to be a namespace, and the container
-is just the cheapest one to get. It contributes no isolation of its own, only the
-boundary the rules hang on.
+same move as every other placement: turn forwarded packets into
+originated sockets so something outside the guest owns them. With root
+the owner can be a uid; without root it has to be a namespace, and the
+container is just the cheapest one to get. It contributes no isolation
+of its own, only the boundary the rules hang on.
 
 ## What customs does not do, on purpose
 

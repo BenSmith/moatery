@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""shape1_rig.py — does the pair work with nothing but a normal user?
+"""host_rig.py — does customs work with nothing but a normal user?
 
-Shape 1 of docs/DESIGN.md, as it stands: one rootless podman container
-under pasta, both programs as hand-written user units, the nft rules
+"Host" in docs/DESIGN.md, as it stands: one rootless podman container
+under pasta, the programs as hand-written user units, the nft rules
 loaded into the container's netns, a placeholder in the container's
 environment, and one real request that reaches the provider carrying the
 sealed key. Run on the proving host as an ordinary user, from a checkout:
 
-    python3 tests/manual/shape1_rig.py [--keep] [--without-rules]
+    python3 tests/manual/host_rig.py [--keep] [--without-rules]
                                        [--without-neighbour-discovery]
                                        [--without-dns-redirect]
                                        [--broker-over-tcp]
@@ -79,7 +79,7 @@ and neighbour-discovery lines; `neighbour` and `unlisted` must go red.
 
 WHAT THIS RIG TELLS THE DESIGN
 
-Three of DESIGN.md's shape-1 facts were not facts on this host and the
+Three of DESIGN.md's host-placement facts were not facts on this host and the
 recipe here is what worked:
 
   - podman starts pasta with `--no-map-gw`. The gateway does NOT map to the
@@ -123,7 +123,7 @@ UNIT = "customs-rig"
 BROKER_SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR",
                                     f"/run/user/{os.getuid()}"),
                      UNIT, "broker.sock")
-HOSTS_MARK = "customs-shape1-rig"
+HOSTS_MARK = "customs-host-rig"
 
 UNITS = riglib.HOME / ".config" / "systemd" / "user"
 STATE = RIG / "state"
@@ -159,7 +159,7 @@ def write_units(over_tcp):
     endpoint = (f"{BROKER_ADDR}:{BROKER_PORT}" if over_tcp
                 else f"unix:%t/{UNIT}/broker.sock")
     (UNITS / f"{UNIT}-broker.service").write_text(
-        "# written by tests/manual/shape1_rig.py — removed at teardown\n"
+        "# written by tests/manual/host_rig.py — removed at teardown\n"
         "[Service]\n"
         f"ExecStart={py} {LIBEXEC / 'customs-broker'}"
         f" --name {NAME} --listen {endpoint}"
@@ -173,12 +173,12 @@ def write_units(over_tcp):
         "RuntimeDirectoryMode=0700\n"
         + env)
     (UNITS / f"{UNIT}-inspect.socket").write_text(
-        "# written by tests/manual/shape1_rig.py — removed at teardown\n"
+        "# written by tests/manual/host_rig.py — removed at teardown\n"
         "[Socket]\n"
         f"ListenStream=127.0.0.1:{INSPECT_TLS}\n"
         f"ListenStream=127.0.0.1:{INSPECT_CLEARTEXT}\n")
     (UNITS / f"{UNIT}-inspect.service").write_text(
-        "# written by tests/manual/shape1_rig.py — removed at teardown\n"
+        "# written by tests/manual/host_rig.py — removed at teardown\n"
         "[Service]\n"
         f"ExecStart={py} {LIBEXEC / 'customs-inspect'}"
         f" --name {NAME} --policy {POLICY} --state-dir {STATE}"
@@ -186,12 +186,12 @@ def write_units(over_tcp):
         f" --broker {endpoint}\n"
         + env)
     (UNITS / f"{UNIT}-resolve.socket").write_text(
-        "# written by tests/manual/shape1_rig.py — removed at teardown\n"
+        "# written by tests/manual/host_rig.py — removed at teardown\n"
         "[Socket]\n"
         f"ListenDatagram=127.0.0.1:{RESOLVE_PORT}\n"
         f"ListenStream=127.0.0.1:{RESOLVE_PORT}\n")
     (UNITS / f"{UNIT}-resolve.service").write_text(
-        "# written by tests/manual/shape1_rig.py — removed at teardown\n"
+        "# written by tests/manual/host_rig.py — removed at teardown\n"
         "[Service]\n"
         f"ExecStart={py} {LIBEXEC / 'customs-resolve'}"
         f" --name {NAME} --address {LOOPBACK_MAP} --policy {POLICY}"

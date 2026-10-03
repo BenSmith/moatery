@@ -6,7 +6,7 @@ image whose lint exited 0, but only with --fatal-warnings: without it a
 warning exits 0 too. The image carries no --skip, so a new lint is never
 exempted without this test changing.
 
-The spec's Recommends are what the container shapes need on the host; an
+The spec's Recommends are what the container placements need on the host; an
 image that dropped one, or a Recommends the image never gained, builds
 green and fails at the first container.
 """

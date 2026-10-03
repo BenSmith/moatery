@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""The quadlet example's units name each other, and load shape 1n's rules.
+"""The quadlet example's units name each other, and load the netns rules.
 
 Five files and a script, joined only by names: a unit that names one no
 file provides is a dependency systemd drops without a word, and a pod
 name the script is not given is a namespace nothing binds into. The
-rules are the ones DESIGN.md gives for shape 1n; a copy that drifted
-from them would redirect what the design does not, or fail to.
+rules are the ones DESIGN.md gives for the netns placement; a copy that
+drifted from them would redirect what the design does not, or fail to.
 """
 
 import re
@@ -108,9 +108,9 @@ class TestQuadletExample(unittest.TestCase):
         pod = QUADLET / "example.pod"
         self.assertIn("--share-parent=false", _keys(pod, "PodmanArgs"))
 
-    def test_the_rules_are_shape_1n(self):
+    def test_the_rules_are_the_netns_placements(self):
         design = DESIGN.read_text().split(
-            "## Shape 1n", 1)[1].split("\n## ", 1)[0]
+            "## Netns:", 1)[1].split("\n## ", 1)[0]
         script = (QUADLET / "customs-pod-netns").read_text()
         self.assertEqual(_ruleset(script), _ruleset(design))
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 # customs-pod-netns pid POD: the pid of POD's infra container, whose
 # network namespace every container of the pod shares.
-# customs-pod-netns rules POD: load shape 1n's rules into it.
+# customs-pod-netns rules POD: load the netns placement's rules into it.
 set -eu
 infra=$(podman pod inspect "$2" --format '{{.InfraContainerID}}')
 pid=$(podman inspect -f '{{.State.Pid}}' "$infra")

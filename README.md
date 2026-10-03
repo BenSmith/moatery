@@ -41,7 +41,7 @@ Two put them in place:
   inspector first starts.
 - **customs-netns-listen** binds the inspector's or the responder's
   listeners inside a rootless container's network namespace and hands
-  them over (shape 1n).
+  them over.
 
 And **customs-box** puts them all together for command-line work:
 `customs-box create NAME --policy FILE` makes a long-lived rootless 
@@ -95,7 +95,8 @@ flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
 - `--help` on any of the programs: the flags.
 - [container/](container/): the sidecar image, the programs in one
   container of a pod.
-- [examples/quadlet/](examples/quadlet/): shape 1n as a quadlet pod.
+- [examples/quadlet/](examples/quadlet/): the listeners in the
+  container's network namespace, as a quadlet pod.
 - [examples/bootc/](examples/bootc/): a bootc image with customs and
   what it recommends installed.
 
@@ -104,7 +105,7 @@ flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
 Python 3.14, standard library only; OpenSSL 3.5 (`openssl` on `PATH`, for
 the CA and the per-host certificates); systemd 256 or later for
 `LoadCredentialEncrypted=` in a user unit; podman with pasta for the
-container shapes.
+container placements.
 
 Building the RPM takes `just`, `rpm-build` and
 `python3-rpm-macros`: `just rpm` builds from the checkout into
@@ -121,10 +122,10 @@ every push and pull request.
 ## Status
 
 Version 0.5.1. The programs have run end to end on a real host in
-four shapes: a rootless container (`tests/manual/shape1_rig.py`), the
-same with the listeners in the container (`tests/manual/shape1n_rig.py`),
-a sidecar in a pod (`tests/manual/shape1b_rig.py`), and a VM inside the
-container (`tests/manual/shape2_rig.py`); and a box, through
+four placements: a rootless container (`tests/manual/host_rig.py`), the
+same with the listeners in the container (`tests/manual/netns_rig.py`),
+a sidecar in a pod (`tests/manual/sidecar_rig.py`), and a VM inside the
+container (`tests/manual/vm_rig.py`); and a box, through
 `customs-box` (`tests/manual/box_rig.py`). The workload's DNS is answered by
 customs-resolve and forwarded nowhere ([DESIGN.md](docs/DESIGN.md),
 "DNS").

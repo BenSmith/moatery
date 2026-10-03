@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""shape2_rig.py -- does the pair filter a VM's egress?
+"""vm_rig.py -- does customs filter a VM's egress?
 
-Shape 2 of docs/DESIGN.md, as it stands: one rootless podman container
+"VM" in docs/DESIGN.md, as it stands: one rootless podman container
 under pasta holding nothing but qemu and its passt backend, the guest's
 egress re-originated by passt as sockets in the container's netns, the
-pair as hand-written user units on the host, the nft rules loaded into
-the container's netns, and a workload inside the guest that reaches the
-provider carrying the sealed key. Run on the proving host as an ordinary
-user, from a checkout:
+customs programs as hand-written user units on the host, the nft rules
+loaded into the container's netns, and a workload inside the guest that
+reaches the provider carrying the sealed key. Run on the proving host as
+an ordinary user, from a checkout:
 
-    python3 tests/manual/shape2_rig.py [--keep] [--no-build]
+    python3 tests/manual/vm_rig.py [--keep] [--no-build]
                                        [--image PATH] [--without-rules]
                                        [--without-dns-redirect]
                                        [--without-neighbour-discovery]
 
-Nothing here needs root except the two host facts every shape needs,
+Nothing here needs root except the two host facts every placement needs,
 undone at teardown (see riglib). It needs a KVM host, /dev/kvm readable
 and writable by the user, and a cloud image with cloud-init: the operator
 puts a Fedora Cloud Base Generic qcow2 at
-~/.local/state/customs-rig/shape2/guest.qcow2 once, and the rig builds
-its own qemu container image from tests/manual/shape2.Containerfile.
+~/.local/state/customs-rig/vm/guest.qcow2 once, and the rig builds
+its own qemu container image from tests/manual/vm.Containerfile.
 
 THE ROWS
 
@@ -89,7 +89,7 @@ UNIT = "customs-rig-2"
 BROKER_SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR",
                                     f"/run/user/{os.getuid()}"),
                      UNIT, "broker.sock")
-HOSTS_MARK = "customs-shape2-rig"
+HOSTS_MARK = "customs-vm-rig"
 UNITS = riglib.HOME / ".config" / "systemd" / "user"
 STATE = RIG / "state"
 POLICY = RIG / "inspect-2.json"
@@ -98,13 +98,13 @@ RESOLVE_STATUS = RIG / "resolve-2-status.json"
 RECORD = RIG / "egress-2.jsonl"
 BUNDLE = RIG / "bundle-2.pem"
 CRED = RIG / f"{CREDENTIAL}-2.cred"
-SHAPE2 = RIG / "shape2"
-GUEST_IMAGE = SHAPE2 / "guest.qcow2"
-SEED = SHAPE2 / "seed.iso"
-SERIAL = SHAPE2 / "serial.log"
-PROBE_LOG = SHAPE2 / "probe.log"
-GUEST_SCRIPT = HERE / "shape2_guest.py"
-CONTAINERFILE = HERE / "shape2.Containerfile"
+VM_DIR = RIG / "vm"
+GUEST_IMAGE = VM_DIR / "guest.qcow2"
+SEED = VM_DIR / "seed.iso"
+SERIAL = VM_DIR / "serial.log"
+PROBE_LOG = VM_DIR / "probe.log"
+GUEST_SCRIPT = HERE / "vm_guest.py"
+CONTAINERFILE = HERE / "vm.Containerfile"
 QEMU_IMAGE = "localhost/customs-rig-qemu"
 VM = "/vm"
 CA_IN_GUEST = "/etc/customs-rig/bundle.pem"
@@ -122,7 +122,7 @@ def seal_credential(secret):
 
 
 def write_units():
-    """Shape 1's units, verbatim. The programs run on the host; only the
+    """host_rig's units, verbatim. The programs run on the host; only the
     qemu container and its guest are new."""
     UNITS.mkdir(parents=True, exist_ok=True)
     py = sys.executable
@@ -130,7 +130,7 @@ def write_units():
     env = path + f"Environment=SSL_CERT_FILE={STUB_CERT}\n"
     endpoint = f"unix:%t/{UNIT}/broker.sock"
     (UNITS / f"{UNIT}-broker.service").write_text(
-        "# written by tests/manual/shape2_rig.py -- removed at teardown\n"
+        "# written by tests/manual/vm_rig.py -- removed at teardown\n"
         "[Service]\n"
         f"ExecStart={py} {LIBEXEC / 'customs-broker'}"
         f" --name {NAME} --listen {endpoint}"
@@ -144,12 +144,12 @@ def write_units():
         "RuntimeDirectoryMode=0700\n"
         + env)
     (UNITS / f"{UNIT}-inspect.socket").write_text(
-        "# written by tests/manual/shape2_rig.py -- removed at teardown\n"
+        "# written by tests/manual/vm_rig.py -- removed at teardown\n"
         "[Socket]\n"
         f"ListenStream=127.0.0.1:{INSPECT_TLS}\n"
         f"ListenStream=127.0.0.1:{INSPECT_CLEARTEXT}\n")
     (UNITS / f"{UNIT}-inspect.service").write_text(
-        "# written by tests/manual/shape2_rig.py -- removed at teardown\n"
+        "# written by tests/manual/vm_rig.py -- removed at teardown\n"
         "[Service]\n"
         f"ExecStart={py} {LIBEXEC / 'customs-inspect'}"
         f" --name {NAME} --policy {POLICY} --state-dir {STATE}"
@@ -157,12 +157,12 @@ def write_units():
         f" --broker {endpoint}\n"
         + env)
     (UNITS / f"{UNIT}-resolve.socket").write_text(
-        "# written by tests/manual/shape2_rig.py -- removed at teardown\n"
+        "# written by tests/manual/vm_rig.py -- removed at teardown\n"
         "[Socket]\n"
         f"ListenDatagram=127.0.0.1:{RESOLVE_PORT}\n"
         f"ListenStream=127.0.0.1:{RESOLVE_PORT}\n")
     (UNITS / f"{UNIT}-resolve.service").write_text(
-        "# written by tests/manual/shape2_rig.py -- removed at teardown\n"
+        "# written by tests/manual/vm_rig.py -- removed at teardown\n"
         "[Service]\n"
         f"ExecStart={py} {LIBEXEC / 'customs-resolve'}"
         f" --name {NAME} --address {LOOPBACK_MAP} --policy {POLICY}"
@@ -243,7 +243,7 @@ def default_route_device():
 
 
 def load_rules(pid, neighbour, redirect_dns):
-    """Shape 1's rules, verbatim: the container netns sees only qemu's and
+    """host_rig's rules, verbatim: the container netns sees only qemu's and
     passt's traffic, and the guest's egress is passt's."""
     dev = default_route_device()
     ports = f"{{ {INSPECT_TLS}, {INSPECT_CLEARTEXT}, {RESOLVE_PORT} }}"
@@ -298,9 +298,9 @@ def b64(data):
 def write_seed():
     """The NoCloud seed: the CA bundle, the agent's environment, and the
     guest probe. Both touches the design puts in the seed are here."""
-    SHAPE2.mkdir(parents=True, exist_ok=True)
-    (SHAPE2 / "meta-data").write_text(
-        f"instance-id: customs-shape2-{os.urandom(4).hex()}\n"
+    VM_DIR.mkdir(parents=True, exist_ok=True)
+    (VM_DIR / "meta-data").write_text(
+        f"instance-id: customs-vm-{os.urandom(4).hex()}\n"
         "local-hostname: guest\n")
     profile = "\n".join((
         f"export SSL_CERT_FILE={CA_IN_GUEST}",
@@ -322,45 +322,45 @@ def write_seed():
         "    permissions: '0644'\n"
         "    content: |\n"
         + "".join(f"      {line}\n" for line in profile.splitlines())
-        + "  - path: /usr/local/bin/customs-shape2-guest.py\n"
+        + "  - path: /usr/local/bin/customs-vm-guest.py\n"
         "    permissions: '0755'\n"
         "    encoding: b64\n"
         "    content: |\n"
         f"      {b64(GUEST_SCRIPT.read_bytes())}\n"
-        "  - path: /usr/local/bin/customs-shape2-run\n"
+        "  - path: /usr/local/bin/customs-vm-run\n"
         "    permissions: '0755'\n"
         "    content: |\n"
         "      #!/bin/bash\n"
         "      . /etc/profile.d/customs-rig.sh\n"
         "      exec > /dev/ttyS0 2>&1\n"
         "      echo CUSTOMS-RIG-BOOTED\n"
-        "      python3 /usr/local/bin/customs-shape2-guest.py\n"
+        "      python3 /usr/local/bin/customs-vm-guest.py\n"
         "      echo CUSTOMS-RIG-EXIT=$?\n"
-        "  - path: /etc/systemd/system/customs-shape2-probe.service\n"
+        "  - path: /etc/systemd/system/customs-vm-probe.service\n"
         "    permissions: '0644'\n"
         "    content: |\n"
         "      [Unit]\n"
-        "      Description=shape2 rig guest probe\n"
+        "      Description=vm rig guest probe\n"
         "      [Service]\n"
         "      Type=simple\n"
-        "      ExecStart=/usr/local/bin/customs-shape2-run\n"
+        "      ExecStart=/usr/local/bin/customs-vm-run\n"
         "runcmd:\n"
         "  - [ bash, -lc, 'systemctl daemon-reload; systemctl start "
-        "customs-shape2-probe.service' ]\n"
+        "customs-vm-probe.service' ]\n"
     )
-    (SHAPE2 / "user-data").write_text(user_data)
+    (VM_DIR / "user-data").write_text(user_data)
     tool = seed_tool()
     if tool == "cloud-localds":
         run(["cloud-localds", str(SEED), "user-data", "meta-data"],
-            cwd=SHAPE2)
+            cwd=VM_DIR)
     elif tool == "genisoimage":
         run(["genisoimage", "-quiet", "-output", str(SEED), "-volid",
              "cidata", "-joliet", "-rock", "user-data", "meta-data"],
-            cwd=SHAPE2)
+            cwd=VM_DIR)
     else:
         run(["xorriso", "-as", "mkisofs", "-quiet", "-output", str(SEED),
              "-volid", "cidata", "-joliet", "-rock", "user-data",
-             "meta-data"], cwd=SHAPE2)
+             "meta-data"], cwd=VM_DIR)
     say(f"  seed built with {tool}: {SEED}")
 
 
@@ -385,7 +385,7 @@ def qemu_argv():
 
 def create_container(image):
     run(["podman", "rm", "-f", CONTAINER], check=False)
-    mounts = ["-v", f"{SHAPE2}:{VM}:Z"]
+    mounts = ["-v", f"{VM_DIR}:{VM}:Z"]
     if Path(image).resolve() != GUEST_IMAGE.resolve():
         mounts += ["-v", f"{image}:{VM}/guest.qcow2:ro,Z"]
     run(["podman", "create", "--name", CONTAINER,
@@ -658,7 +658,7 @@ def main():
     ap.add_argument("--no-build", action="store_true",
                     help="reuse the last qemu image")
     ap.add_argument("--image", type=Path, default=GUEST_IMAGE,
-                    help="the guest qcow2 (default: the rig's shape2 dir)")
+                    help="the guest qcow2 (default: the rig's vm dir)")
     ap.add_argument("--guest-timeout", type=int, default=300,
                     help="seconds to wait for the guest's probes")
     ap.add_argument("--without-rules", action="store_true",
@@ -675,7 +675,7 @@ def main():
     args = ap.parse_args()
 
     if platform.machine() != "x86_64":
-        sys.exit("shape 2's rig is x86_64-only (qemu-system-x86_64)")
+        sys.exit("the VM rig is x86_64-only (qemu-system-x86_64)")
     if not Path("/dev/kvm").exists() or not os.access(
             "/dev/kvm", os.R_OK | os.W_OK):
         sys.exit("/dev/kvm is not readable and writable by the user")
@@ -696,7 +696,7 @@ def main():
         sys.exit(f"user manager is {state or 'absent'}; log in with a "
                  "session (ssh is one)")
     RIG.mkdir(parents=True, exist_ok=True)
-    SHAPE2.mkdir(parents=True, exist_ok=True)
+    VM_DIR.mkdir(parents=True, exist_ok=True)
     for stale in (STATUS, RECORD, Path(f"{STATUS}.tmp"), RESOLVE_STATUS,
                   SERIAL, PROBE_LOG):
         stale.unlink(missing_ok=True)

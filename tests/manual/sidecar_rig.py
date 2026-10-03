@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""shape1b_rig.py — does the pair work as a sidecar, with no host install?
+"""sidecar_rig.py — does customs work as a sidecar, with no host install?
 
-Shape 1b of docs/DESIGN.md: a podman pod under pasta, the sidecar image
+"Sidecar" in docs/DESIGN.md: a podman pod under pasta, the sidecar image
 (the programs, one container, two uids) beside a workload container, the
 nft rules loaded into the pod's netns keyed on `meta skuid`, the broker on
 a socket path the workload has no mount for, the key mounted as a podman
 secret, and one real request that reaches the provider carrying it. Run
 on the proving host as an ordinary user, from a checkout:
 
-    python3 tests/manual/shape1b_rig.py [--keep] [--without-rules]
+    python3 tests/manual/sidecar_rig.py [--keep] [--without-rules]
                                         [--without-neighbour-discovery]
                                         [--without-dns-redirect]
                                         [--without-private-drop]
                                         [--no-build]
 
-The same two host facts as shape 1 need sudo and are undone at teardown.
+The same two host facts as host_rig need sudo and are undone at teardown.
 The image is built from the checkout on every run unless --no-build.
 
 THE ROWS
@@ -116,7 +116,7 @@ WORKLOAD = "customs-rig-workload"
 SIDECAR_IMAGE = "localhost/customs-sidecar:rig"
 SECRET = "customs-rig-example"
 VOLUME = "customs-rig-state"
-HOSTS_MARK = "customs-shape1b-rig"
+HOSTS_MARK = "customs-sidecar-rig"
 # The image's two uids and their group (container/Containerfile), and the
 # workload's: any uid that is neither, chosen here.
 INSPECT_UID, BROKER_UID, GROUP_GID = 200, 201, 200

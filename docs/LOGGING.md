@@ -169,7 +169,7 @@ normal: it measures the clients that would use HTTP/3 if they could.
 
 - **HTTP/3.** QUIC is dropped in the kernel, before any program sees it.
   The nft chain's `quic` counter counts the UDP 443 packets it drops
-  ([DESIGN.md](DESIGN.md), shape 1). A client that falls back to TCP is
+  ([DESIGN.md](DESIGN.md), "Host"). A client that falls back to TCP is
   then served and logged as usual.
 - **Inside a spliced connection.** Only its name, and whether its hello
   carried ECH.

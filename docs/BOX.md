@@ -2,8 +2,8 @@
 
 A command line for long-lived, inspected containers for command-line
 workloads: `customs-box create NAME --policy FILE`, then `customs-box
-enter NAME`. Each box is shape 1n ([DESIGN.md](DESIGN.md)) laid out as
-[examples/quadlet/](../examples/quadlet/): a pod that holds the network
+enter NAME`. Each box is the netns placement ([DESIGN.md](DESIGN.md))
+laid out as [examples/quadlet/](../examples/quadlet/): a pod that holds the network
 namespace and loads the rules when it starts, the inspector's and the
 responder's listeners bound in that namespace, and the workload started
 after them.

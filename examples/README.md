@@ -1,8 +1,8 @@
-# Examples: shape 1 as user units
+# Examples: the host placement as user units
 
 Units for a rootless podman container inspected by customs, its
 inspector, broker and responder running as the user on the host
-([DESIGN.md](../docs/DESIGN.md), shape 1). They assume the RPM is
+([DESIGN.md](../docs/DESIGN.md), "Host"). They assume the RPM is
 installed (`just rpm`): the programs in `/usr/libexec/customs/`, the
 `customs` package where Python finds it.
 
@@ -79,7 +79,7 @@ systemctl --user enable --now customs-broker.service customs-inspect.socket \
 ```
 
 The container, and the rules that send its traffic to the inspector,
-are steps 4 and 5 of shape 1 in [DESIGN.md](../docs/DESIGN.md).
+are steps 4 and 5 of "Host" in [DESIGN.md](../docs/DESIGN.md).
 
 ## What it writes
 
@@ -137,6 +137,6 @@ caller's uid.
 
 ## Elsewhere here
 
-- [quadlet/](quadlet/): shape 1n as a quadlet pod, the listeners in the
-  pod's namespace.
+- [quadlet/](quadlet/): a quadlet pod, the listeners in the pod's
+  namespace.
 - [bootc/](bootc/): a bootc image with customs and what it recommends.

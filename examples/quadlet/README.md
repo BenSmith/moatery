@@ -1,16 +1,16 @@
-# Example: shape 1n as a quadlet pod
+# Example: the listeners in the network namespace, as a quadlet pod
 
-Shape 1n ([DESIGN.md](../../docs/DESIGN.md)) with podman's quadlet units
-instead of the recipe's steps. The pod holds the network namespace; its
-unit loads the rules into it; the inspector's and the responder's units
-bind their listeners there once it is up; the workload starts after
-them. A restart of the workload keeps the namespace and its listeners.
-A restart of the pod is a new namespace, and the listener units, bound
-to the pod's, start again with it.
+The netns placement ([DESIGN.md](../../docs/DESIGN.md)) with podman's
+quadlet units instead of the recipe's steps. The pod holds the network
+namespace; its unit loads the rules into it; the inspector's and the
+responder's units bind their listeners there once it is up; the workload
+starts after them. A restart of the workload keeps the namespace and its
+listeners. A restart of the pod is a new namespace, and the listener
+units, bound to the pod's, start again with it.
 
-The one-time setup is shape 1's ([../README.md](../README.md), "Once"):
-the policy, the credential, the CA and the bundle. The broker is
-shape 1's unit, `../systemd/customs-broker.service`; the inspector's
+The one-time setup is the user units' ([../README.md](../README.md),
+"Once"): the policy, the credential, the CA and the bundle. The broker
+is their unit, `../systemd/customs-broker.service`; the inspector's
 and the responder's socket units are not used.
 
 | file | goes to | |
@@ -43,6 +43,6 @@ bundle is mounted over the image's system trust store, so sudo, which
 drops `SSL_CERT_FILE`, trusts the egress CA too. That path is Fedora's;
 `/etc/ssl/certs/ca-certificates.crt` on Debian-family images.
 
-The record, the status files and the journal are shape 1's
+The record, the status files and the journal are the user units'
 ([../README.md](../README.md), "What it writes"); the journal's units are
 `customs-inspect-example` and `customs-resolve-example`.

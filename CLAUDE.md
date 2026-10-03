@@ -5,14 +5,12 @@
 `customs` is the egress inspector + credential broker pair for sandboxed
 workloads, lifted out of workloadctl into its own project. workloadctl
 now requires the customs RPM and runs its programs; there is no second
-copy. Read
-`README.md`, then `docs/DESIGN.md` (how the pair applies to a rootless
-container, a pod sidecar and a VM), `docs/POLICY.md` (the policy
-document) and `docs/INTERFACE.md` (the names workloadctl imports and
-the status file paths it reads).
-`examples/` holds shape-1 user units and a logrotate configuration,
-installed to `/usr/libexec/customs/` and run end to end on the proving
-host.
+copy. Read `README.md`, then `docs/DESIGN.md` (placing customs beside a
+rootless container, as a pod sidecar and for a VM), `docs/POLICY.md`
+(the policy document) and `docs/INTERFACE.md` (the names workloadctl
+imports and the status file paths it reads). `examples/` holds the host
+placement's user units and a logrotate configuration, installed to
+`/usr/libexec/customs/` and run end to end on the proving host.
 
 ## Where the code came from
 
@@ -46,9 +44,9 @@ Design, threat model and operating instructions, still there:
 
 workloadctl requires customs and runs its programs: a dependency, not
 two copies, because under copies every shared fix is a merge someone
-must remember, and the fixes flow one way (the shapes here reach code
-paths workloadctl's layouts never do). A fix is made here and reaches
-workloadctl with a release ("Releasing for workloadctl", below).
+must remember, and the fixes flow one way (the placements here reach
+code paths workloadctl's layouts never do). A fix is made here and
+reaches workloadctl with a release ("Releasing for workloadctl", below).
 
 The prose is renamed: nothing under `customs/` or `libexec/` says
 "workloadctl", cites its docs, uses its vocabulary (renderer,
@@ -58,7 +56,7 @@ are unchanged (`docs/INTERFACE.md` lists them). "Guest" and "workload"
 remain as the words for the thing behind the inspector. Diffing against
 workloadctl is a diff of prose and messages, the two entrypoints' names,
 the `http2` list (customs relays no HTTP/2 and refuses the list), and
-the shape-1b and 1n flags: the broker's `--listen unix:PATH`
+the sidecar and netns flags: the broker's `--listen unix:PATH`
 (`UnixServer`, `peer_uid_unix`), the inspector's `--broker unix:PATH`,
 `--caller-uid` and `--netns-pid` (`listed_in`, `netns_tables`,
 `namespace_uids`, the lookup's tables and the served uid ranges as
@@ -66,14 +64,15 @@ parameters), and the record naming a unix upstream.
 
 `libexec/customs-netns-listen` is customs-only too: it binds the
 inspector's planes in a rootless container's network namespace and execs
-the inspector with them (shape 1n). The inspector's `--netns-pid` is its
-other half and reaches workloadctl with the dependency.
+the inspector with them (the netns placement). The inspector's
+`--netns-pid` is its other half and reaches workloadctl with the
+dependency.
 
 `libexec/customs-mint-ca` is the one CA mint (`egress_mint.mint_ca`):
 the sidecar's first start calls it, and so does workloadctl's
 `workload-ensure-user`, before it builds the seed that carries the CA.
 
-`container/` is the shape-1b sidecar image: `Containerfile` and
+`container/` is the sidecar image: `Containerfile` and
 `customs-sidecar`, the entrypoint that is the unit file as a process.
 It is customs-only and has no workloadctl counterpart.
 
@@ -142,10 +141,10 @@ just lint     # ruff: syntax, names, imports, 79 columns (ruff.toml)
 just rpm      # the RPM, into rpmbuild/RPMS
 just rpm-image  # the RPM tested and built in a container (podman)
 python3 -m unittest tests.test_closure -v   # one module
-python3 tests/manual/shape1_rig.py          # on the proving host, as the user
-python3 tests/manual/shape1n_rig.py         # same; listeners in the netns
-python3 tests/manual/shape1b_rig.py         # same; builds container/ first
-python3 tests/manual/shape2_rig.py          # same; a VM in the container (/dev/kvm)
+python3 tests/manual/host_rig.py            # on the proving host, as the user
+python3 tests/manual/netns_rig.py           # same; listeners in the netns
+python3 tests/manual/sidecar_rig.py         # same; builds container/ first
+python3 tests/manual/vm_rig.py              # same; a VM in the container (/dev/kvm)
 python3 tests/manual/box_rig.py             # same; a box, through customs-box
 ```
 

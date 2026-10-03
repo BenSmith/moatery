@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""shape2_guest.py -- the probes one shape-2 boot makes from inside the VM.
+"""vm_guest.py -- the probes one boot makes from inside the VM.
 
-The guest half of tests/manual/shape2_rig.py. The NoCloud seed writes it
+The guest half of tests/manual/vm_rig.py. The NoCloud seed writes it
 into the guest and a small systemd unit runs it; it reports raw
 observations -- an answer, a status, a send outcome -- as
 ``CUSTOMS-RIG {json}`` lines on a virtio-serial port the host reads as a
 file. The serial console stays for boot diagnostics, because writing
 results there competes with the kernel console and the getty.
 
-The names and addresses below are shape2_rig.py's; the two files are read
+The names and addresses below are vm_rig.py's; the two files are read
 side by side and ship together, so they are repeated rather than imported.
 """
 

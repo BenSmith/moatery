@@ -47,6 +47,6 @@ installed programs:
 
 ```
 export CUSTOMS_LIBEXEC=/usr/libexec/customs
-python3 tests/manual/shape1_rig.py
-python3 tests/manual/shape1n_rig.py
+python3 tests/manual/host_rig.py
+python3 tests/manual/netns_rig.py
 ```

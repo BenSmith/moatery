@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """customs-box: the units it writes name each other and hand the programs
-flags their parsers take; the rules are shape 1n's; what a mount may not
-touch; and each command against a fake podman and systemctl.
+flags their parsers take; the rules are the netns placement's; what a
+mount may not touch; and each command against a fake podman and systemctl.
 
 The units are joined only by names, and a dependency on a name nothing
 provides is one systemd drops without a word. The programs' flags are
@@ -520,9 +520,9 @@ class TestBrokerUnits(unittest.TestCase):
 
 
 class TestRules(unittest.TestCase):
-    def test_the_rules_are_shape_1n(self):
+    def test_the_rules_are_the_netns_placements(self):
         design = DESIGN.read_text().split(
-            "## Shape 1n", 1)[1].split("\n## ", 1)[0]
+            "## Netns:", 1)[1].split("\n## ", 1)[0]
         self.assertEqual(_ruleset(netns.ruleset("$DEV")), _ruleset(design))
 
     def _runner(self, outputs):

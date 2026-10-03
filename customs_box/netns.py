@@ -3,7 +3,7 @@ loaded into it, and the check that they are there.
 
 A rootless pod's namespace belongs to the user's user namespace, where
 `podman unshare` is root; the workload holds no CAP_NET_ADMIN, so what
-is loaded stays loaded. The rules are shape 1n's (DESIGN.md).
+is loaded stays loaded. The rules are the netns placement's (DESIGN.md).
 """
 
 import json

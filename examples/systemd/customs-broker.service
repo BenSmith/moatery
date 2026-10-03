@@ -2,7 +2,7 @@
 # --host, --placeholder and --auth-* flags and the credential line for
 # the provider; `customs-broker --help` lists them all.
 #
-# --caller-uid is %U: in shape 1 the broker's one caller is the inspector,
+# --caller-uid is %U: the broker's one caller is the inspector,
 # which runs as this user. The socket is in the user's runtime directory,
 # which the container has no path to and no other uid can enter.
 # Type=notify: started once the socket is listening, so the inspector,

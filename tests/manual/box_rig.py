@@ -3,9 +3,9 @@
 
 docs/BOX.md: `customs-box credential add`, `create`, `enter`, `log`,
 `allow`, `policy`, `stop` and `rm`, the box's units run by the user's
-manager and quadlet, shape 1n's rules and listeners in the pod's
-namespace, and the box's broker. Run on
-the proving host as an ordinary user, from a checkout:
+manager and quadlet, the netns placement's rules and listeners in the
+pod's namespace, and the box's broker. Run on the proving host as an
+ordinary user, from a checkout:
 
     python3 tests/manual/box_rig.py [--keep] [--without-rules]
                                     [--broker-not-ready]

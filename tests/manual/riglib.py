@@ -1,10 +1,10 @@
-"""What the rigs share: the fixture the pair is measured against.
+"""What the rigs share: the fixture customs is measured against.
 
 One provider name and one unlisted name, which nothing on the internet
 resolves, so a workload resolves them only through customs-resolve; a
 stub provider on the host's :443 that answers 200 to the real key alone;
 the CA, the trust bundle, the policy; two host facts that need sudo and
-are undone at teardown. Each rig owns its shape -- what runs where, and
+are undone at teardown. Each rig owns its placement -- what runs where, and
 the rules -- and its rows.
 """
 
@@ -155,7 +155,7 @@ def preflight(tools, ports):
         if shutil.which(tool) is None:
             sys.exit(f"{tool} not found")
     if os.getuid() == 0:
-        sys.exit("run this as the user, not root: the shape under test is "
+        sys.exit("run this as the user, not root: the placement under test is "
                  "the one with no root in it")
     if sudo(["true"], check=False).returncode != 0:
         sys.exit("needs passwordless sudo for /etc/hosts and one sysctl")
@@ -169,8 +169,8 @@ def preflight(tools, ports):
 
 def mint_ca(state):
     """The per-workload CA, once, kept across runs like an SSH host key.
-    The operator's job in shape 1, done the operator's way: by running
-    customs-mint-ca. The sidecar entrypoint's in shape 1b."""
+    The operator's job on the host, done the operator's way: by running
+    customs-mint-ca. In the sidecar it is the entrypoint's."""
     done = run([sys.executable, str(LIBEXEC / "customs-mint-ca"),
                 "--name", NAME, "--state-dir", str(state)],
                env={**os.environ, **PROGRAM_ENV})
@@ -306,7 +306,7 @@ def await_status(read, after):
     return None
 
 
-# --- rows every shape shares -------------------------------------------------
+# --- rows every placement shares ---------------------------------------------
 
 def origin_rows(secret):
     """From the host, straight at the stub: the placeholder alone gets
@@ -328,20 +328,19 @@ def origin_rows(secret):
 def dns_rows(ask, resolver, synthesised, read_status):
     """The workload's DNS goes to customs-resolve and nowhere else.
 
-    `ask(argv)` runs DNS_LOOKUP as the workload, in its netns, and returns
-    what it printed; `resolver` is the container's first nameserver;
-    `synthesised` the address every name should get; `read_status` returns
-    the responder's status file's text. The names are fresh each run, and
-    nothing on the internet resolves them, so an answer at all is the
-    responder's; the status file naming them is the observation that they
-    arrived there, and the provider's name absent from it is the control
-    that it counts against the policy. The provider's name is asked of a
-    nameserver that does not exist, since pasta's forwarder answers it
-    from the host's hosts file, with the rig's own 127.0.0.1, which is
-    what the responder answers in 1n and 1b. The file is awaited from
-    after the queries: a socket-activated responder first writes it at
-    start, which is after the first query arrived and before it was
-    counted.
+    `ask(argv)` runs DNS_LOOKUP as the workload, in its netns, and returns what
+    it printed; `resolver` is the container's first nameserver; `synthesised`
+    the address every name should get; `read_status` returns the responder's
+    status file's text. The names are fresh each run, and nothing on the
+    internet resolves them, so an answer at all is the responder's; the status
+    file naming them is the observation that they arrived there, and the
+    provider's name absent from it is the control that it counts against the
+    policy. The provider's name is asked of a nameserver that does not exist,
+    since pasta's forwarder answers it from the host's hosts file, with the
+    rig's own 127.0.0.1, which is what the responder answers in the netns rig
+    and the sidecar. The file is awaited from after the queries: a
+    socket-activated responder first writes it at start, which is after the
+    first query arrived and before it was counted.
     """
     say("dns")
     tag = os.urandom(4).hex()

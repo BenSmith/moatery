@@ -4,7 +4,7 @@ Checks that need a real host and cannot run under `just test`. Each is
 invoked by hand, as an ordinary user, from a checkout on the proving host.
 Nothing here is a unit gate; these are the gate the unit suites cannot be.
 
-The shape-1 and 1n rigs run the checkout's programs, or with
+The host and netns rigs run the checkout's programs, or with
 `CUSTOMS_LIBEXEC=/usr/libexec/customs` the installed RPM's, with no
 `PYTHONPATH`; the premise line names which.
 
@@ -42,7 +42,7 @@ own `/etc/hosts` line for the provider reached the containers, since
 podman seeds a container's hosts file from the host's, and sent the
 workload to its own loopback; and pasta's forwarder answered the same
 name from the same line, with the address the responder gives in two
-shapes, so a DNS row passed with no responder at all. Where a row asserts
+placements, so a DNS row passed with no responder at all. Where a row asserts
 something is blocked, a control row proves an unblocked caller reaches
 the same fixture, or a responder that never started satisfies every
 assertion.
@@ -58,22 +58,22 @@ that flag. A rig that has only ever passed has not been shown to measure.
 `riglib.py` is the fixture the rigs share: the provider and unlisted
 names, which nothing on the internet resolves, the stub, the CA and
 bundle, the policy, the two sudo facts and their teardown, and the rows
-every shape has (the workload's DNS, the origin's 401 and 200). A rig
-owns its shape and its rows.
+every placement has (the workload's DNS, the origin's 401 and 200). A
+rig owns its placement and its rows.
 
-## shape1_rig.py — the pair with nothing but a normal user
+## host_rig.py — customs with nothing but a normal user
 
-`docs/DESIGN.md` shape 1: one rootless podman container under pasta,
+`docs/DESIGN.md`, "Host": one rootless podman container under pasta,
 the programs as hand-written user units, the nft rules loaded into the
 container's netns through `podman unshare nsenter`, a placeholder in the
 container's environment, and one real request that reaches the provider
 carrying the sealed key.
 
 ```bash
-python3 tests/manual/shape1_rig.py                  # every row green
-python3 tests/manual/shape1_rig.py --without-rules  # must go red
-python3 tests/manual/shape1_rig.py --without-dns-redirect  # dns red
-python3 tests/manual/shape1_rig.py --broker-over-tcp  # the broker rows red
+python3 tests/manual/host_rig.py                  # every row green
+python3 tests/manual/host_rig.py --without-rules  # must go red
+python3 tests/manual/host_rig.py --without-dns-redirect  # dns red
+python3 tests/manual/host_rig.py --broker-over-tcp  # the broker rows red
 ```
 
 Runs as the user. Two host facts need `sudo`, and both are undone at
@@ -111,7 +111,7 @@ and the real key 200. The counters name every caller and dropped none as
 foreign.
 
 **What it found, first run, 2026-09-22.** No defect in the pair. Four in
-the shape-1 recipe as `DESIGN.md` had it, which is now corrected:
+the host recipe as `DESIGN.md` had it, which is now corrected:
 
 - podman starts pasta with `--no-map-gw`, so the gateway does not map to
   the host's loopback. The mapping is asked for with
@@ -164,23 +164,23 @@ defect in the pair. Two in the rows as first written:
   the host's hosts file, and the previous run's responder line was
   still in the journal. It asks for a fresh name now.
 
-## shape1n_rig.py — shape 1 with the listeners in the container
+## netns_rig.py — the listeners in the container's netns
 
-`docs/DESIGN.md` shape 1n: shape 1's container under plain pasta, with no
-loopback map, and shape 1's broker unit. The inspector and the responder
+`docs/DESIGN.md`, "Netns": host_rig's container under plain pasta, with
+no loopback map, and host_rig's broker unit. The inspector and the responder
 are transient user units started between `podman init` and `podman
 start`, through `customs-netns-listen`, which binds their sockets in the
 container's network namespace and execs each program with its own.
 
 ```bash
-python3 tests/manual/shape1n_rig.py                        # every row green
-python3 tests/manual/shape1n_rig.py --without-rules        # must go red
-python3 tests/manual/shape1n_rig.py --without-netns-pid    # inspector red
-python3 tests/manual/shape1n_rig.py --without-dns-redirect # dns red
-python3 tests/manual/shape1n_rig.py --without-notify       # ready red
+python3 tests/manual/netns_rig.py                        # every row green
+python3 tests/manual/netns_rig.py --without-rules        # must go red
+python3 tests/manual/netns_rig.py --without-netns-pid    # inspector red
+python3 tests/manual/netns_rig.py --without-dns-redirect # dns red
+python3 tests/manual/netns_rig.py --without-notify       # ready red
 ```
 
-**Rows.** Shape 1's premise, DNS, silent-drop, quic, request, broker,
+**Rows.** host_rig's premise, DNS, silent-drop, quic, request, broker,
 unlisted, origin and counter rows, and four of its own. The inspector is
 up on the listeners it was handed, and their inodes are rows in the
 container's socket table and in none of the host's. Nothing listens on
@@ -213,11 +213,11 @@ No defect in the pair. Two facts for the design:
   container's user namespace, so a child holding a pidfd of the
   container's process can `setns` into its user and network namespaces
   together, and bind there.
-- the caller check reads a different socket in this shape. In shape 1
-  the inspector's peer is pasta's host socket, which is always the
-  user's; here it is the workload's own, in the container's table, with
-  the uid the host sees: the user for container root, a subuid for
-  anything else.
+- the caller check reads a different socket in this placement. On the
+host the inspector's peer is pasta's host socket, which is always the
+user's; here it is the workload's own, in the container's table, with
+the uid the host sees: the user for container root, a subuid for
+anything else.
 
 **What it found, the responder, 2026-09-24.** 26/26;
 `--without-dns-redirect` 14/26 (dns, request, unlisted); `--without-rules`
@@ -226,9 +226,9 @@ crosses the egress device, so the chain accepts nothing: the neighbour
 row, which queried pasta's forwarder, went with the resolver's lines,
 and `--without-neighbour-discovery` with it.
 
-## shape1b_rig.py — the pair as a sidecar, with no host install
+## sidecar_rig.py — customs as a sidecar, with no host install
 
-`docs/DESIGN.md` shape 1b: a podman pod under pasta, the sidecar image
+`docs/DESIGN.md`, "Sidecar": a podman pod under pasta, the sidecar image
 (`container/`: the programs, one container, two uids) beside a workload
 container running as a third uid with no capabilities, the nft rules in
 the pod's netns keyed on `meta skuid`, the broker on a socket path under
@@ -236,11 +236,11 @@ the sidecar's own `/run`, the key as a podman secret, and one real request
 that reaches the provider carrying it.
 
 ```bash
-python3 tests/manual/shape1b_rig.py                  # builds the image first
-python3 tests/manual/shape1b_rig.py --without-rules  # must go red
-python3 tests/manual/shape1b_rig.py --without-private-drop  # private red
-python3 tests/manual/shape1b_rig.py --without-dns-redirect  # dns red
-python3 tests/manual/shape1b_rig.py --no-build       # reuse the last image
+python3 tests/manual/sidecar_rig.py                  # builds the image first
+python3 tests/manual/sidecar_rig.py --without-rules  # must go red
+python3 tests/manual/sidecar_rig.py --without-private-drop  # private red
+python3 tests/manual/sidecar_rig.py --without-dns-redirect  # dns red
+python3 tests/manual/sidecar_rig.py --no-build       # reuse the last image
 ```
 
 The image is built from the checkout on each run; the state volume and
@@ -250,31 +250,32 @@ secret.
 
 **Rows.** Premise (the workload holds neither `CAP_NET_ADMIN` nor
 `CAP_SETUID`; the table is in the pod's netns; `podman top` shows the
-broker and the inspector as the two image users and the responder as
-the inspector's, and the supervising pid 1 holds no capability). Shape
-1's DNS rows, answered by the sidecar's responder with the pod's
-loopback; the unlisted row resolves through it too, while the provider's
-name is in the pod's hosts file, which the sidecar's dials need. Shape
-1's silent-drop and quic rows. The request (200; the real key arrived;
-the workload's environment holds the placeholder only; the broker's log
-grew by one; the record says `forward` under the credential with
-`upstream` naming the socket path). The broker's path is ENOENT from the
-workload -- `stat` says "No such file or directory", which curl alone
-cannot distinguish from a refusal -- and nothing but the two planes and
-the responder's port listens on TCP in the pod, so there is no address
-to spell; its log did not grow. An unlisted host gets the 403 and the record. The private
-rows: the egress chain carries `DESIGN.md`'s private-space drop and an
-accept line for the provider, which is on the host's mapped loopback and
-so link-local; with that line deleted the workload's request gets no 200,
-the stub's log does not grow and the drop's counter moves, and with it
-put back the same request arrives. The programs' own DNS query to the
-resolver is answered. The origin's two rows. The counters name every
-caller and dropped none as foreign, with the workload being another
-uid. Last, the lifecycle: the broker killed from outside ends the
-container non-zero and the restart policy brings it back (the restart
-count rose; every exit is in the log), the restarted programs serve the
-workload's request under the CA its bundle already holds, and a stop
-reaches every program well inside podman's timeout and exits 0.
+broker and the inspector as the two image users and the responder as the
+inspector's, and the supervising pid 1 holds no capability). host_rig's
+DNS rows, answered by the sidecar's responder with the pod's loopback;
+the unlisted row resolves through it too, while the provider's name is
+in the pod's hosts file, which the sidecar's dials need. host_rig's
+silent-drop and quic rows. The request (200; the real key arrived; the
+workload's environment holds the placeholder only; the broker's log grew
+by one; the record says `forward` under the credential with `upstream`
+naming the socket path). The broker's path is ENOENT from the workload
+-- `stat` says "No such file or directory", which curl alone cannot
+distinguish from a refusal -- and nothing but the two planes and the
+responder's port listens on TCP in the pod, so there is no address to
+spell; its log did not grow. An unlisted host gets the 403 and the
+record. The private rows: the egress chain carries `DESIGN.md`'s
+private-space drop and an accept line for the provider, which is on the
+host's mapped loopback and so link-local; with that line deleted the
+workload's request gets no 200, the stub's log does not grow and the
+drop's counter moves, and with it put back the same request arrives. The
+programs' own DNS query to the resolver is answered. The origin's two
+rows. The counters name every caller and dropped none as foreign, with
+the workload being another uid. Last, the lifecycle: the broker killed
+from outside ends the container non-zero and the restart policy brings
+it back (the restart count rose; every exit is in the log), the
+restarted programs serve the workload's request under the CA its bundle
+already holds, and a stop reaches every program well inside podman's
+timeout and exits 0.
 
 **What it found, first run, 2026-09-22.** One defect in the pair, the
 seam kind: `peer_identity.userns_ranges` read the *outside* column of
@@ -336,29 +337,29 @@ The name is asked of a nameserver that does not exist now, which only
 the redirect answers. `--without-rules` also turns neighbour and
 private red, which its note had left out.
 
-## shape2_rig.py — the pair under a VM
+## vm_rig.py — customs under a VM
 
-`docs/DESIGN.md` shape 2: one rootless podman container under pasta whose
+`docs/DESIGN.md`, "VM": one rootless podman container under pasta whose
 only payload is qemu and the passt backend qemu starts itself, the
 guest's egress re-originated by passt as sockets in the container's
-netns, the pair as shape 1's hand-written user units on the host, the
+netns, customs as host_rig's hand-written user units on the host, the
 nft rules loaded into the container's netns, and a workload inside the
 guest that reaches the provider carrying the sealed key.
 
 ```bash
-python3 tests/manual/shape2_rig.py                  # builds the qemu image first
-python3 tests/manual/shape2_rig.py --without-rules  # must go red
-python3 tests/manual/shape2_rig.py --without-dns-redirect  # dns red
-python3 tests/manual/shape2_rig.py --without-neighbour-discovery  # dns red
-python3 tests/manual/shape2_rig.py --no-build       # reuse the last image
-python3 tests/manual/shape2_rig.py --keep           # leave the container
+python3 tests/manual/vm_rig.py                  # builds the qemu image first
+python3 tests/manual/vm_rig.py --without-rules  # must go red
+python3 tests/manual/vm_rig.py --without-dns-redirect  # dns red
+python3 tests/manual/vm_rig.py --without-neighbour-discovery  # dns red
+python3 tests/manual/vm_rig.py --no-build       # reuse the last image
+python3 tests/manual/vm_rig.py --keep           # leave the container
 ```
 
 Runs as the user, on a KVM host with `/dev/kvm` readable and writable.
 The operator puts a Fedora Cloud Base Generic qcow2 at
-`~/.local/state/customs-rig/shape2/guest.qcow2` once (44-1.7 was used);
-the rig builds its own qemu image from `shape2.Containerfile`. The guest
-probe (`shape2_guest.py`) goes in through the NoCloud seed with the CA
+`~/.local/state/customs-rig/vm/guest.qcow2` once (44-1.7 was used);
+the rig builds its own qemu image from `vm.Containerfile`. The guest
+probe (`vm_guest.py`) goes in through the NoCloud seed with the CA
 bundle and the agent's environment, and reports on a virtio-serial port
 the host reads as a file.
 
@@ -367,7 +368,7 @@ its netns; qemu holds `/dev/kvm`; the guest is a namespace inside the
 container's; the guest's own nft tables hold none of ours; the neighbour
 table is flushed before the guest's first packet). The guest's UDP sends
 return while the container chain's `dropped` counter moves -- the guest's
-egress IS the container's. Shape 1's DNS rows, asked from inside the
+egress IS the container's. host_rig's DNS rows, asked from inside the
 guest. The silent-drop and quic rows. The request (200; the real key
 arrived; the response names the provider's server; the guest's
 environment holds the placeholder only; the broker's journal grew by one;
@@ -402,8 +403,8 @@ defect in the pair. Four facts, all in the guest half:
 
 `docs/BOX.md`: `customs-box credential add`, `create`, `enter`, `log`,
 `allow`, `policy`, `stop` and `rm`, the box's units run by the user's
-manager and quadlet, shape 1n's rules and listeners in the pod's
-namespace, and the box's broker.
+manager and quadlet, the netns placement's rules and listeners in the
+pod's namespace, and the box's broker.
 The tool is the checkout's `bin/customs-box`, or with
 `CUSTOMS_LIBEXEC=/usr/libexec/customs` the installed one.
 
