@@ -79,7 +79,7 @@ It is moatery-only and has no workloadctl counterpart.
 `libexec/moat-resolve` is workloadctl's VM responder made a program
 of its own: every name answered with `--address`, or from the
 `--static` map, counted against the inspector's policy, never
-forwarded. `moatery/resolve_policy.py` is moatery'; `resolve_wire` and
+forwarded. `moatery/resolve_policy.py` is moatery's; `resolve_wire` and
 `resolve_serve` began as workloadctl's `dns_wire` and
 `resolve_server`.
 

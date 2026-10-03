@@ -244,7 +244,7 @@ What remains:
   otherwise seeds the file from the host's, which answers a name with
   the host's address for it.
 
-## Private addresses: the host's job, not moatery'
+## Private addresses: the host's job, not moatery's
 
 moatery decides by name. It does not look at the address an allowed
 name resolves to, and neither the inspector nor the broker refuses a

@@ -81,7 +81,7 @@ def _package_module(node):
 
 
 def _imports(path):
-    """The modules a file imports, at any depth of nesting: moatery'
+    """The modules a file imports, at any depth of nesting: moatery's
     bare, anything else by its top-level name. Nested imports count: a
     deferred import resolves at call time and is invisible to a
     fresh-interpreter import test."""
