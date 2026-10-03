@@ -81,7 +81,8 @@ flags and `$CREDENTIALS_DIRECTORY` — is the same in every placement.
   container, with its listeners on the host or in the container's
   network namespace; as a sidecar in a pod; and for a VM. Also how the
   workload's DNS is answered, and what the host has to do that customs
-  does not (private addresses among it).
+  does not, such as stopping the programs from dialling a loopback or
+  private address that an allowed name resolves to.
 - [docs/BOX-GUIDE.md](docs/BOX-GUIDE.md): customs-box, long-lived
   inspected containers for command-line work, as a user's guide;
   [docs/BOX.md](docs/BOX.md) is its reference.
