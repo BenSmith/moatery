@@ -20,8 +20,6 @@ provider's key would be; and it shares with the host only the
 directories `create` was told to mount. Every other port is dropped,
 so git over ssh cannot leave a box, and git over https can.
 
-Not for a display, audio or a GPU; the host's network or a custom one;
-devices; or the user's home directory.
 
 ## Commands
 
@@ -179,17 +177,29 @@ among them, where they would be a box's directory.
 
 ## The units
 
-As in examples/quadlet, with these differences:
+customs-box writes, for each box, the units
+[examples/quadlet/](../examples/quadlet/) has as files:
+`customs-box-NAME.pod` for `example.pod`, `customs-box-NAME.container`
+for `example.container`, `customs-box-NAME-inspect.service` and
+`-resolve.service` for the example's two listener units, and
+`-broker.service` for `customs-broker.service`. The namespace is made
+as the example's is: pasta, `UserNS=keep-id`, `--hosts-file=image`, so
+the host's hosts file does not answer the workload's names, and no
+cgroup of its own. The units differ from the example's in these ways:
 
-- The namespace is created with `--hosts-file image`, so the host's hosts file
-  does not answer the workload's names.
-- The rules are loaded by the tool (`customs-box unit rules NAME`, one
-  of the commands for the units' use). The egress device is read inside
-  the namespace.
-- The broker is Type=notify, started once it is listening, and the
-  inspector `Wants=` and is ordered `After=` it: not `Requires=`, which
-  would restart the inspector, and with it the workload, at every new
-  key. Its start takes as long as the decryption, over a second on the
+- The tool loads the rules (`customs-box unit rules NAME`) and starts
+  the listeners in the namespace (`customs-box unit exec NAME`), where
+  the example has `customs-pod-netns`; both are among the commands for
+  the units' use. The egress device is read inside the namespace, not
+  on the host.
+- The workload `Wants=` the listeners, where the example's `Requires=`
+  them, and a listener that dies is started again
+  (`Restart=on-failure`); below says why.
+- Each box has a broker of its own, written only if its policy names a
+  credential, and with no `[Install]`. The inspector `Wants=` and is
+  ordered `After=` it, as in the example: not `Requires=`, which would
+  restart the inspector, and with it the workload, at every new key.
+  Its start takes as long as the decryption, over a second on the
   proving host. It is bound to nothing: a restart of the namespace's
   unit is a new namespace, which is nothing to the broker, and `stop`
   and `rm` stop it.
@@ -199,32 +209,37 @@ As in examples/quadlet, with these differences:
   `enter` and `credential add` stop a broker that is not active, remove
   the workspace, and forget its failures before they start it.
 - The bundle is mounted read-only over the image's own system bundle,
-  found at `create`, and pointed at by `SSL_CERT_FILE`,
-  `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO` and
-  `PIP_CERT`. The mount is what root sees under sudo, which drops the
-  variables.
+  as in the example, at the path found at `create`, and is pointed at
+  by `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`,
+  `GIT_SSL_CAINFO` and `PIP_CERT` as well. The mount is what root sees
+  under sudo, which drops the variables. Each credential's placeholder
+  is set in the workload's environment from `credential add`.
 - Each box has a home of its own, a directory on the host that only it
-  mounts, at the path the user's home has on the host: the namespace's
-  unit maps the user to the same name and uid inside (`UserNS=keep-id`).
-  The user's own home directory is never mounted. The workload's working
-  directory is that path too: podman writes the passwd entry of a user
-  keep-id brings in with the working directory as its home, and `HOME`
-  from it.
+  mounts, at the path the user's home has on the host: keep-id maps the
+  user to the same name and uid inside. The user's own home directory
+  is never mounted. The workload's working directory is that path too:
+  podman writes the passwd entry of a user keep-id brings in with the
+  working directory as its home, and `HOME` from it.
+- The workload's unit names the box's user and drops every capability
+  outside podman's default set ("Refused", below).
 - At each start the workload's unit writes a sudoers drop-in, as root in
   the container (`ExecStartPost=`), giving the user sudo without a
   password: the image's own rule asks for one, and the user has none.
   Root in a box is filtered as the user is.
 - The record is rotated by the tool (`customs-box unit rotate NAME`),
   from a timer the namespace's unit `Wants=` and that is `PartOf=` it, a
-  minute after that unit starts and every ten after. Past 32 MiB the
-  record is moved to `.1`, and the inspector's main process alone is
-  sent `SIGHUP`, on which it opens the path again at its next write; the
-  other processes in its unit are openssl mints, which a HUP ends. Four
-  are kept, all but `.1` compressed: a line being written as the record
-  moved lands in `.1`, which is compressed at the rotation after. The
-  inspector stops writing a record past 512 MiB, and a box writing that
-  much in ten minutes loses its lines until the next rotation. The tool,
-  not logrotate, which neither the image nor every host has.
+  minute after that unit starts and every ten after, where the example
+  has logrotate. Past 32 MiB the record is moved to `.1`, and the
+  inspector's main process alone is sent `SIGHUP`, on which it opens the
+  path again at its next write; the other processes in its unit are
+  openssl mints, which a HUP ends. Four are kept, all but `.1`
+  compressed: a line being written as the record moved lands in `.1`,
+  which is compressed at the rotation after. The inspector stops writing
+  a record past 512 MiB, and a box writing that much in ten minutes
+  loses its lines until the next rotation. The tool, not logrotate,
+  which neither the image nor every host has.
+- The programs run with python's `-s`, so the user's own site-packages
+  cannot come ahead of the installed package.
 - No `[Install]` unless `--autostart`: without it a box runs from
   `enter` to `stop`.
 
