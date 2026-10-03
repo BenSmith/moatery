@@ -1,14 +1,25 @@
 # The policy document
 
-`customs-inspect --policy PATH` reads one JSON object: which hosts the
-workload may reach, what it may do there, and which requests go to the
-broker. `customs-resolve` reads the same document, to count the names
-the workload asks for that no list admits.
+A policy says what a workload may send out. customs denies by default:
+the workload's outbound HTTP and HTTPS are redirected to the inspector,
+which lets a request through only if the policy admits its host, and,
+where the policy narrows that host, the request's method and path.
+Everything else is refused. The policy also names the hosts that need a
+credential the workload is not given; their requests go to the broker,
+which attaches the real one, so the workload never holds it.
+
+A policy names hosts, not addresses, and is checked against the name the
+workload asked for: the TLS server name, or the `Host` header in
+cleartext. It is one JSON object in a file, written by whoever runs the
+workload and handed to `customs-inspect --policy PATH`.
+`customs-resolve` reads the same file, to count the names the workload
+looks up that no list admits.
 
 ```json
 {
   "tls": "inspect",
-  "hosts": ["pypi.org", "files.pythonhosted.org", "*.github.com"],
+  "hosts": ["pypi.org", "files.pythonhosted.org", "*.github.com",
+            "git.corp.example", "updates.example.net"],
   "internal_expected": ["git.corp.example"],
   "splice": ["updates.example.net"],
   "policy": [
@@ -18,6 +29,18 @@ the workload asks for that no list admits.
   ]
 }
 ```
+
+This one lets the workload:
+
+- make any request to PyPI's two hosts, to any subdomain of
+  `github.com`, and to `git.corp.example`, a host on a private address;
+- make only GET requests to `github.com` itself, which an entry
+  narrows;
+- make only a POST to `/v1/messages` on `api.anthropic.com`, which goes
+  through the broker, which attaches the credential with the id
+  `anthropic`;
+- reach `updates.example.net`, whose TLS is passed through undecrypted,
+  so its traffic is checked by name only.
 
 Every key is optional. An absent list is an empty one; `{}` is a valid
 document that admits nothing.
