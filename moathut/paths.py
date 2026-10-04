@@ -104,6 +104,11 @@ class Box(NamedTuple):
         return self.config / "prompt.sh"
 
     @property
+    def seccomp(self):
+        """The workload's seccomp profile."""
+        return self.config / "seccomp.json"
+
+    @property
     def containers_conf(self):
         """What podman reads last for the pod."""
         return self.config / "containers.conf"

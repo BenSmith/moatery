@@ -29,7 +29,7 @@ from tests.test_quadlet_example import _ruleset
 from moatery.egress_record import DROP_MISDIRECTED
 from moatery.inspect_document import INSPECT_DIGEST_KEY, inspect_policy_digest
 from moatery.inspect_policy import load_policy
-from moathut import commands, document, netns, record
+from moathut import commands, document, netns, record, seccomp
 from moathut.cli import main, parse
 from moathut.credentials import (Broker, Credential, CredentialError,
                                      brokering, describe)
@@ -1064,15 +1064,147 @@ class TestCommands(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _create(self, name="agent", host=None, policy=None, mounts=(),
-                autostart=False):
+                autostart=False, **kwargs):
         host = host or FakeHost(self.home)
         box = commands.create(
             name, policy or self.policy, "img", list(mounts),
             dirs=self.dirs, tool=("/py", "/cb"), python="/py",
             libexec="/lx", pythonpath=None, uid=1000, gid=1000,
             cwd=self.home, environ=self.env, autostart=autostart,
-            runner=host)
+            runner=host, **kwargs)
         return box, host
+
+    def _like(self, name, other, **kwargs):
+        return commands.create(
+            name, None, None, [], dirs=self.dirs, tool=("/py", "/cb"),
+            python="/py", libexec="/lx", pythonpath=None, uid=1000,
+            gid=1000, cwd=self.home, environ=self.env, like=other,
+            runner=FakeHost(self.home), **kwargs)
+
+    def _own_profile(self, text='{"defaultAction": "SCMP_ACT_ALLOW"}\n'):
+        path = self.home / "mine.json"
+        path.write_text(text)
+        return path
+
+    def test_a_box_runs_under_the_strict_profile_by_default(self):
+        """The workload's unit names the file, which is the profile as
+        seccomp renders it; a box.json from before the setting reads as
+        strict."""
+        box, _ = self._create()
+        settings = Settings.from_json(box.settings.read_text())
+        self.assertEqual(settings.seccomp, "strict")
+        self.assertEqual(box.seccomp.read_text(), seccomp.render("strict"))
+        self.assertEqual(_keys(box.container_file.read_text(),
+                               "SeccompProfile"), [str(box.seccomp)])
+        doc = json.loads(box.settings.read_text())
+        del doc["seccomp"]
+        self.assertEqual(Settings.from_json(json.dumps(doc)).seccomp,
+                         "strict")
+        self.assertEqual(commands.ls(dirs=self.dirs,
+                                     runner=FakeHost(self.home))[0][3:], ())
+
+    def test_a_box_can_run_under_debug_or_a_profile_of_its_own(self):
+        """Its own is copied in, and what becomes of the file after is
+        nothing to the box; `ls` says which a box has but the default."""
+        box, _ = self._create(profile="debug")
+        self.assertEqual(box.seccomp.read_text(), seccomp.render("debug"))
+        mine = self._own_profile()
+        own, _ = self._create("own", profile="mine.json")
+        self.assertIsNone(Settings.from_json(own.settings.read_text())
+                          .seccomp)
+        mine.write_text("changed\n")
+        self.assertEqual(own.seccomp.read_text(),
+                         '{"defaultAction": "SCMP_ACT_ALLOW"}\n')
+        self.assertEqual(_keys(own.container_file.read_text(),
+                               "SeccompProfile"), [str(own.seccomp)])
+        rows = commands.ls(dirs=self.dirs, runner=FakeHost(self.home))
+        self.assertEqual([r[3:] for r in rows],
+                         [("seccomp:debug",), ("seccomp:own",)])
+
+    def test_a_profile_that_is_not_one_is_refused_and_nothing_laid_out(
+            self):
+        for given, text, said in (
+                ("missing.json", None, "No such file"),
+                ("mine.json", "not json\n", "Expecting value"),
+                ("mine.json", '["defaultAction"]\n', "a defaultAction"),
+                ("mine.json", '{"syscalls": []}\n', "a defaultAction")):
+            if text is not None:
+                self._own_profile(text)
+            with self.subTest(text=text), \
+                    self.assertRaisesRegex(commands.BoxError, said):
+                self._create(profile=given)
+            self.assertFalse(Box("agent", self.dirs).config.exists())
+
+    def test_a_like_box_runs_under_the_others_profile_unless_given_one(
+            self):
+        self._create(profile="debug")
+        self._own_profile()
+        self._create("own", profile="mine.json")
+        for name, other, given, want in (
+                ("a", "agent", None, "debug"),
+                ("b", "agent", "strict", "strict"),
+                ("c", "own", None, None),
+                ("d", "own", "debug", "debug")):
+            box = self._like(name, other, profile=given)
+            with self.subTest(box=name):
+                self.assertEqual(
+                    Settings.from_json(box.settings.read_text()).seccomp,
+                    want)
+                self.assertEqual(box.seccomp.read_text(),
+                                 Box(other, self.dirs).seccomp.read_text()
+                                 if want is None else seccomp.render(want))
+
+    def test_enter_writes_a_stopped_boxs_profile_as_this_moathut_would(
+            self):
+        """A profile from another moathut is not the one a box starts
+        under; one of its own is kept."""
+        box, _ = self._create()
+        box.seccomp.write_text("{}\n")
+        commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                       cwd=self.home, environ=self.env, isatty=False,
+                       runner=FakeHost(self.home), execvp=lambda f, a: None)
+        self.assertEqual(box.seccomp.read_text(), seccomp.render("strict"))
+        self._own_profile()
+        own, _ = self._create("own", profile="mine.json")
+        commands.enter("own", ["id"], root=False, dirs=self.dirs,
+                       cwd=self.home, environ=self.env, isatty=False,
+                       runner=FakeHost(self.home), execvp=lambda f, a: None)
+        self.assertEqual(own.seccomp.read_text(),
+                         '{"defaultAction": "SCMP_ACT_ALLOW"}\n')
+
+    def test_a_box_naming_a_profile_this_moathut_has_not_is_refused(self):
+        box, _ = self._create()
+        doc = json.loads(box.settings.read_text())
+        box.settings.write_text(json.dumps({**doc, "seccomp": "lax"}))
+        with self.assertRaisesRegex(commands.BoxError,
+                                    "box agent: no seccomp profile 'lax'"):
+            commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                           cwd=self.home, environ=self.env, isatty=False,
+                           runner=FakeHost(self.home),
+                           execvp=lambda f, a: None)
+
+    def test_the_command_line_hands_the_profile_on(self):
+        from moathut import cli
+        for words, want in ((["--seccomp", "debug"], "debug"), ([], None)):
+            args = parse(["create", "agent", "--policy", "p", *words])
+            with mock.patch.object(cli, "create") as create, \
+                    mock.patch("sys.stdout"):
+                cli.run_command(args, tool=(), environ=self.env,
+                                cwd=self.home, isatty=False)
+            self.assertEqual(create.call_args.kwargs["profile"], want)
+
+    def test_a_dry_run_shows_a_profile_of_the_boxs_own(self):
+        self._own_profile()
+        written = commands.create(
+            "agent", self.policy, "img", [], dirs=self.dirs,
+            tool=("/py", "/cb"), python="/py", libexec="/lx",
+            pythonpath=None, uid=1000, gid=1000, cwd=self.home,
+            environ=self.env, dry_run=True, profile="mine.json",
+            runner=FakeHost(self.home))
+        box = Box("agent", self.dirs)
+        self.assertEqual(written[box.seccomp],
+                         '{"defaultAction": "SCMP_ACT_ALLOW"}\n')
+        self.assertFalse(box.config.exists())
 
     def test_autostart_is_kept_and_rendered(self):
         """Kept in box.json, since `policy` and `credential add` write the
@@ -1819,7 +1951,7 @@ with mock.patch.object(cli, "unit_netns", held):
             self.assertNotIn(box.pod_service, argv)
         self.assertEqual(sorted(p.name for p in box.config.iterdir()),
                          ["box.json", "bundle.pem", "containers.conf",
-                          "policy.json", "prompt.sh"])
+                          "policy.json", "prompt.sh", "seccomp.json"])
 
     def test_allow_on_a_stopped_box_applies_from_its_next_start(self):
         box, _ = self._create()
@@ -1928,7 +2060,7 @@ with mock.patch.object(cli, "unit_netns", held):
             self.assertNotIn(".policy.json.new", str(host.calls))
         self.assertEqual(sorted(p.name for p in box.config.iterdir()),
                          ["box.json", "bundle.pem", "containers.conf",
-                          "policy.json", "prompt.sh"])
+                          "policy.json", "prompt.sh", "seccomp.json"])
         failing = lambda argv: subprocess.CompletedProcess(argv, 1)
         with self.assertRaisesRegex(commands.BoxError, "exited 1"):
             self._edit(failing)

@@ -19,7 +19,7 @@ from moatery.inspect_document import (INSPECT_DIGEST_KEY,
 from moatery.inspect_policy import load_policy
 from moatery.sd_notify import notify_ready
 
-from . import credentials, document, record
+from . import credentials, document, record, seccomp
 from .credentials import CredentialError, brokering, describe
 from .document import AllowRefused
 from .mounts import MountRefused, parse_mount, refuse
@@ -124,9 +124,16 @@ _BASHRC = f"""\
 
 def _written(box, settings, broker):
     """Path to text, for each file the units are and each they read
-    that is written with them."""
-    return {**render(box, settings, broker), box.prompt: prompt(box),
-            box.containers_conf: containers_conf(box)}
+    that is written with them: a box's own seccomp profile is not, and
+    stays as it was copied in."""
+    written = {**render(box, settings, broker), box.prompt: prompt(box),
+               box.containers_conf: containers_conf(box)}
+    if settings.seccomp is not None:
+        try:
+            written[box.seccomp] = seccomp.render(settings.seccomp)
+        except ValueError as exc:
+            raise BoxError(f"box {box.name}: {exc}") from None
+    return written
 
 
 # The states in which a unit holds what it started with.
@@ -182,13 +189,32 @@ def _host_bundle():
                    f"knows ({', '.join(HOST_BUNDLES)})")
 
 
+def _own_profile(given, cwd):
+    """The text of a seccomp profile file, as podman will read it."""
+    path = Path(cwd, given).expanduser()
+    try:
+        text = path.read_text()
+        doc = json.loads(text)
+    except OSError as exc:
+        raise BoxError(f"--seccomp {given}: {exc.strerror}; it is "
+                       f"{' or '.join(seccomp.PROFILES)}, or a profile "
+                       "file") from None
+    except ValueError as exc:
+        raise BoxError(f"--seccomp {given}: {exc}") from None
+    if not isinstance(doc, dict) or "defaultAction" not in doc:
+        raise BoxError(f"--seccomp {given}: a seccomp profile has a "
+                       "defaultAction")
+    return text
+
+
 def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
            libexec, pythonpath, uid, gid, cwd, environ, autostart=False,
-           dry_run=False, like=None, runner=run):
+           dry_run=False, like=None, profile=None, runner=run):
     """The box; with dry_run, what would be written, path to text, and
-    nothing is. A box `like` another starts from its policy, image and
-    mounts: a policy or image given replaces its, and a mount given
-    joins its, replacing one at the same target."""
+    nothing is. A box `like` another starts from its policy, image,
+    mounts and seccomp profile: a policy, image or profile given
+    replaces its, and a mount given joins its, replacing one at the same
+    target. `profile` names one of seccomp's or a file, copied in."""
     box = _box(name, dirs)
     if box.config.exists() or any(p.exists() for p in box.unit_files):
         raise BoxError(f"box {name} exists")
@@ -201,9 +227,15 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
                  for spec in mount_specs]
     except MountRefused as exc:
         raise BoxError(f"--mount {exc}") from None
-    inherited = []
+    inherited, own = [], None
+    if profile is not None and profile not in seccomp.PROFILES:
+        own = _own_profile(profile, cwd)
     if like is not None:
         other, other_settings = _existing(like, dirs)
+        if profile is None:
+            profile = other_settings.seccomp
+            if profile is None:
+                own = other.seccomp.read_text()
         policy_path = policy_path or other.policy
         image = image or other_settings.image
         targets = {mount.target for mount, _ in given}
@@ -212,6 +244,10 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
                      if mount.target not in targets]
     if policy_path is None:
         raise BoxError("create needs --policy FILE or --like BOX")
+    if own is not None:
+        profile = None
+    elif profile is None:
+        profile = seccomp.DEFAULT
     image = image or DEFAULT_IMAGE
     broker = _broker(_policy(policy_path), dirs)
     host_bundle = _host_bundle()
@@ -228,13 +264,14 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
                         home_path=home_path, uid=uid, gid=gid,
                         mounts=mounts, tool=tuple(tool), python=python,
                         libexec=str(libexec), pythonpath=pythonpath,
-                        autostart=autostart)
+                        autostart=autostart, seccomp=profile)
     if dry_run:
-        return _written(box, settings, broker)
+        return {**_written(box, settings, broker),
+                **({box.seccomp: own} if own is not None else {})}
     home_existed = box.home.exists()
     try:
         _lay_out(box, settings, broker, policy_path, host_bundle, environ,
-                 runner)
+                 own, runner)
     except BaseException:
         _discard(box, home=not home_existed, runner=runner)
         raise
@@ -242,7 +279,7 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
 
 
 def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
-             runner):
+             own_profile, runner):
     for path in (box.config, box.state, box.logs, box.home):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
     # The runtime makes a missing mount point, and each directory above
@@ -265,6 +302,8 @@ def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
     ca = Path(minted.stdout.strip())
     box.bundle.write_text(ca.read_text() + host_bundle.read_text())
     box.bundle.chmod(0o644)
+    if own_profile is not None:
+        box.seccomp.write_text(own_profile)
     _write_units(box, settings, broker, runner)
     box.settings.write_text(settings.to_json())
     runner(["systemctl", "--user", "daemon-reload"])
@@ -466,6 +505,8 @@ def ls(*, dirs, runner=run):
         state = runner(["systemctl", "--user", "is-active", box.service],
                        check=False).stdout.strip() or "unknown"
         rows.append((box.name, state, settings.image)
+                    + ((f"seccomp:{settings.seccomp or 'own'}",)
+                       if settings.seccomp != seccomp.DEFAULT else ())
                     + (("autostart",) if settings.autostart else ())
                     + (("unprotected",) if _unprotected(box, runner)
                        else ()))

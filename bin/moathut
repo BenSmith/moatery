@@ -14,8 +14,8 @@ themselves.
 
 Usage:
   moathut create NAME (--policy FILE | --like BOX) [--image IMAGE]
-                     [--mount SRC[:DST][:ro]]... [--autostart]
-                     [--dry-run]
+                     [--mount SRC[:DST][:ro]]... [--seccomp PROFILE]
+                     [--autostart] [--dry-run]
   moathut enter NAME [--root] [-- COMMAND...]
   moathut log NAME [--refused]
   moathut allow NAME HOST [--method M]... [--path P]...

@@ -77,6 +77,8 @@ class Settings(NamedTuple):
     libexec: str
     pythonpath: str | None
     autostart: bool = False
+    # A profile seccomp renders, or None for the box's own, copied in.
+    seccomp: str | None = "strict"
 
     def to_json(self):
         doc = self._asdict()
@@ -241,6 +243,7 @@ WorkingDir={_value(settings.home_path)}
 Exec=sleep infinity
 RunInit=true
 Timezone=local
+SeccompProfile={_value(box.seccomp)}
 {body}
 
 [Service]

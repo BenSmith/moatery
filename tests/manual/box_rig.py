@@ -9,6 +9,7 @@ proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/box_rig.py [--keep] [--without-rules]
                                     [--without-held-netns]
+                                    [--podman-seccomp]
                                     [--broker-not-ready]
                                     [--listeners-required]
                                     [--without-reload] [--without-reopen]
@@ -28,7 +29,8 @@ removes them before `rm`:
             the broker's start has a window a request can fall in; with
             --broker-not-ready, Type=simple.
   workload  Exec= is a script in the box's home in place of `sleep
-            infinity`. At every start its first act is a request to the
+            infinity`; with --podman-seccomp, SeccompProfile= names
+            podman's default. At every start its first act is a request to the
             provider, whose nonce and status it appends to a file in the
             home; then it sleeps. That request is the window: nothing the
             workload sends may come before the rules, the listeners and
@@ -90,6 +92,13 @@ THE ROWS
             down`; the host's nft with those credentials is refused
             `nft flush ruleset`, and the rules stay; the pasta serving
             the box has the arguments podman gives a stock pod's.
+  seccomp   a probe whose calls each take an argument the kernel
+            rejects: in a stock container every one reaches the kernel,
+            a vsock with an upper bit in its family among them; in the
+            box, the profile refuses the user, and root in a privileged
+            exec, a namespace, a mount, ptrace, the keyring and a vsock
+            however written, and lets a thread, an unshare of nothing
+            new and an inet and a netlink socket through.
   home      the box's home is its own: a file in the user's home is absent
             inside, and one written inside is in the box's home on the
             host and not in the user's. The directories between the home
@@ -164,10 +173,12 @@ THE ROWS
             box's image, prompt and mark warns that the box is not
             protected. A pod the box left, started by podman while the
             namespace's unit is stopped, does not start.
-  like      create --like the box, as the loop left its policy: the
-            new box has its policy, image and mounts, and neither its
-            autostart nor its home; entered, it reads the :ro mount at
-            its DST; rm --home leaves nothing of it.
+  like      create --like the box, as the loop left its policy, with
+            --seccomp debug: the new box has its policy, image and
+            mounts, and neither its autostart nor its home; entered, it
+            reads the :ro mount at its DST, and under debug ptrace
+            reaches the kernel and a namespace is refused still; rm
+            --home leaves nothing of it.
   rm        credential rm is refused while the box names it; no unit, pod
             or container is left, nor the broker's socket; the home and the
             record stay, and create, with a policy naming no credential,
@@ -196,6 +207,12 @@ capability in the box is refused, premise's that the pod's namespace is
 the held one, restart's that each pod restart keeps it, and outside's
 that `podman pod restart` keeps it and that a left pod does not start,
 must go red.
+
+`--podman-seccomp` runs the workload under podman's default seccomp
+profile: seccomp's rows that the box's user, and root in a privileged
+exec, are refused by the profile must go red. Its stock container's row
+and the row of what a box does stay green, and so does the like box's,
+which the drop-in is not on.
 
 `--listeners-required` adds `Requires=` on both listeners to the
 workload's drop-in, as its unit had before the policy loop: the loop's
@@ -296,7 +313,8 @@ UNIT_FILES = (UNITS / NETNS_SERVICE, QUADLET / f"{UNIT}.pod",
               QUADLET / f"{UNIT}.container", UNITS / INSPECT_SERVICE,
               UNITS / RESOLVE_SERVICE, UNITS / BROKER_SERVICE,
               UNITS / ROTATE_SERVICE, UNITS / ROTATE_TIMER)
-WRITTEN_WITH = (CONFIG / "prompt.sh", CONFIG / "containers.conf")
+WRITTEN_WITH = (CONFIG / "prompt.sh", CONFIG / "containers.conf",
+                CONFIG / "seccomp.json")
 LAID_OUT = (CONFIG / "policy.json", CONFIG / "bundle.pem", *WRITTEN_WITH,
             ca_cert_path(STATE), LOGS, BOX_HOME, BOX_HOME / ".bashrc",
             *UNIT_FILES)
@@ -439,6 +457,64 @@ load_rules(held)
 with open("{MARK}", "w") as mark:
     mark.write(netns_id(held) + "\\n")
 """
+
+# Each call with an argument the kernel itself rejects, so the errno says
+# which refused it: the filter's EPERM or ENOSYS, or the kernel's own.
+SECCOMP_PROBE = ".moatery-rig-seccomp"
+SECCOMP_SCRIPT = """\
+import ctypes, errno, json
+libc = ctypes.CDLL(None, use_errno=True)
+libc.syscall.restype = ctypes.c_long
+NOWHERE = ctypes.create_string_buffer(b"/nonexistent")
+NO_PID = 4194305
+def call(nr, *args):
+    if libc.syscall(nr, *map(ctypes.c_long, args)) >= 0:
+        return "0"
+    return errno.errorcode.get(ctypes.get_errno(), "?")
+print(json.dumps({
+    "clone NEWUSER": call(56, 0x10000 | 0x10000000, 0, 0, 0, 0),
+    "clone NEWNET": call(56, 0x10000 | 0x40000000, 0, 0, 0, 0),
+    "unshare NEWUSER": call(272, 1 | 0x10000000),
+    "clone3": call(435, 0, 0),
+    "setns": call(308, -1, 0),
+    "mount": call(165, 0, ctypes.addressof(NOWHERE), 0, 0, 0),
+    "ptrace": call(101, 2, NO_PID, 0, 0),
+    "process_vm_readv": call(310, NO_PID, 0, 0, 0, 0, 0),
+    "pidfd_getfd": call(438, -1, 0, 0),
+    "keyctl": call(250, 9999, 0, 0, 0, 0),
+    "vsock": call(41, 40, 1, 0),
+    "vsock, upper bit": call(41, (1 << 32) | 40, 1, 0),
+    "clone THREAD": call(56, 0x10000, 0, 0, 0, 0),
+    "unshare nothing new": call(272, 1),
+    "socket inet": call(41, 2, 99, 0),
+    "socket netlink route": call(41, 16, 3, 0),
+    "socket netlink audit": call(41, 16, 3, 9),
+}))
+"""
+# What the probe's calls get from the box's profile, strict.
+SECCOMP_REFUSED = {
+    "clone NEWUSER": "EPERM", "clone NEWNET": "EPERM",
+    "unshare NEWUSER": "EPERM", "clone3": "ENOSYS", "setns": "EPERM",
+    "mount": "EPERM", "ptrace": "EPERM", "process_vm_readv": "EPERM",
+    "pidfd_getfd": "EPERM", "keyctl": "ENOSYS", "vsock": "ENOSYS",
+    "vsock, upper bit": "ENOSYS"}
+# What the kernel answers them with, under podman's default profile; a
+# vsock is refused by it, but not one with an upper bit set.
+SECCOMP_KERNEL = {
+    "clone NEWUSER": "EINVAL", "clone NEWNET": "EINVAL",
+    "unshare NEWUSER": "EINVAL", "clone3": "EINVAL", "setns": "EBADF",
+    "mount": "ENOENT", "ptrace": "ESRCH", "process_vm_readv": "0",
+    "pidfd_getfd": "EBADF", "keyctl": "ENOTSUP"}
+# And what the box does, which reaches the kernel under either.
+SECCOMP_ALLOWED = {
+    "clone THREAD": "EINVAL", "unshare nothing new": "EINVAL",
+    "socket inet": "EINVAL", "socket netlink route": "0",
+    "socket netlink audit": "EINVAL"}
+# The ptrace calls under debug.
+SECCOMP_DEBUG = {"ptrace": "ESRCH", "process_vm_readv": "0",
+                 "pidfd_getfd": "EBADF", "unshare NEWUSER": "EPERM",
+                 "clone3": "ENOSYS"}
+PODMAN_SECCOMP = "/usr/share/containers/seccomp.json"
 
 SITECUSTOMIZE = """\
 # written by tests/manual/box_rig.py: the broker's interpreter waits
@@ -1036,6 +1112,58 @@ def held_rows():
         made.returncode == 0 and theirs is not None and ours == theirs,
         f"podman's: {theirs}; the box's: {ours}"
         + (f"; {made.stderr.strip()[-160:]}" if made.returncode else ""))
+
+
+def seccomp_probe(*podman_exec, name=BOX):
+    """The probe's errnos, run by `podman exec` in the box `name`."""
+    got = run(["podman", "exec", *podman_exec, name, "python3",
+               f"{INSIDE}/{SECCOMP_PROBE}"], check=False, timeout=60)
+    try:
+        return json.loads(got.stdout)
+    except ValueError:
+        return {"rc": got.returncode, "stderr": got.stderr.strip()[-200:]}
+
+
+def differing(got, want):
+    return {k: got.get(k) for k in want if got.get(k) != want[k]}
+
+
+def seccomp_rows():
+    """docs/BOX.md's profile, by errno: in a stock container the probe's
+    arguments reach the kernel, in the box the filter answers first."""
+    say("seccomp")
+    (BOX_HOME / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)
+    got = run(["podman", "run", "--rm", "--network", "none", "--userns",
+               "keep-id", "--user", USER, "-v",
+               f"{BOX_HOME / SECCOMP_PROBE}:/probe:ro,z", IMAGE, "python3",
+               "/probe"], check=False, timeout=120)
+    try:
+        stock = json.loads(got.stdout)
+    except ValueError:
+        stock = {"rc": got.returncode, "stderr": got.stderr.strip()[-200:]}
+    upper = stock.get("vsock, upper bit")
+    row("seccomp: under podman's default, every call the probe makes "
+        "reaches the kernel, a vsock with an upper bit set among them",
+        not differing(stock, {**SECCOMP_KERNEL, **SECCOMP_ALLOWED})
+        and stock.get("vsock") == "EPERM"
+        and upper not in (None, "EPERM", "ENOSYS"),
+        f"differing: {differing(stock, SECCOMP_KERNEL)}; vsock "
+        f"{stock.get('vsock')}, with an upper bit {upper}")
+    mine = seccomp_probe("--user", USER)
+    row("seccomp: the box's user is refused, by the profile, a namespace, "
+        "a mount, ptrace, the keyring and a vsock however its family is "
+        "written",
+        not differing(mine, SECCOMP_REFUSED),
+        f"differing: {differing(mine, SECCOMP_REFUSED)}")
+    row("seccomp: and what a box does reaches the kernel: a thread, an "
+        "unshare of nothing new, an inet and a netlink socket",
+        not differing(mine, SECCOMP_ALLOWED),
+        f"differing: {differing(mine, SECCOMP_ALLOWED)}")
+    root = seccomp_probe("--privileged", "--user", "0")
+    row("seccomp: a shell podman exec --privileged opens, as root, is "
+        "refused every one of them as well",
+        not differing(root, SECCOMP_REFUSED),
+        f"differing: {differing(root, SECCOMP_REFUSED)}")
 
 
 def home_rows(tag):
@@ -1797,7 +1925,8 @@ def load_state(unit):
 
 def like_rows(tag):
     say("like")
-    made = box("create", TWIN, "--like", BOX, timeout=300)
+    made = box("create", TWIN, "--like", BOX, "--seccomp", "debug",
+               timeout=300)
     mine, twin = (json.loads((c / "box.json").read_text())
                   if (c / "box.json").exists() else {}
                   for c in (CONFIG, TWIN_CONFIG))
@@ -1811,8 +1940,9 @@ def like_rows(tag):
         f"rc={made.returncode} {made.stderr.strip()[-200:]}; policy "
         f"{policy}; {same}")
     entry = listed(TWIN)
-    row("like: and neither its autostart nor its home",
-        entry == [TWIN, "inactive", IMAGE]
+    row("like: and neither its autostart nor its home; its profile is "
+        "debug, as given",
+        entry == [TWIN, "inactive", IMAGE, "seccomp:debug"]
         and not (TWIN_SHARE / "home" / KEPT).exists(),
         f"ls: {entry}; {KEPT} in its home: "
         f"{(TWIN_SHARE / 'home' / KEPT).exists()}")
@@ -1822,6 +1952,12 @@ def like_rows(tag):
         got.returncode == 0 and got.stdout.strip() == tag,
         f"rc={got.returncode} {got.stdout.strip()!r} "
         f"{got.stderr.strip()[-200:]}")
+    (TWIN_SHARE / "home" / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)
+    debug = seccomp_probe("--user", USER, name=TWIN)
+    row("like: under debug, ptrace reaches the kernel, and a namespace is "
+        "refused still",
+        not differing(debug, SECCOMP_DEBUG),
+        f"differing: {differing(debug, SECCOMP_DEBUG)}")
     removed = box("rm", TWIN, "--home")
     row("like: rm --home leaves nothing of it",
         removed.returncode == 0 and not TWIN_CONFIG.exists()
@@ -1904,9 +2040,13 @@ def probe(args, tag, secret):
     write_drop_in("workload", (
         f"[Unit]\nRequires={INSPECT_SERVICE} {RESOLVE_SERVICE}\n"
         if args.listeners_required else "")
-        + f"[Container]\nExec=/bin/sh {INSIDE}/{START}\n")
+        + f"[Container]\nExec=/bin/sh {INSIDE}/{START}\n"
+        + (f"SeccompProfile={PODMAN_SECCOMP}\n" if args.podman_seccomp
+           else ""))
     if args.listeners_required:
         say("  the workload Requires= the listeners, as asked")
+    if args.podman_seccomp:
+        say("  the workload runs under podman's default profile, as asked")
     fail_rows()
     if args.without_rules:
         write_drop_in("netns", NO_RULES)
@@ -1927,6 +2067,7 @@ def probe(args, tag, secret):
     premise_rows()
     enter_rows(tag)
     held_rows()
+    seccomp_rows()
     home_rows(tag)
     dns_rows()
     drop_rows()
@@ -2044,6 +2185,9 @@ def main():
                     help="let the pod make its own namespace, with the "
                          "rules loaded into it; held's, the held "
                          "namespace's and outside's rows must go red")
+    ap.add_argument("--podman-seccomp", action="store_true",
+                    help="run the workload under podman's default seccomp "
+                         "profile; seccomp's refusals must go red")
     ap.add_argument("--broker-not-ready", action="store_true",
                     help="make the broker's unit Type=simple; the first "
                          "request after each start of it must go red")
@@ -2106,6 +2250,10 @@ def main():
             "--without-held-netns: held's refusals, premise's held "
             "namespace, restart's pod restarts, and outside's restart and "
             "left pod are expected red")
+    if args.podman_seccomp:
+        expected.append(
+            "--podman-seccomp: seccomp's two rows of refusals are expected "
+            "red")
     if args.broker_not_ready:
         expected.append(
             "--broker-not-ready: first, the premise of a stop while the "

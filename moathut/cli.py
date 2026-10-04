@@ -36,10 +36,13 @@ def build_parser():
     p.add_argument("--autostart", action="store_true",
                    help="start it with the user's session, and at boot "
                         "if the user lingers")
+    p.add_argument("--seccomp", metavar="PROFILE",
+                   help="strict, the default; debug, which allows "
+                        "ptrace; or a seccomp profile file, copied in")
     p.add_argument("--like", metavar="BOX",
-                   help="start from another box's policy, image and "
-                        "mounts; --policy and --image replace its, and "
-                        "--mount adds to them")
+                   help="start from another box's policy, image, mounts "
+                        "and seccomp profile; --policy, --image and "
+                        "--seccomp replace its, and --mount adds to them")
     p.add_argument("--dry-run", action="store_true",
                    help="print the files it would write, and write none; "
                         "the image is pulled, to find its trust store")
@@ -194,7 +197,8 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
                      pythonpath=environ.get("PYTHONPATH") or None,
                      uid=os.getuid(), gid=os.getgid(), cwd=cwd,
                      environ=environ, autostart=args.autostart,
-                     dry_run=args.dry_run, like=args.like)
+                     dry_run=args.dry_run, like=args.like,
+                     profile=args.seccomp)
         if args.dry_run:
             for path, text in box.items():
                 print(f"# {path}\n{text}")
