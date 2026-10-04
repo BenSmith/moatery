@@ -26,7 +26,8 @@ so git over ssh cannot leave a box, and git over https can.
 
 ```
 moathut create NAME (--policy FILE | --like BOX) [--image IMAGE]
-                   [--mount SRC[:DST][:ro]]... [--autostart] [--dry-run]
+                   [--mount SRC[:DST][:ro]]... [--seccomp PROFILE]
+                   [--autostart] [--dry-run]
 moathut enter NAME [--root] [-- COMMAND...]
 moathut log NAME [--refused]
 moathut allow NAME HOST [--method M]... [--path P]...
@@ -53,12 +54,14 @@ at the next login. With `--dry-run` it prints each file it would write,
 its path first, and writes none and mints nothing; it still refuses
 what `create` would refuse, and pulls the image to find its trust
 store.
+With `--seccomp` it names the workload's seccomp profile (Seccomp,
+below): `strict`, the default, `debug`, or a file, copied in.
 With `--like BOX` it starts from another box's policy, as edited
-since, its image and its mounts: `--policy` and `--image` replace its,
-and a `--mount` joins its, replacing one at the same target. The new box
-gets a home of its own, and is not autostarted without `--autostart`.
-A mount whose source has gone since is refused, naming the box it came
-from.
+since, its image, its mounts and its seccomp profile: `--policy`,
+`--image` and `--seccomp` replace its, and a `--mount` joins its,
+replacing one at the same target. The new box gets a home of its own,
+and is not autostarted without `--autostart`. A mount whose source has
+gone since is refused, naming the box it came from.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
 order, the namespace's unit, which loads the rules, the pod, the broker
@@ -76,8 +79,9 @@ and the box's home otherwise.
 
 **stop** stops the namespace's unit, and the broker's; everything bound
 to it stops too, and the namespace goes.
-**ls** lists each box, whether its workload is active, its image,
-`autostart` if it has it, and `unprotected` if its pod runs in a
+**ls** lists each box, whether its workload is active, its image, its
+seccomp profile if not `strict` (`seccomp:debug`, or `seccomp:own` for a
+file), `autostart` if it has it, and `unprotected` if its pod runs in a
 namespace without the rules, with a warning on stderr.
 **rm** stops the box and removes its units and what podman made from
 them; its home and its record stay unless `--home`.
@@ -176,6 +180,7 @@ For box NAME, credential ID:
 | bundle | `~/.config/moatery/box/NAME/bundle.pem` |
 | prompt | `~/.config/moatery/box/NAME/prompt.sh` |
 | podman's override for the pod | `~/.config/moatery/box/NAME/containers.conf` |
+| seccomp profile | `~/.config/moatery/box/NAME/seccomp.json` |
 | CA, certificates, status files, the namespace's name | `~/.local/state/moatery/box/NAME/` |
 | record | `~/.local/state/log/moatery/box/NAME/requests.log`, and `.1` to `.4.gz` |
 | the box's home | `~/.local/share/moatery/box/NAME/home/` |
@@ -363,6 +368,51 @@ the box. It adds none, and names the box's user: podman gives the user
 the capabilities a unit adds, and root's when the unit names no user.
 The user holds none.
 
+## Seccomp
+
+The workload's unit names the box's profile (`SeccompProfile=`), and
+crun loads it for every process in the container and every `podman
+exec`, a privileged one too: an exec changes capabilities, not the
+filter.
+
+`strict`, the default, is podman's default profile (containers-common)
+with its capability conditions resolved for the box's capabilities,
+refusing more:
+
+| refused | fails with | why |
+|---|---|---|
+| `unshare` and `clone` with a `CLONE_NEW*` flag; `setns` | EPERM | nothing in the box is root in a namespace of its own, where the kernel's network and mount code is open to it |
+| `clone3` | ENOSYS | glibc falls back to `clone`, whose flags the filter can read; `clone3`'s are behind a pointer |
+| `mount`, `umount2`, `pivot_root`, `fsopen`, `fsmount`, `fsconfig`, `fspick`, `open_tree`, `move_mount`, `mount_setattr` | EPERM | |
+| `ptrace`, `process_vm_readv`, `process_vm_writev`, `pidfd_getfd` | EPERM | `debug` allows them |
+| `keyctl`, `add_key`, `request_key`, `io_uring_*`, `socketcall` | ENOSYS | programs do without a keyring or io_uring a kernel lacks; io_uring's and socketcall's operations are out of the filter's sight |
+| `socket(AF_VSOCK, ...)`, however the family is written | ENOSYS | a vsock reaches the host, or a VM's hypervisor, around the network namespace |
+
+A call the profile does not name fails with ENOSYS, as one the kernel
+lacks would. Under `strict`, gdb says "During startup program exited
+with code 127", strace "ptrace(PTRACE_SEIZE, ...): Operation not
+permitted", and `unshare -Ur` "unshare failed: Operation not
+permitted". `debug` is `strict` with the four ptrace calls allowed, for
+gdb, strace and profilers; neither makes a namespace. A named profile is
+written again with the units, so a box takes the profile of the moathut
+that starts it; a file given to `--seccomp` is kept as it was copied.
+
+`strict` breaks containers inside a box (podman, buildah), bubblewrap
+and the sandboxes built on it (Flatpak's, Claude Code's on Linux),
+Chromium's sandbox, and anything that runs `unshare`. A box that needs
+them takes a profile of its own; `--seccomp
+/usr/share/containers/seccomp.json` is podman's default.
+
+Refusing ptrace narrows the kernel a box reaches. It does not keep the
+box's processes from one another: they share a user, and
+`/proc/PID/mem` is a file, not a call the filter sees.
+
+podman's default refuses a vsock by comparing the whole register, while
+the kernel reads the family as an int, so a family with an upper bit
+set gets a vsock under it. `strict` allows families by masked blocks
+that keep the upper half, and a vsock by none. moathut/seccomp.py says
+which of libseccomp's readings the rules are shaped around.
+
 ## What is not closed
 
 A workload restart, by anything, keeps the namespace and its rules, and
@@ -374,8 +424,9 @@ to start: quadlet removes them. A shell opened with `podman exec
 --privileged`, as Ptyxis opens every container's tab, holds every
 capability in the box's user namespace, which does not own the network
 namespace, so it cannot change the rules. It keeps the box's seccomp
-filter and SELinux label, which podman's exec does not change, but it
-is still a shell with every capability in the box, and Ptyxis lists
+profile and SELinux label, which podman's exec does not change, so it
+makes no namespace and mounts nothing, but it is still a shell with
+every capability in the box, and Ptyxis lists
 boxes in its container menu and opens a new tab in the container a
 tab's text last named (OSC 777 or 666), which a workload can print;
 [BOX-GUIDE.md](BOX-GUIDE.md) says how to open boxes from Ptyxis without
@@ -427,6 +478,11 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
   namespace and its rules, and the shell is not warned; the pod is in
   the namespace the namespace's unit holds, whose pasta has the
   arguments podman gives a pod's;
+- the box's user, and root in a privileged exec, are refused by the
+  profile a namespace, a mount, ptrace, the keyring and a vsock however
+  its family is written, while a thread, an inet and a netlink socket
+  reach the kernel; in a stock container the same calls reach the
+  kernel; under `debug`, ptrace does;
 - `enter` runs in the box's home, or the mount the host's directory is
   in; the user's own home is not the box's; a file outside the home is
   gone after a restart;

@@ -475,6 +475,7 @@ The tool is the checkout's `bin/moathut`, or with
 python3 tests/manual/box_rig.py                     # every row green
 python3 tests/manual/box_rig.py --without-rules     # must go red
 python3 tests/manual/box_rig.py --without-held-netns  # must go red
+python3 tests/manual/box_rig.py --podman-seccomp    # must go red
 python3 tests/manual/box_rig.py --broker-not-ready  # must go red
 python3 tests/manual/box_rig.py --listeners-required  # must go red
 python3 tests/manual/box_rig.py --without-reload    # must go red
@@ -759,6 +760,23 @@ Facts for the design, from probes beside the rig the same day:
   container's filter to every exec. The box's user, without any
   capability, can already `unshare -Urn` and, inside, add links, open
   the netfilter socket and mount a tmpfs.
+
+**The box's seccomp profile, 2026-10-04.** On the proving host
+(podman 5.8.7, crun 1.28, libseccomp 2.6.1, kernel 7.2.5): 126/126.
+`--podman-seccomp` 124/126, the two rows of refusals, every call of
+the probe reaching the kernel there (`clone3` EINVAL, `setns` EBADF,
+`mount` ENOENT, `ptrace` ESRCH, `keyctl` ENOTSUP), a vsock refused EPERM
+by podman's profile and one with an upper bit in its family made. The
+unit tests' breaks (moathut's unit line, the file written with the
+units, each of the profile's shapes) each turned a test red.
+
+Beside the rig, in a box-shaped container (keep-id, the toolbox image)
+under each profile: sudo, `dnf install`, git over HTTPS, curl and
+threaded subprocesses worked under `strict` as under podman's default;
+gdb ("During startup program exited with code 127"), strace and
+`unshare -Ur` were refused, and under `debug` gdb and strace worked.
+libseccomp's readings, measured the same day, are in
+`tests/test_seccomp.py`'s docstring.
 
 **The workspace, 2026-09-30: the user manager's alone.** A bare unit
 loading a sealed credential, `ExecStart=sleep infinity`, started with

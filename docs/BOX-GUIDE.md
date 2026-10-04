@@ -181,6 +181,28 @@ moathut create work --policy ~/policy.json --image localhost/work
 
 The build runs on the host, so it doesn't need the box's policy.
 
+## Debuggers, nested containers and sandboxes
+
+A box also limits which kernel calls run in it. Nothing in it can make
+a namespace or mount a filesystem, so podman, buildah, bubblewrap
+(Flatpak, Claude Code's sandbox) and Chromium's sandbox don't work in a
+box, and `unshare` fails with "Operation not permitted". Debuggers are
+refused too: gdb says "During startup program exited with code 127",
+and strace "Operation not permitted".
+
+For a box you debug in, allow them:
+
+```
+moathut create dbg --like work --seccomp debug
+```
+
+`debug` allows gdb, strace and profilers, and still no namespace. For
+anything else, pass a seccomp profile of your own, which is copied in;
+`--seccomp /usr/share/containers/seccomp.json` is podman's default,
+which allows the namespaces nested containers need. A box made `--like` another gets its
+profile. `moathut ls` names a box's profile if it isn't the default.
+[BOX.md](BOX.md), "Seccomp", lists what is refused.
+
 ## When the moat doesn't cover you
 
 The box's network belongs to moathut, not to the box, so nothing in
@@ -433,6 +455,7 @@ For a box named `work`:
 | its policy | `~/.config/moatery/box/work/policy.json` |
 | its record | `~/.local/state/log/moatery/box/work/requests.log` |
 | its home | `~/.local/share/moatery/box/work/home/` |
+| its seccomp profile | `~/.config/moatery/box/work/seccomp.json` |
 | its units | `systemctl --user status 'moathut-work*'` |
 
 Edit the policy with `moathut policy`, not in place: the command
