@@ -407,7 +407,8 @@ moathut rm work --home  # remove its home too
 ```
 
 `rm` prints the paths it kept. A box created again with the same name
-finds its old home and record.
+finds its old home and record. `moathut rm work --home` after a plain
+`rm` removes the home it kept.
 
 ## When things go wrong
 

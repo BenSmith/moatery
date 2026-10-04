@@ -77,7 +77,8 @@ def build_parser():
                                   "and its record stay")
     p.add_argument("name")
     p.add_argument("--home", action="store_true",
-                   help="remove its home too")
+                   help="remove its home too, or the home a box removed "
+                        "without --home left")
     sub.add_parser("ls", help="list the boxes")
     credential = sub.add_parser(
         "credential", help="seal a provider's key for the boxes' brokers"
@@ -229,6 +230,8 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
     elif args.command == "rm":
         for path in rm(args.name, home=args.home, dirs=dirs):
             print(f"kept {path}")
+        if not args.home:
+            print(f"moathut rm --home {args.name} removes the home")
     elif args.command == "ls":
         rows = ls(dirs=dirs)
         for row in rows:

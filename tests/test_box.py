@@ -1694,6 +1694,24 @@ with mock.patch.object(cli, "unit_netns", held):
             commands.rm("agent", home=True, dirs=self.dirs,
                         runner=FakeHost(self.home, unshare=False))
 
+    def test_rm_home_removes_the_home_a_removed_box_left(self):
+        """Without it, the home a plain rm keeps could be removed only
+        by hand, under podman unshare."""
+        box, _ = self._create()
+        (box.home / "notes").write_text("mine")
+        commands.rm("agent", home=False, dirs=self.dirs,
+                    runner=FakeHost(self.home))
+        with self.assertRaisesRegex(commands.BoxError, "no box agent"):
+            commands.rm("agent", home=False, dirs=self.dirs,
+                        runner=FakeHost(self.home))
+        self.assertTrue(box.home.exists())
+        commands.rm("agent", home=True, dirs=self.dirs,
+                    runner=FakeHost(self.home))
+        self.assertFalse(box.share.exists())
+        with self.assertRaisesRegex(commands.BoxError, "no box agent"):
+            commands.rm("agent", home=True, dirs=self.dirs,
+                        runner=FakeHost(self.home))
+
     def test_ls_lists_each_box_and_its_state(self):
         self._create("a")
         self._create("b")

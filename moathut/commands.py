@@ -363,10 +363,14 @@ def _discard(box, *, home, runner):
     shutil.rmtree(box.config, ignore_errors=True)
     shutil.rmtree(box.state, ignore_errors=True)
     if home:
-        # The box's other uids write in its home too: root by sudo, and
-        # the runtime.
-        runner(["podman", "unshare", "rm", "-rf", "--", str(box.share)],
-               check=False)
+        _remove_home(box, runner)
+
+
+def _remove_home(box, runner):
+    # The box's other uids write in its home too: root by sudo, and the
+    # runtime.
+    runner(["podman", "unshare", "rm", "-rf", "--", str(box.share)],
+           check=False)
 
 
 def _workdir(settings, cwd, root):
@@ -502,8 +506,15 @@ def stop(name, *, dirs, runner=run):
 
 
 def rm(name, *, home, dirs, runner=run):
-    box, _settings = _existing(name, dirs)
-    _discard(box, home=home, runner=runner)
+    """Remove the box, or with `home`, the home a box removed without it
+    left behind."""
+    box = _box(name, dirs)
+    if box.settings.exists():
+        _discard(box, home=home, runner=runner)
+    elif home and box.share.exists():
+        _remove_home(box, runner)
+    else:
+        raise BoxError(f"no box {name}")
     if home and box.share.exists():
         raise BoxError(f"box {name} is removed but its home is not: "
                        f"podman unshare rm -rf {box.share}")

@@ -84,7 +84,8 @@ seccomp profile if not `strict` (`seccomp:debug`, or `seccomp:own` for a
 file), `autostart` if it has it, and `unprotected` if its pod runs in a
 namespace without the rules, with a warning on stderr.
 **rm** stops the box and removes its units and what podman made from
-them; its home and its record stay unless `--home`.
+them; its home and its record stay unless `--home`. With `--home`, a
+box already removed has the home it left removed.
 
 ## The policy loop
 
