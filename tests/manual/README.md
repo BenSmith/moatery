@@ -778,6 +778,20 @@ gdb ("During startup program exited with code 127"), strace and
 libseccomp's readings, measured the same day, are in
 `tests/test_seccomp.py`'s docstring.
 
+**A box's SELinux level, 2026-10-04.** On the proving host (podman
+5.8.7, SELinux enforcing): 130/130. Beside the rig, by hand: a
+container at a level of its own in a pod at podman's random one ran at
+its own level and wrote its `:Z` mount, and was refused `/dev/shm`,
+which is the infra container's, labelled at the infra's level; with
+the pod at the same level, `/dev/shm` was writable. A second start at
+a fixed level left a file deep in a `:Z` mount with its ctime
+unchanged: podman relabelled nothing. A container at another fixed
+level, and one at podman's random one, were refused the directory.
+The unit tests' breaks (the pod's level, the workload's, a level
+different from the pod's, each of the four `:Z` mounts, a mount made
+`:Z`, create's level, the level given a box without one, a level drawn
+twice, categories unsorted) each turned a test red.
+
 **The workspace, 2026-09-30: the user manager's alone.** A bare unit
 loading a sealed credential, `ExecStart=sleep infinity`, started with
 `--no-block` and stopped 0.05, 0.2, 0.4, 0.7 and 1.0 s into its 1.3 s
