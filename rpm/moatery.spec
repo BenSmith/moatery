@@ -22,6 +22,8 @@ Requires:       openssl >= 3.5
 Recommends:     podman
 Recommends:     passt
 Recommends:     nftables
+# moathut's completion, which bash-completion loads.
+Suggests:       bash-completion
 
 %description
 moatery inspects what a sandboxed workload sends out and brokers the
@@ -48,6 +50,8 @@ for pkg in moatery moathut; do
 done
 install -Dpm 0755 %{_sourcedir}/bin/moathut \
     %{buildroot}%{_bindir}/moathut
+install -Dpm 0644 %{_sourcedir}/completions/moathut.bash \
+    %{buildroot}%{_datadir}/bash-completion/completions/moathut
 install -dm 0755 %{buildroot}%{_libexecdir}/moatery
 for f in moat-broker moat-inspect moat-mint-ca \
         moat-netns-listen moat-resolve; do
@@ -76,6 +80,7 @@ PYTHONPATH=%{buildroot}%{python3_sitelib} \
 %{python3_sitelib}/moatery/
 %{python3_sitelib}/moathut/
 %{_bindir}/moathut
+%{_datadir}/bash-completion/completions/moathut
 %dir %{_libexecdir}/moatery
 %{_libexecdir}/moatery/moat-broker
 %{_libexecdir}/moatery/moat-inspect

@@ -18,7 +18,8 @@ You need, on the host:
 - podman 5.3 or later, with pasta, and nftables;
 - systemd 256 or later;
 - the moatery RPM, which carries `moathut` and the programs it
-  runs.
+  runs, and with bash-completion installed, tab completion of its
+  commands and box names.
 
 To run it from a checkout of this repository instead, point it at the
 checkout's programs:

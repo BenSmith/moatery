@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Tooling
-        run: sudo dnf install -y just ruff python3-coverage
+        run: sudo dnf install -y just ruff python3-coverage bash-completion
 
       - name: Lint
         run: just lint

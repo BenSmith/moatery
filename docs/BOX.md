@@ -469,6 +469,10 @@ which `tests/test_closure.py` holds. The moatery RPM
 carries it, `/usr/bin/moathut` and the package beside `moatery` in
 site-packages; there is no separate package. `tests/test_closure.py`
 holds the RPM's spec to installing both packages and every program.
+Its bash completion, `completions/moathut.bash`, is installed where
+bash-completion loads it; it completes commands, options, box names
+from `~/.config/moatery/box` and credential names, and
+`tests/test_completion.py` holds it to the parser and those paths.
 
 ## Requirements
 
