@@ -191,8 +191,8 @@ and a box moathut stopped can't be started by podman at all.
 
 **Ptyxis.** It lists your boxes in its container menu, and a tab
 opened from there is a privileged shell. It can't change the rules, but
-it has every capability in the box and no seccomp filter, so prefer
-`moathut enter work`. Text printed in a tab can also make Ptyxis open
+it has every capability inside the box, so prefer `moathut enter
+work`. Text printed in a tab can also make Ptyxis open
 the next new tab this way, and a program in the box can print it. A
 Ptyxis profile whose custom command is `moathut enter work`, with
 "Preserve Container" set to never, opens the box the moathut way every

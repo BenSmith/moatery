@@ -723,6 +723,43 @@ linger session (logind class `manager`) started the user's manager, and
 the chain was active with its rules loaded before the first login
 (class `user`).
 
+**The held namespace, 2026-10-04.** The box's namespace moved from its
+pod to the netns unit (podman 5.8.7, systemd 259.9, crun 1.28,
+kernel 7.2). 120/121 at first: the chain row read systemd's default
+`Requires=app.slice basic.target` on the netns unit as a binding; it
+asks now for none of the box's units. Then 121/121. A shell `podman
+exec --privileged` opens was refused `ip link add` and `ip link set lo
+down`, and the host's nft as root with every capability in the box's
+user namespace was refused `nft flush ruleset` ("Operation not
+permitted"), the tables staying; a left pod's `podman pod start` failed
+with `crun: open .../moathut-netns/NAME: No such file or directory`.
+`--without-held-netns` 112/121, the nine rows it names. `--without-rules`
+63/121; warn's first stayed green there, since a refused enter opens no
+shell to warn, and now asks that enter succeeded.
+
+Facts for the design, from probes beside the rig the same day:
+- with podman as the netns unit's main process, every stop left the
+  unit failed: `podman unshare` exits 1 on SIGTERM (its shutdown
+  handler);
+- with MAINPID naming podman's child, a `kill -9` of that child left
+  the unit active ("Supervising process ... which is not our child"):
+  pasta kept the cgroup populated. The holder is a fork whose parent
+  exits, so podman exits 0 and the holder's parent is the user manager;
+  its `kill -9` then failed the unit, and the pod and pasta went with
+  it, and the next `enter` served the box again;
+- moat-netns-listen's pidfd join of the infra's user and network
+  namespaces at once works on a namespace the parent user namespace
+  owns; joining the user namespace first, then the network one, is
+  refused;
+- a daemon-reload that gives a running unit `BindsTo=` on an inactive
+  one stops it (two bare user units), which is why a running pod's
+  network files wait for its next `enter`;
+- a privileged exec keeps the box's seccomp filter and `container_t`
+  label: podman's exec changes capabilities alone, and crun applies the
+  container's filter to every exec. The box's user, without any
+  capability, can already `unshare -Urn` and, inside, add links, open
+  the netfilter socket and mount a tmpfs.
+
 **The workspace, 2026-09-30: the user manager's alone.** A bare unit
 loading a sealed credential, `ExecStart=sleep infinity`, started with
 `--no-block` and stopped 0.05, 0.2, 0.4, 0.7 and 1.0 s into its 1.3 s

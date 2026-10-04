@@ -178,14 +178,16 @@ THE ROWS
 `--without-rules` puts an nft that loads nothing ahead of the system's
 for the holder, so the box starts with no rules in its namespace: first,
 the premise that the rules are there, enter (which refuses) and every
-row through it, warn's first (enter refuses), held's nft row (no rules
-to keep), dns, silent, quic, ssh, listed, unlisted, root, the broker's
-requests, rotate, the loop's rows that make a request or read one back,
-the record's rotation, the killed inspector's, and enter's, restart,
-autostart's, each enter after a stop with its first request, and
-outside's rows that enter serves the box must go red. (The killed
+row through it on the rig's box (warn's first and the broker's
+placeholder among them), held's nft row (no rules to keep), dns,
+silent, quic, ssh, listed, unlisted, root, the broker's requests,
+rotate, the loop's rows that make a request or read one back, the
+record's rotation, the killed inspector's, and enter's, restart,
+stop's enter and its first request, autostart's, and outside's rows
+that enter serves the box, with its ls, must go red. (The killed
 inspector's row is red because an enter refused left the broker
-stopped, and the inspector's restart starts it: Wants=.)
+stopped, and the inspector's restart starts it: Wants=.) The like and
+rm rows enter other boxes, which the drop-in is not on.
 
 `--without-held-netns` lets the pod make its own namespace, as
 Network=pasta does, which its keep-id user namespace owns, and loads
@@ -953,8 +955,10 @@ def enter_rows(tag):
 
 def warn_rows():
     say("warn")
-    said = [box("enter", BOX, *root, "--", *SHELL_PS1).stderr
-            for root in ([], ["--root"])]
+    # A shell enter refused to open warns of nothing.
+    entered = [box("enter", BOX, *root, "--", *SHELL_PS1)
+               for root in ([], ["--root"])]
+    said = [got.stderr for got in entered]
     mark = (STATE / "netns").read_text().strip() \
         if (STATE / "netns").exists() else None
     own = exec_in(["readlink", "/proc/self/ns/net"]).stdout.strip()
@@ -963,9 +967,11 @@ def warn_rows():
                 check=False).stdout.strip() if pid else None
     row("warn: no shell enter opens warns, as the user or as root, and the "
         "namespace the box reads is its own",
-        not any(NOT_PROTECTED in s for s in said)
+        all(got.returncode == 0 for got in entered)
+        and not any(NOT_PROTECTED in s for s in said)
         and mark is not None and mark == own == infra,
-        f"warned: {[NOT_PROTECTED in s for s in said]}; mark {mark!r}, "
+        f"enter rc={[got.returncode for got in entered]}; warned: "
+        f"{[NOT_PROTECTED in s for s in said]}; mark {mark!r}, "
         f"inside {own!r}, infra {infra!r}")
     said, ps1 = interactive("--privileged")
     row("warn: nor does one podman exec --privileged opens, whose prompt "
@@ -2089,12 +2095,12 @@ def main():
     if args.without_rules:
         expected.append(
             "--without-rules: first, premise's rules, enter and every row "
-            "through it, warn's first, dns, silent, quic, ssh, listed, "
-            "unlisted, root, the "
-            "broker's requests, rotate, the loop's that make a request "
-            "or read one back, the record's rotation, the killed "
-            "inspector's and enter's, restart, autostart's, each enter "
-            "after a stop, and outside's shell rows are expected red")
+            "through it on the rig's box, held's nft row, dns, silent, "
+            "quic, ssh, listed, unlisted, root, the broker's requests, "
+            "rotate, the loop's that make a request or read one back, the "
+            "record's rotation, the killed inspector's and enter's, "
+            "restart, stop's enter, autostart's, and outside's that enter "
+            "serves the box, with its ls, are expected red")
     if args.without_held_netns:
         expected.append(
             "--without-held-netns: held's refusals, premise's held "

@@ -373,10 +373,11 @@ namespace's file is gone; and a stopped box leaves no pod or container
 to start: quadlet removes them. A shell opened with `podman exec
 --privileged`, as Ptyxis opens every container's tab, holds every
 capability in the box's user namespace, which does not own the network
-namespace, so it cannot change the rules. It is still a shell with every
-capability in the box and no seccomp filter, and Ptyxis lists boxes in
-its container menu and opens a new tab in the container a tab's text
-last named (OSC 777 or 666), which a workload can print;
+namespace, so it cannot change the rules. It keeps the box's seccomp
+filter and SELinux label, which podman's exec does not change, but it
+is still a shell with every capability in the box, and Ptyxis lists
+boxes in its container menu and opens a new tab in the container a
+tab's text last named (OSC 777 or 666), which a workload can print;
 [BOX-GUIDE.md](BOX-GUIDE.md) says how to open boxes from Ptyxis without
 it.
 
