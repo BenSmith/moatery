@@ -73,8 +73,9 @@ and the box's home otherwise.
 
 **stop** stops the namespace's unit, and the broker's; everything bound
 to it stops too.
-**ls** lists each box, whether its workload is active, its image, and
-`autostart` if it has it.
+**ls** lists each box, whether its workload is active, its image,
+`autostart` if it has it, and `unprotected` if its pod runs without the
+rules (started outside systemd), with a warning on stderr.
 **rm** stops the box and removes its units and what podman made from
 them; its home and its record stay unless `--home`.
 
@@ -171,7 +172,7 @@ For box NAME, credential ID:
 | policy | `~/.config/moatery/box/NAME/policy.json` |
 | bundle | `~/.config/moatery/box/NAME/bundle.pem` |
 | prompt | `~/.config/moatery/box/NAME/prompt.sh` |
-| CA, certificates, status files | `~/.local/state/moatery/box/NAME/` |
+| CA, certificates, status files, the namespace's name | `~/.local/state/moatery/box/NAME/` |
 | record | `~/.local/state/log/moatery/box/NAME/requests.log`, and `.1` to `.4.gz` |
 | the box's home | `~/.local/share/moatery/box/NAME/home/` |
 | namespace, workload | `~/.config/containers/systemd/moathut-NAME.{pod,container}` |
@@ -263,6 +264,18 @@ cgroup of its own. The units differ from the example's in these ways:
   is written with the units, so a box from before it gains it when
   `allow`, `policy` or `credential add` writes its units again. A mount
   may not cover it.
+- The prompt also warns, in an interactive shell only, when the shell is
+  not covered by the moat: one whose bounding set holds `CAP_NET_ADMIN`,
+  which only `podman exec --privileged` gives (Ptyxis opens container
+  tabs so), and one in another namespace than the rules were loaded
+  into. Its prompt then reads `⬢ NAME UNPROTECTED`, white on red. The
+  namespace's unit, after loading the rules, writes the namespace's
+  name (`net:[INODE]`, as `/proc/self/ns/net` reads) to `netns` in the
+  box's state directory, in place, since the workload mounts that file
+  read-only at `/run/moathut/netns`. It is made empty with the units,
+  since podman will not start a container whose mount source is missing,
+  and a shell reads an empty one as not knowing. A mount may not cover
+  it.
 
 What starts what: `enter` starts `moathut-NAME.service`, which
 `Wants=` and is `After=` the inspector and the responder; they are
@@ -311,13 +324,28 @@ The user holds none.
 
 ## What is not closed
 
-A workload restart, by anything, keeps the namespace and its rules. A
-box started outside systemd (`podman pod start NAME`, or `podman start
-NAME` while the namespace's unit is down) has a new namespace with no
-rules, and its egress is not inspected. `enter` refuses such a box, but
-a process started in it some other way is not caught. Joining a
-namespace the tool holds (`Network=ns:PATH`), instead of making one,
-would turn that start into a failure; that is untested.
+A workload restart, by anything, keeps the namespace and its rules. Two
+things podman allows are not stopped, only warned about:
+
+- A box started outside systemd (`podman pod restart NAME`, say) has a
+  new namespace with no rules, and its egress is not inspected. `enter`
+  refuses such a box, `ls` marks it `unprotected`, and an interactive
+  shell in it warns, but a process started in it some other way is not
+  caught. A stopped box leaves no pod or container to start: quadlet
+  removes them.
+- A shell opened with `podman exec --privileged` holds every capability
+  in the box's user namespace, and that user namespace owns the network
+  namespace, so it can change or remove the rules. Ptyxis opens every
+  container's tabs this way, lists boxes in its container menu, and
+  opens a new tab in the container that the tab's text last named
+  (OSC 777 or 666), which a workload can print, unless the profile's
+  "preserve container" is never. Such a shell warns, but other shells in
+  the box cannot tell the rules are gone.
+
+Joining a namespace the tool holds (`Network=ns:PATH`), made in the
+user's own user namespace, instead of the pod's, would turn the first
+into a failure and the second into a refusal: a probe showed a
+privileged exec refused changes to such a namespace. It is not built.
 
 ## Where it lives
 

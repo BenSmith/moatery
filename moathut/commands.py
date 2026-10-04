@@ -21,11 +21,13 @@ from . import credentials, document, record
 from .credentials import CredentialError, brokering, describe
 from .document import AllowRefused
 from .mounts import MountRefused, parse_mount, refuse
-from .netns import exec_with_pid, load_rules, pod_pid, rules_loaded
+from .netns import (NetnsError, exec_with_pid, load_rules, netns_id,
+                    pod_pid, rules_loaded)
 from .paths import Box, boxes_root, credentials_root, described, sealed, \
     valid_name
 from .process import CommandFailed, run
-from .units import (CA_VARIABLES, PROMPT_PATH, Settings, interpreter,
+from .units import (CA_VARIABLES, MARK_PATH, PROMPT_PATH, Settings,
+                    interpreter,
                     prompt, render)
 
 DEFAULT_IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
@@ -133,6 +135,11 @@ def _write_units(box, settings, broker):
     for path in box.unit_files:
         if path not in units:
             path.unlink(missing_ok=True)
+    # The workload mounts it, and podman will not start a container with
+    # a mount whose source is missing. Empty until the rules name the
+    # namespace, which the box reads as not knowing.
+    box.netns_mark.parent.mkdir(parents=True, exist_ok=True)
+    box.netns_mark.touch()
 
 
 def _trust_path(image, runner):
@@ -193,7 +200,8 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
     home_path = str(dirs.home)
     for mount, origin in inherited + given:
         try:
-            refuse(mount, dirs, (home_path, trust_path, PROMPT_PATH))
+            refuse(mount, dirs,
+                   (home_path, trust_path, PROMPT_PATH, MARK_PATH))
         except MountRefused as exc:
             raise BoxError(f"{origin} {exc}") from None
     mounts = tuple(mount for mount, _ in inherited + given)
@@ -403,13 +411,28 @@ def rm(name, *, home, dirs, runner=run):
     return [str(box.logs)] + ([] if home else [str(box.home)])
 
 
+def _unprotected(box, runner):
+    """Whether its pod runs without the rules, as one started outside
+    systemd does."""
+    if runner(["podman", "pod", "exists", box.name],
+              check=False).returncode != 0:
+        return False
+    try:
+        pid = pod_pid(box.name, runner)
+    except (CommandFailed, NetnsError):
+        return False
+    return not rules_loaded(pid, runner)
+
+
 def ls(*, dirs, runner=run):
     rows = []
     for box, settings in _boxes(dirs):
         state = runner(["systemctl", "--user", "is-active", box.service],
                        check=False).stdout.strip() or "unknown"
         rows.append((box.name, state, settings.image)
-                    + (("autostart",) if settings.autostart else ()))
+                    + (("autostart",) if settings.autostart else ())
+                    + (("unprotected",) if _unprotected(box, runner)
+                       else ()))
     return rows
 
 
@@ -720,8 +743,14 @@ def credential_rm(credential, *, dirs):
     described(dirs, credential).unlink()
 
 
-def unit_rules(name, *, runner=run):
-    load_rules(pod_pid(name, runner), runner)
+def unit_rules(name, *, dirs, runner=run):
+    """The rules into the pod's namespace, then its name where the box
+    reads it. Written in place: the box mounts the file, not the
+    directory."""
+    pid = pod_pid(name, runner)
+    load_rules(pid, runner)
+    with open(_box(name, dirs).netns_mark, "w") as mark:
+        mark.write(netns_id(pid, runner) + "\n")
 
 
 def unit_exec(name, argv, *, runner=run, execv=os.execv):

@@ -58,6 +58,9 @@ CA_VARIABLES = ("SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
 # the home's .bashrc that create writes reads it after.
 PROMPT_PATH = "/etc/profile.d/moathut.sh"
 
+# Where the box reads the namespace its rules were loaded into.
+MARK_PATH = "/run/moathut/netns"
+
 
 class Settings(NamedTuple):
     """What `create` decided, kept in box.json for the other commands."""
@@ -167,7 +170,8 @@ PodmanArgs=--hosts-file=image --share-parent=false
 def container_unit(box, settings, broker):
     volumes = [f"{box.home}:{settings.home_path}:z",
                f"{box.bundle}:{settings.trust_path}:ro,z",
-               f"{box.prompt}:{PROMPT_PATH}:ro,z"]
+               f"{box.prompt}:{PROMPT_PATH}:ro,z",
+               f"{box.netns_mark}:{MARK_PATH}:ro,z"]
     for mount in settings.mounts:
         volumes.append(f"{mount.source}:{mount.target}:"
                        + ("ro,z" if mount.readonly else "z"))
@@ -344,19 +348,68 @@ OnUnitActiveSec=10min
 
 
 def prompt(box):
-    """bash's prompt in the box, its name first: magenta, red as root.
-    Fedora's /etc/bashrc and the home's .bashrc both read it, and the
-    second changes nothing."""
+    """Read by every shell in the box. An interactive one the moat does
+    not cover says so: one holding CAP_NET_ADMIN, which only `podman
+    exec --privileged` gives, can change the rules, and one in another
+    namespace than the rules were loaded into has none. Then bash's
+    prompt, the box's name first: magenta, red as root, white on red
+    when not covered. Fedora's /etc/bashrc and the home's .bashrc both
+    read it, and the second changes nothing."""
+    name = box.name
+    warn = r"printf '\033[1;31m%s\033[0m\n  %s\n  %s\n  %s\n  %s\n'"
     return f"""\
-# moatery box {box.name}: its name before the prompt.
+# moatery box {name}: a warning in a shell the moat does not cover, and
+# the box's name before bash's prompt.
+_moathut_why=
+case $- in
+*i*)
+    if [ -z "${{_moathut_checked:-}}" ]; then
+        _moathut_checked=1
+        # CAP_NET_ADMIN is bit 12 of the bounding set.
+        while read -r _moathut_key _moathut_value; do
+            [ "$_moathut_key" = CapBnd: ] || continue
+            case $_moathut_value in *[!0-9a-fA-F]*|'') continue ;; esac
+            if [ $(( 0x$_moathut_value >> 12 & 1 )) = 1 ]; then
+                _moathut_why=privileged
+            fi
+        done < /proc/self/status
+        if [ -s {MARK_PATH} ] &&
+                [ "$(cat {MARK_PATH})" != "$(readlink /proc/self/ns/net)" ]
+        then
+            _moathut_why="$_moathut_why namespace"
+        fi
+        case $_moathut_why in *privileged*)
+            {warn} \\
+                'moathut: this shell is not protected by the moat.' \\
+                'It was opened with podman exec --privileged, as Ptyxis' \\
+                "opens a container's tabs. It can change the box's rules," \\
+                'so what runs in it can reach the network uninspected.' \\
+                'Open shells in the box with: moathut enter {name}' >&2 ;;
+        esac
+        case $_moathut_why in *namespace*)
+            {warn} \\
+                'moathut: box {name} is not protected by the moat.' \\
+                'It was started outside moathut, so its network has none' \\
+                "of the moat's rules: what runs in it reaches the network" \\
+                'uninspected. On the host, run moathut stop {name}' \\
+                'and then moathut enter {name}.' >&2 ;;
+        esac
+    fi ;;
+esac
 if [ -n "${{BASH_VERSION:-}}" ] && [ -n "${{PS1:-}}" ]; then
     case $PS1 in
-    *'\u2b22 {box.name}'*) ;;
-    *) if [ "$EUID" = 0 ]; then _moathut='1;31'; else _moathut='35'; fi
-       PS1="\\[\\e[${{_moathut}}m\\]\u2b22 {box.name}\\[\\e[0m\\] $PS1"
-       unset _moathut ;;
+    *'⬢ {name}'*) ;;
+    *) if [ -n "$_moathut_why" ]; then
+           _moathut='1;37;41'; _moathut_tag=' UNPROTECTED'
+       elif [ "$EUID" = 0 ]; then _moathut='1;31'; _moathut_tag=
+       else _moathut='35'; _moathut_tag=
+       fi
+       _moathut="\\[\\e[${{_moathut}}m\\]⬢ {name}${{_moathut_tag}}"
+       PS1="$_moathut\\[\\e[0m\\] $PS1"
+       unset _moathut _moathut_tag ;;
     esac
 fi
+unset _moathut_why _moathut_key _moathut_value
 """
 
 

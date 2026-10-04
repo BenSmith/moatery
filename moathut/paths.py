@@ -112,6 +112,12 @@ class Box(NamedTuple):
         return self.state / "resolve-status.json"
 
     @property
+    def netns_mark(self):
+        """The namespace the rules were last loaded into, which the box
+        reads to tell whether it is in that one."""
+        return self.state / "netns"
+
+    @property
     def logs(self):
         return self.dirs.state / "log" / "moatery" / "box" / self.name
 

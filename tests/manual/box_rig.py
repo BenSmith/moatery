@@ -72,6 +72,10 @@ THE ROWS
             inside; with --root, as uid 0. An interactive bash's prompt
             starts with the box's name, magenta, and red as root; the
             box's clock reads in the host's zone.
+  warn      no shell enter opens warns, as the user or as root, and the
+            namespace's name the box reads is its own; a shell opened by
+            podman exec --privileged warns that it is not protected, and
+            its prompt says UNPROTECTED.
   home      the box's home is its own: a file in the user's home is absent
             inside, and one written inside is in the box's home on the
             host and not in the user's. The directories between the home
@@ -138,8 +142,10 @@ THE ROWS
             starts it with the rules, and its first request was
             inspected.
   outside   after `podman pod restart`, outside systemd, the namespace is
-            new and has no rules, and enter refuses it; stop, then enter,
-            serves it again.
+            new and has no rules, and enter refuses it; a shell in it
+            warns that the box is not protected, and ls marks it
+            unprotected; stop, then enter, serves it again, and a shell
+            no longer warns.
   like      create --like the box, as the loop left its policy: the
             new box has its policy, image and mounts, and neither its
             autostart nor its home; entered, it reads the :ro mount at
@@ -153,12 +159,15 @@ THE ROWS
 
 `--without-rules` empties the pod's ExecStartPost=, so the pod starts
 with no rules in its namespace: first, the premise that the rules are
-there, enter (which refuses) and every row through it, dns, silent,
+there, enter (which refuses) and every row through it, warn's first
+(enter refuses, and no rules load writes the namespace's name), dns, silent,
 quic, ssh, listed, unlisted, root, the broker's requests, rotate, the
 loop's rows that make a request or read one back, the record's
 rotation, the killed
-inspector's, and enter's, restart, and each enter after a stop with its
-first request must go red. (The killed inspector's row is red because an
+inspector's, and enter's, restart, autostart's, each enter after a stop
+with its first request, and outside's shell rows (no rules load writes
+the namespace's name, and ls never stops saying unprotected) must go
+red. (The killed inspector's row is red because an
 enter refused left the broker stopped, and the inspector's restart
 starts it: Wants=.)
 
@@ -396,6 +405,19 @@ def box(*args, cwd=RIG, timeout=180, input=None, env=None):
 def exec_in(argv, *, user=USER, timeout=30):
     return run(["podman", "exec", "--user", user, BOX, *argv], check=False,
                timeout=timeout)
+
+
+# What an interactive bash in the box prints first: the prompt's warnings.
+SHELL_PS1 = ["bash", "-ic", 'printf "%s\\n" "$PS1"']
+NOT_PROTECTED = "not protected by the moat"
+
+
+def interactive(*podman_exec):
+    """An interactive bash opened by `podman exec`, as a terminal would:
+    (its stderr, its prompt)."""
+    got = run(["podman", "exec", *podman_exec, BOX, *SHELL_PS1],
+              check=False, timeout=30)
+    return got.stderr, got.stdout.strip()
 
 
 def sudo_in(argv, **kw):
@@ -816,6 +838,31 @@ def enter_rows(tag):
         inside == outside, f"inside {inside!r}, host {outside!r}"
         + ("; the host is on UTC, so this shows nothing"
            if outside.startswith("+0000") else ""))
+    warn_rows()
+
+
+def warn_rows():
+    say("warn")
+    said = [box("enter", BOX, *root, "--", *SHELL_PS1).stderr
+            for root in ([], ["--root"])]
+    mark = (STATE / "netns").read_text().strip() \
+        if (STATE / "netns").exists() else None
+    own = exec_in(["readlink", "/proc/self/ns/net"]).stdout.strip()
+    pid = infra_pid()
+    infra = run(["podman", "unshare", "readlink", f"/proc/{pid}/ns/net"],
+                check=False).stdout.strip() if pid else None
+    row("warn: no shell enter opens warns, as the user or as root, and the "
+        "namespace the box reads is its own",
+        not any(NOT_PROTECTED in s for s in said)
+        and mark is not None and mark == own == infra,
+        f"warned: {[NOT_PROTECTED in s for s in said]}; mark {mark!r}, "
+        f"inside {own!r}, infra {infra!r}")
+    said, ps1 = interactive("--privileged")
+    row("warn: a shell podman exec --privileged opens warns that it is not "
+        "protected, and its prompt says UNPROTECTED",
+        "this shell is not protected by the moat" in said
+        and f"\u2b22 {BOX} UNPROTECTED" in ps1,
+        f"stderr {said.strip()[-200:]!r}; PS1 {ps1!r}")
 
 
 def home_rows(tag):
@@ -1497,6 +1544,18 @@ def outside_rows():
         and "no moatery rules" in entered.stderr,
         f"infra pid {pid} -> {now}: {sorted(found) or 'no tables'}; "
         f"enter rc={entered.returncode} {entered.stderr.strip()[-160:]}")
+    said, ps1 = interactive()
+    row("outside: a shell in it warns that the box is not protected, and "
+        "its prompt says UNPROTECTED",
+        f"box {BOX} is not protected by the moat" in said
+        and f"\u2b22 {BOX} UNPROTECTED" in ps1,
+        f"stderr {said.strip()[-200:]!r}; PS1 {ps1!r}")
+    listing = box("ls")
+    mine = listed()
+    row("outside: ls marks it unprotected, and says so",
+        mine is not None and mine[-1] == "unprotected"
+        and f"box {BOX} is not protected" in listing.stderr,
+        f"ls: {mine}; stderr {listing.stderr.strip()[-200:]!r}")
     box("stop", BOX)
     # After the stop no workload is left to write a line.
     before = len(starts())
@@ -1507,6 +1566,12 @@ def outside_rows():
         entered.returncode == 0 and RULES <= found,
         f"rc={entered.returncode} {entered.stderr.strip()[-200:]}; "
         f"{sorted(found) or 'no tables'}")
+    said, ps1 = interactive()
+    mine = listed()
+    row("outside: and a shell no longer warns, nor ls",
+        NOT_PROTECTED not in said and "UNPROTECTED" not in ps1
+        and mine is not None and "unprotected" not in mine,
+        f"stderr {said.strip()[-200:]!r}; PS1 {ps1!r}; ls: {mine}")
     start_row("outside: and its first request was inspected", seen)
 
 
@@ -1786,11 +1851,12 @@ def main():
     if args.without_rules:
         expected.append(
             "--without-rules: first, premise's rules, enter and every row "
-            "through it, dns, silent, quic, ssh, listed, unlisted, root, the "
+            "through it, warn's first, dns, silent, quic, ssh, listed, "
+            "unlisted, root, the "
             "broker's requests, rotate, the loop's that make a request "
             "or read one back, the record's rotation, the killed "
-            "inspector's and enter's, "
-            "restart, and each enter after a stop are expected red")
+            "inspector's and enter's, restart, autostart's, each enter "
+            "after a stop, and outside's shell rows are expected red")
     if args.broker_not_ready:
         expected.append(
             "--broker-not-ready: first, the premise of a stop while the "

@@ -8,6 +8,7 @@ provides is one systemd drops without a word. The programs' flags are
 parsed by the programs' own parsers, so a flag renamed there fails here.
 """
 
+import io
 import ipaddress
 import os
 import json
@@ -34,8 +35,8 @@ from moathut.mounts import Mount, MountRefused, parse_mount, refuse
 from moathut.paths import (Box, boxes_root, credentials_root, described,
                                protected, sealed, user_dirs, valid_name)
 from moathut.units import (ALL_CAPABILITIES, ANSWER, CAPABILITIES,
-                               PROMPT_PATH, Settings, container_unit,
-                               interpreter, prompt, render)
+                               MARK_PATH, PROMPT_PATH, Settings,
+                               container_unit, interpreter, prompt, render)
 
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
 DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo", "PartOf")
@@ -312,6 +313,95 @@ class TestUnits(unittest.TestCase):
     def test_a_shell_with_no_prompt_is_given_none(self):
         self.assertEqual(self._prompted(""), "")
 
+    def test_the_namespace_mark_is_mounted_read_only(self):
+        self.assertIn(f"{self.box.netns_mark}:{MARK_PATH}:ro,z",
+                      _keys(self.work, "Volume"))
+
+    NOT_PRIVILEGED = "00000000800405fb"
+    PRIVILEGED = "000001ffffffffff"
+
+    def _interactive(self, cap_bounding, mark=None, times=1):
+        """An interactive bash reading the prompt `times` times, with
+        /proc/self/status's CapBnd and the mark given: (stderr, PS1)."""
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        status = tmp / "status"
+        status.write_text(f"Name:\tbash\nCapInh:\t0\n"
+                          f"CapBnd:\t{cap_bounding}\nCapAmb:\t0\n")
+        mark_file = tmp / "mark"
+        if mark is not None:
+            mark_file.write_text(mark and mark + "\n")
+        script = tmp / "prompt.sh"
+        script.write_text(prompt(self.box)
+                          .replace("/proc/self/status", str(status))
+                          .replace(MARK_PATH, str(mark_file)))
+        reads = f'. "{script}"; ' * times
+        done = subprocess.run(
+            ["bash", "--norc", "--noprofile", "-i", "-c",
+             f'PS1="$ "; {reads}printf %s "$PS1"'],
+            env={"PATH": "/usr/bin:/bin"}, capture_output=True,
+            text=True, check=True, stdin=subprocess.DEVNULL)
+        return done.stderr, done.stdout
+
+    def test_a_shell_moathut_opens_is_not_warned(self):
+        here = os.readlink("/proc/self/ns/net")
+        for mark in (here, None, ""):
+            with self.subTest(mark=mark):
+                said, ps1 = self._interactive(self.NOT_PRIVILEGED, mark)
+                self.assertNotIn("not protected", said)
+                self.assertNotIn("UNPROTECTED", ps1)
+                self.assertIn("\u2b22 agent", ps1)
+
+    def test_the_warning_is_for_cap_net_admin_alone(self):
+        """Bit 12 of the bounding set, and no other: a box's own set with
+        it added is warned, every capability but it is not."""
+        here = os.readlink("/proc/self/ns/net")
+        net_admin = 1 << 12
+        for bounding, warned in (
+                (int(self.NOT_PRIVILEGED, 16) | net_admin, True),
+                (int(self.PRIVILEGED, 16) & ~net_admin, False)):
+            with self.subTest(bounding=f"{bounding:016x}"):
+                said, _ = self._interactive(f"{bounding:016x}", here)
+                self.assertEqual("this shell is not protected" in said,
+                                 warned)
+
+    def test_a_privileged_shell_is_warned_once_and_its_prompt_says_so(self):
+        """CAP_NET_ADMIN in the bounding set: podman exec --privileged.
+        The profile and the home's .bashrc both read the prompt."""
+        here = os.readlink("/proc/self/ns/net")
+        said, ps1 = self._interactive(self.PRIVILEGED, here, times=2)
+        self.assertEqual(said.count(
+            "moathut: this shell is not protected by the moat."), 1)
+        self.assertIn("moathut enter agent", said)
+        self.assertNotIn("box agent is not protected", said)
+        self.assertIn("\u2b22 agent UNPROTECTED", ps1)
+        self.assertEqual(ps1.count("\u2b22"), 1)
+
+    def test_a_shell_in_another_namespace_is_warned(self):
+        """The mark names the namespace the rules went into; a box
+        started outside moathut is in a new one."""
+        said, ps1 = self._interactive(self.NOT_PRIVILEGED, "net:[1]")
+        self.assertIn("moathut: box agent is not protected by the moat.",
+                      said)
+        self.assertIn("moathut stop agent", said)
+        self.assertNotIn("this shell is not protected", said)
+        self.assertIn("\u2b22 agent UNPROTECTED", ps1)
+
+    def test_a_shell_not_interactive_is_not_warned(self):
+        """`bash -c`, `podman exec NAME CMD`: a script's stderr is not
+        for a person."""
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (tmp / "status").write_text(f"CapBnd:\t{self.PRIVILEGED}\n")
+        (tmp / "mark").write_text("net:[1]\n")
+        (tmp / "prompt.sh").write_text(
+            prompt(self.box)
+            .replace("/proc/self/status", str(tmp / "status"))
+            .replace(MARK_PATH, str(tmp / "mark")))
+        said = subprocess.run(
+            ["bash", "--norc", "-c", f'. "{tmp / "prompt.sh"}"'],
+            env={"PATH": "/usr/bin:/bin"}, capture_output=True,
+            text=True, check=True).stderr
+        self.assertEqual(said, "")
+
     def test_every_capability_this_kernel_has_is_named(self):
         last = int(Path("/proc/sys/kernel/cap_last_cap").read_text())
         self.assertGreaterEqual(len(ALL_CAPABILITIES), last + 1)
@@ -586,6 +676,17 @@ class TestRules(unittest.TestCase):
                     self.assertRaises(netns.NetnsError):
                 netns.load_rules(77, runner)
 
+    def test_the_namespace_is_named_as_proc_names_it(self):
+        runner, calls = self._runner({"readlink": (0, "net:[4026532424]\n")})
+        self.assertEqual(netns.netns_id(77, runner), "net:[4026532424]")
+        self.assertEqual(calls[0][0], ["podman", "unshare", "readlink",
+                                       "/proc/77/ns/net"])
+        for name in ("", "mnt:[4026532424]", "net:[1] x"):
+            runner, _ = self._runner({"readlink": (0, name)})
+            with self.subTest(name=name), \
+                    self.assertRaises(netns.NetnsError):
+                netns.netns_id(77, runner)
+
     def test_loaded_means_both_tables(self):
         runner, _ = self._runner({"netdev moatery": (1, "")})
         self.assertFalse(netns.rules_loaded(5, runner))
@@ -814,7 +915,7 @@ class FakeHost:
     def __init__(self, state_root, rules=True, load_state="loaded",
                  unshare=True, broker=True, broker_state="active",
                  listeners=True, listener_state="active", dirs=None,
-                 reloads=True):
+                 reloads=True, pod=False):
         self.calls = []
         self.inputs = []
         self.state_root = state_root
@@ -829,15 +930,18 @@ class FakeHost:
         # box's policy to its status file, as the inspector does.
         self.dirs = dirs
         self.reloads = reloads
+        # Whether `podman pod exists` finds the box's pod.
+        self.pod = pod
 
     def __call__(self, argv, *, input=None, check=True, env=None):
         self.calls.append(argv)
         self.inputs.append(input)
         line = " ".join(argv)
         code, out = 0, ""
-        if argv[:3] in (["podman", "container", "exists"],
-                        ["podman", "pod", "exists"]):
+        if argv[:3] == ["podman", "container", "exists"]:
             code = 1
+        elif argv[:3] == ["podman", "pod", "exists"]:
+            code = 0 if self.pod else 1
         elif argv[:3] == ["systemd-creds", "--user", "encrypt"]:
             Path(argv[-1]).write_text("SEALED\n")
         elif argv[:3] == ["systemctl", "--user", "start"] and \
@@ -1114,12 +1218,93 @@ class TestCommands(unittest.TestCase):
                  "no credential k": dict(name="c", policy=brokered),
                  "home directory": dict(name="d", mounts=[str(self.home)]),
                  "would cover /etc/profile.d": dict(
-                     name="e", mounts=["projects/p:/etc/profile.d"])}
+                     name="e", mounts=["projects/p:/etc/profile.d"]),
+                 "would cover /run/moathut/netns": dict(
+                     name="f", mounts=["projects/p:/run"])}
         for words, kwargs in cases.items():
             with self.subTest(words), \
                     self.assertRaisesRegex(commands.BoxError, words):
                 self._create(**kwargs)
         self.assertFalse(Box("d", self.dirs).config.exists())
+
+    def test_every_source_the_workload_mounts_is_there_once_written(self):
+        """podman will not start the workload with a source missing: the
+        mark is made empty with the units, before any rules step, kept
+        when they are written again, and made for a box from before it
+        when its units are."""
+        box, _ = self._create(mounts=["projects/p"])
+        sources = [v.split(":")[0]
+                   for v in _keys(box.container_file.read_text(), "Volume")]
+        self.assertIn(str(box.netns_mark), sources)
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertTrue(Path(source).exists())
+        self.assertEqual(box.netns_mark.read_text(), "")
+        box.netns_mark.write_text("net:[7]\n")
+        commands.allow("agent", "example.com", methods=[], paths=[],
+                       dirs=self.dirs, runner=self._host(), pause=self.fail)
+        self.assertEqual(box.netns_mark.read_text(), "net:[7]\n")
+        box.netns_mark.unlink()
+        box.container_file.write_text("from before the mark\n")
+        commands.allow("agent", "example.org", methods=[], paths=[],
+                       dirs=self.dirs, runner=self._host(), pause=self.fail)
+        self.assertTrue(box.netns_mark.exists())
+        self.assertIn(str(box.netns_mark), box.container_file.read_text())
+
+    def test_the_rules_step_writes_the_namespace_in_place(self):
+        """The box mounts the file, so a new one would not reach a box
+        already running, and the name is what /proc/self/ns/net reads
+        inside."""
+        box, _ = self._create()
+        box.netns_mark.write_text("net:[1]\n")
+        inode = box.netns_mark.stat().st_ino
+        outputs = {"InfraContainerID": "infra\n", "State.Pid": "77\n",
+                   "route show default": json.dumps([{"dev": "eth0"}]),
+                   "readlink": "net:[4026532424]\n"}
+        calls = []
+
+        def runner(argv, *, input=None, check=True, env=None):
+            calls.append(argv)
+            out = next((v for k, v in outputs.items()
+                        if k in " ".join(argv)), "")
+            return subprocess.CompletedProcess(argv, 0, out, "")
+        commands.unit_rules("agent", dirs=self.dirs, runner=runner)
+        self.assertEqual(box.netns_mark.read_text(), "net:[4026532424]\n")
+        self.assertEqual(box.netns_mark.stat().st_ino, inode)
+        loaded = next(i for i, a in enumerate(calls) if "nft" in a)
+        named = next(i for i, a in enumerate(calls) if "readlink" in a)
+        self.assertLess(loaded, named)
+
+    def test_the_command_line_hands_the_rules_step_the_dirs(self):
+        from moathut import cli
+        with mock.patch.object(cli, "unit_rules") as unit_rules:
+            cli.run_command(parse(["unit", "rules", "agent"]), tool=(),
+                            environ=self.env, cwd=self.home, isatty=False)
+        unit_rules.assert_called_once_with("agent", dirs=self.dirs)
+
+    def test_ls_marks_a_box_whose_pod_runs_without_its_rules(self):
+        self._create()
+        cases = ((dict(pod=False), ()), (dict(pod=True, rules=True), ()),
+                 (dict(pod=True, rules=False), ("unprotected",)))
+        for kwargs, marks in cases:
+            with self.subTest(**kwargs):
+                (row,) = commands.ls(dirs=self.dirs,
+                                     runner=FakeHost(self.home, **kwargs))
+                self.assertEqual(row[3:], marks)
+
+    def test_the_command_line_warns_of_an_unprotected_box(self):
+        from moathut import cli
+        rows = [("agent", "active", "img", "unprotected"),
+                ("other", "active", "img")]
+        with mock.patch.object(cli, "ls", return_value=rows), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as err, \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            cli.run_command(parse(["ls"]), tool=(), environ=self.env,
+                            cwd=self.home, isatty=False)
+        said = err.getvalue()
+        self.assertIn("box agent is not protected by the moat", said)
+        self.assertIn("moathut stop agent", said)
+        self.assertNotIn("other", said)
 
     def test_a_failed_create_leaves_nothing_but_a_home_it_found(self):
         kept = Box("agent", self.dirs).home

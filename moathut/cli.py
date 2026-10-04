@@ -220,12 +220,19 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
         for path in rm(args.name, home=args.home, dirs=dirs):
             print(f"kept {path}")
     elif args.command == "ls":
-        for row in ls(dirs=dirs):
+        rows = ls(dirs=dirs)
+        for row in rows:
             print("  ".join(row))
+        for row in rows:
+            if "unprotected" in row[1:]:
+                print(f"moathut: box {row[0]} is not protected by the "
+                      "moat: it runs without its rules, as a box started "
+                      f"outside moathut does. moathut stop {row[0]}, then "
+                      f"moathut enter {row[0]}", file=sys.stderr)
     elif args.command == "credential":
         run_credential(args, dirs=dirs, stdin=stdin)
     elif args.unit_command == "rules":
-        unit_rules(args.name)
+        unit_rules(args.name, dirs=dirs)
     elif args.unit_command == "sudoers":
         unit_sudoers(args.name, dirs=dirs)
     elif args.unit_command == "rotate":

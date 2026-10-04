@@ -38,6 +38,7 @@ TABLES = (("inet", "moatery"), ("netdev", "moatery"))
 PID = "{pid}"
 
 _DEVICE = re.compile(r"[A-Za-z0-9_.:@-]{1,15}")
+_NETNS = re.compile(r"net:\[[0-9]+\]")
 
 
 class NetnsError(Exception):
@@ -84,6 +85,16 @@ def ruleset(device):
 def load_rules(pid, runner=run):
     runner(in_netns(pid, ["nft", "-f", "-"]),
            input=ruleset(egress_device(pid, runner)))
+
+
+def netns_id(pid, runner=run):
+    """The namespace's name as /proc gives it, `net:[INODE]`: what a
+    process in it reads at /proc/self/ns/net."""
+    name = runner(["podman", "unshare", "readlink",
+                   f"/proc/{pid}/ns/net"]).stdout.strip()
+    if not _NETNS.fullmatch(name):
+        raise NetnsError(f"unexpected namespace name {name!r}")
+    return name
 
 
 def rules_loaded(pid, runner=run):
