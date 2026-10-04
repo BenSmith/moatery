@@ -792,6 +792,22 @@ different from the pod's, each of the four `:Z` mounts, a mount made
 `:Z`, create's level, the level given a box without one, a level drawn
 twice, categories unsorted) each turned a test red.
 
+**The sidecar's SELinux level, 2026-10-04.** On the proving host
+(podman 5.8.7, SELinux enforcing), by hand, the recipe as it was: the
+infra container, the sidecar and the workload ran at one level, the
+pod's (`container_t:s0:c280,c478`); the policy and the secret were
+labelled at it, and the named volume, mounted without `:Z`, at `s0`,
+so a container mounting it without relabelling, as the inspector's
+uid, read the CA key at the workload's level and at an unrelated one.
+With the sidecar at a level of its own and the volume `:Z`, the three
+were labelled at the sidecar's level, a container at the workload's
+level or at podman's random one was refused the key, the workload's
+loopback TCP to the sidecar was served, and the sidecar was refused
+`/dev/shm`, the infra container's. Then `sidecar_rig.py` 38/38 and
+`vm_placement_rig.py --placement sidecar` 22/22, the label rows among
+them. `--shared-label`, the recipe as it was, turned both label rows
+red and no other (36/38).
+
 **The workspace, 2026-09-30: the user manager's alone.** A bare unit
 loading a sealed credential, `ExecStart=sleep infinity`, started with
 `--no-block` and stopped 0.05, 0.2, 0.4, 0.7 and 1.0 s into its 1.3 s

@@ -29,14 +29,17 @@ Usage:
 
   podman run --pod POD --restart on-failure \\
       --cap-drop all --cap-add chown,dac_override,setgid,setuid \\
+      --security-opt label=level:s0:cA,cB \\
       -v policy.json:/etc/moatery/policy.json:ro,Z \\
-      -v moatery-state:/var/lib/moatery \\
+      -v moatery-state:/var/lib/moatery:Z \\
       --secret KEY,target=CRED,uid=201,gid=200,mode=0400 \\
       IMAGE --name NAME --caller-uid UID --host HOST=CRED ...
 
 The four capabilities are for chowning the two directories, connecting to
 the broker's 0660 socket, and dropping uids; no program holds one, and
-nor does this process once all have started.
+nor does this process once all have started. The level is two categories
+of the sidecar's own, not the pod's, which the workload runs at; the
+policy, the secret and the volume are labelled at it.
 
 SUPERVISION
 

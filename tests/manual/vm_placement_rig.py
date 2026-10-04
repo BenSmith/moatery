@@ -46,6 +46,8 @@ THE ROWS
   drop      a guest connect to another port at the answered address
             times out.
   counters  every caller was named; none was foreign.
+  label     sidecar only: sidecar_rig.py's, with qemu's container as the
+            workload.
 """
 
 import argparse
@@ -348,6 +350,8 @@ def main():
             say(vm_rig.SERIAL.read_text(errors="replace")[-2000:])
             sys.exit(1)
         probe(ns_pid, qemu_pid, reports, secret, answer, reads())
+        if args.placement == "sidecar":
+            sidecar_rig.label_rows(CONTAINER)
     finally:
         say("teardown")
         if not args.keep:

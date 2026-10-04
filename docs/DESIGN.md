@@ -620,8 +620,9 @@ other flag to the broker untouched.
 podman pod create --name POD --hosts-file image --share-parent=false
 podman run -d --pod POD --name sidecar --restart on-failure \
     --cap-drop all --cap-add chown,dac_override,setgid,setuid \
+    --security-opt label=level:s0:cA,cB \
     -v policy.json:/etc/moatery/policy.json:ro,Z \
-    -v moatery-state:/var/lib/moatery \
+    -v moatery-state:/var/lib/moatery:Z \
     --secret KEY,target=CRED,uid=201,gid=200,mode=0400 \
     moat-sidecar --name NAME --caller-uid 1000 \
     --host api.example.com=CRED --placeholder CRED=sk-placeholder
@@ -691,6 +692,17 @@ podman finds its directory at the path it assumes for the user's
 manager, and a slice systemd already has fails that start. Nothing here
 sets a limit on the pod as a whole, so the slice would hold nothing the
 pod needs.
+
+**SELinux.** Every container in a pod runs at the infra container's
+level unless it is given one, so the sidecar is: two categories
+(`cA,cB`, any pair from c0 to c1023) of its own. Its policy, its secret
+and its volume are labelled at it, `:Z`, and the workload, at the pod's
+level, is refused them however it reaches them, which it could not
+otherwise be: a named volume mounted without `:Z` is labelled for every
+container to read. The inspector's planes are TCP on the pod's
+loopback, which the levels do not divide. The sidecar's `/dev/shm` is
+the infra container's, at the pod's level, so it cannot write there;
+nothing in it does.
 
 **Capabilities.** The four the sidecar is given are the entrypoint's:
 the chown of the two directories it hands over, the connect that sees

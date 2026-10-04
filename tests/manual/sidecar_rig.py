@@ -12,6 +12,7 @@ on the proving host as an ordinary user, from a checkout:
                                         [--without-neighbour-discovery]
                                         [--without-dns-redirect]
                                         [--without-private-drop]
+                                        [--shared-label]
                                         [--no-build]
 
 The same two host facts as host_rig need sudo and are undone at teardown.
@@ -26,6 +27,12 @@ THE ROWS
             netns; the sidecar's programs run as the two image uids, the
             responder as the inspector's, and its pid 1, which supervises
             them, holds no capability.
+  label     the sidecar runs at an SELinux level of its own, not the
+            workload's, the pod's; its policy, its secret and the CA key
+            in its volume are labelled at it. A container at the
+            workload's level, as the inspector's uid and mounting the
+            volume without relabelling it, is refused the key, which
+            one at the sidecar's level reads.
   dns       the workload's queries, to its resolver over UDP and TCP and to
             any other nameserver, are answered by the sidecar's
             moat-resolve with the pod's loopback, for names nothing
@@ -89,7 +96,8 @@ the programs' alone, and `dns` and `unlisted` must go red.
 and neighbour-discovery lines; `neighbour` and the lifecycle's request
 must go red. `--without-private-drop` leaves out the private-space drop
 and its accept line: the request with the line deleted arrives, so
-`private` goes red.
+`private` goes red. `--shared-label` runs the sidecar at the pod's
+level, its volume unlabelled: both `label` rows must go red.
 """
 
 import argparse
@@ -108,6 +116,7 @@ from riglib import (  # noqa
     INSPECT_TLS, LOOPBACK_MAP, NAME, PLACEHOLDER, PROVIDER, RESOLVE_PORT,
     RIG, STUB_CERT, UNLISTED, row, run, say,
 )
+from moatery.egress_ca import ca_key_path  # noqa
 from moatery.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
 
 POD = "moatery-rig-pod"
@@ -130,6 +139,10 @@ SOCKET_PATH = "/run/moatery/broker.sock"
 STATE_IN_SIDECAR = "/var/lib/moatery"
 POLICY_IN_SIDECAR = "/etc/moatery/policy.json"
 UPSTREAM_CA_IN_SIDECAR = "/etc/moatery/upstream-ca.pem"
+# The sidecar's SELinux level, the rig's choice: the workload's is the
+# pod's, which podman draws from the same pairs of categories, and one
+# drawn equal to this is a 1 in 523776.
+SIDECAR_LEVEL = "s0:c1022,c1023"
 
 # The drop set docs/DESIGN.md gives for the programs' dials.
 PRIVATE_V4 = ("0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, "
@@ -181,14 +194,19 @@ def create_pod():
          "--add-host", f"{PROVIDER}:{LOOPBACK_MAP}"])
 
 
-def start_sidecar():
+def start_sidecar(shared_label=False):
+    """At a level of its own, which its files are labelled at, unless
+    `shared_label`: the pod's, the volume unlabelled."""
+    label = [] if shared_label else [
+        "--security-opt", f"label=level:{SIDECAR_LEVEL}"]
     run(["podman", "create", "--pod", POD, "--name", SIDECAR,
          "--restart", "on-failure",
          "--cap-drop", "all",
-         "--cap-add", "chown,dac_override,setgid,setuid",
+         "--cap-add", "chown,dac_override,setgid,setuid", *label,
          "-v", f"{POLICY}:{POLICY_IN_SIDECAR}:ro,Z",
          "-v", f"{STUB_CERT}:{UPSTREAM_CA_IN_SIDECAR}:ro,Z",
-         "-v", f"{VOLUME}:{STATE_IN_SIDECAR}",
+         "-v", f"{VOLUME}:{STATE_IN_SIDECAR}"
+               + ("" if shared_label else ":Z"),
          "-e", f"SSL_CERT_FILE={UPSTREAM_CA_IN_SIDECAR}",
          "--secret", f"{SECRET},target={CREDENTIAL},uid={BROKER_UID},"
                      f"gid={GROUP_GID},mode=0400",
@@ -230,6 +248,43 @@ def sidecar_file(path):
     if r.returncode != 0:
         raise OSError(r.stderr)
     return r.stdout
+
+
+def level_of(container):
+    label = run(["podman", "inspect", "-f", "{{.ProcessLabel}}",
+                 container], check=False).stdout.strip()
+    return label.split(":", 3)[3] if label.count(":") >= 3 else label
+
+
+def label_rows(workload=WORKLOAD):
+    """What a workload out of its mount namespace would meet: its own
+    label, the sidecar's files. The probe containers stand in for it."""
+    say("label")
+    mine, theirs = level_of(SIDECAR), level_of(workload)
+    key = str(ca_key_path(STATE_IN_SIDECAR))
+    listed = exec_in(SIDECAR, ["ls", "-Z", POLICY_IN_SIDECAR,
+                               f"/run/secrets/{CREDENTIAL}", key]).stdout
+    files = {path: label.split(":", 3)[-1] for label, path in
+             (ln.split() for ln in listed.splitlines())}
+    row("label: the sidecar runs at a level of its own, not the "
+        "workload's, and its policy, secret and CA key are labelled at it",
+        mine == SIDECAR_LEVEL and theirs != mine and len(files) == 3
+        and set(files.values()) == {mine},
+        f"sidecar {mine}, workload {theirs}; {files}")
+    reads = {}
+    for whose, level in (("workload's", theirs), ("sidecar's", mine)):
+        got = run(["podman", "run", "--rm", "--network", "none", "--user",
+                   f"{INSPECT_UID}:{GROUP_GID}", "--cap-drop", "all",
+                   "--security-opt", f"label=level:{level}",
+                   "-v", f"{VOLUME}:{STATE_IN_SIDECAR}", IMAGE, "sh", "-c",
+                   f'cat "{key}" > /dev/null && echo read'],
+                  check=False, timeout=120)
+        reads[whose] = (got.stdout.strip(), got.stderr.strip()[-120:])
+    row("label: a container at the workload's level, as the inspector's "
+        "uid, is refused the CA key, which one at the sidecar's reads",
+        reads["workload's"][0] != "read"
+        and "Permission denied" in reads["workload's"][1]
+        and reads["sidecar's"][0] == "read", f"{reads}")
 
 
 def in_netns(pid, argv, **kw):
@@ -507,6 +562,8 @@ def probe(sidecar_pid, workload_pid, secret, dns):
     row("premise: the supervisor holds no capability",
         effective == 0, f"CapEff={effective:016x}")
 
+    label_rows()
+
     riglib.dns_rows(
         lambda argv: in_netns(sidecar_pid, ["python3", "-c",
                                             riglib.DNS_LOOKUP, *argv],
@@ -733,6 +790,9 @@ def main():
     ap.add_argument("--without-private-drop", action="store_true",
                     help="leave out the private-space drop and its accept "
                          "line; private must go red")
+    ap.add_argument("--shared-label", action="store_true",
+                    help="the sidecar at the pod's level, its volume "
+                         "unlabelled; both label rows must go red")
     ap.add_argument("--no-build", action="store_true",
                     help=f"use the {SIDECAR_IMAGE} already built")
     args = ap.parse_args()
@@ -756,7 +816,7 @@ def main():
         say("pod")
         remove_pod()
         create_pod()
-        sidecar_pid = start_sidecar()
+        sidecar_pid = start_sidecar(args.shared_label)
         # The CA is the sidecar's, minted into its volume on this first
         # start; the workload's bundle is built from it.
         riglib.write_bundle(
@@ -786,6 +846,8 @@ def main():
          "request are expected red"),
         (args.without_private_drop,
          "--without-private-drop: private is expected red"),
+        (args.shared_label,
+         "--shared-label: both label rows are expected red"),
     ) if flag]
     rc = riglib.report("; ".join(expected) or None)
     if rc:
