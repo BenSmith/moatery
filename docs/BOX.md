@@ -249,7 +249,7 @@ cgroup of its own. The units differ from the example's in these ways:
 - `Timezone=local`: the workload's clock reads in the host's zone, not
   the image's (UTC in Fedora's).
 - The prompt is mounted read-only at `/etc/profile.d/moathut.sh`, and
-  puts `⬢ NAME` before bash's prompt, magenta, or red as root. Fedora's
+  puts `[NAME]` before bash's prompt, magenta, or red as root. Fedora's
   `/etc/bashrc` reads it, so root's shell has it from the image's
   `/root/.bashrc`; `create` gives a home with no `.bashrc` one that reads
   `/etc/bashrc` and then the prompt, which an image whose `bashrc` does

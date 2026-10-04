@@ -796,7 +796,7 @@ def enter_rows(tag):
     prompts = [box("enter", BOX, *root, "--", "bash", "-ic",
                    'printf "%s\\n" "$PS1"').stdout.strip()
                for root in ([], ["--root"])]
-    named = [f"\\[\\e[{c}m\\]\u2b22 {BOX}\\[\\e[0m\\] "
+    named = [f"\\[\\e[{c}m\\][{BOX}]\\[\\e[0m\\] "
              for c in ("35", "1;31")]
     row("enter: bash's prompt starts with the box's name, magenta, and "
         "red as root",
@@ -1347,9 +1347,12 @@ def loop_rows():
 
 def record_rows(without_reopen):
     say("record: its rotation")
+    # Ended, not begun: a start while the timer's run is under way joins
+    # it, and that run measured the record before the line below.
     ran = await_(lambda: show(ROTATE_SERVICE,
-                              "ExecMainStartTimestampMonotonic")
-                 not in ("", "0"), 75)
+                              "ExecMainExitTimestampMonotonic")
+                 not in ("", "0")
+                 and show(ROTATE_SERVICE, "ActiveState") == "inactive", 75)
     timer, result, status = (show(ROTATE_TIMER, "ActiveState"),
                              show(ROTATE_SERVICE, "Result"),
                              show(ROTATE_SERVICE, "ExecMainStatus"))

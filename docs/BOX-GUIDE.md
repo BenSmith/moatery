@@ -94,7 +94,7 @@ moathut enter work -- git clone https://github.com/example/repo
 `--root` enters as root. `sudo` also works inside the box, with no
 password. Root in a box is filtered the same way you are.
 
-In bash, the prompt starts with `⬢ work`, so you can tell which box a
+In bash, the prompt starts with `[work]`, so you can tell which box a
 terminal is in: magenta for you, red for root. The box keeps your
 host's time zone.
 
