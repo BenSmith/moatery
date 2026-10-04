@@ -1025,6 +1025,82 @@ class TestCommands(unittest.TestCase):
         self.assertEqual([c.args[0] for c in printed.call_args_list],
                          ["# /u/a.pod\n[Pod]\n", "# /u/p.sh\nx\n"])
 
+    def test_a_box_like_another_starts_from_its_policy_image_and_mounts(
+            self):
+        """Its policy as it is now, edits and all; not its home, nor its
+        autostart."""
+        (self.home / "projects" / "q").mkdir()
+        box, _ = self._create(mounts=["projects/p", "projects/q:/q"],
+                              autostart=True)
+        (box.home / "notes").write_text("mine")
+        commands.allow("agent", "example.com", methods=[], paths=[],
+                       dirs=self.dirs, runner=self._host(), pause=self.fail)
+        settings = Settings.from_json(box.settings.read_text())
+        like = commands.create(
+            "twin", None, None, [], dirs=self.dirs, tool=("/py", "/cb"),
+            python="/py", libexec="/lx", pythonpath=None, uid=1000,
+            gid=1000, cwd=self.home, environ=self.env, like="agent",
+            runner=FakeHost(self.home))
+        twin = Settings.from_json(like.settings.read_text())
+        self.assertEqual(like.policy.read_text(), box.policy.read_text())
+        self.assertIn("example.com", like.policy.read_text())
+        self.assertEqual(twin.image, "img")
+        self.assertEqual(twin.mounts, settings.mounts)
+        self.assertFalse(twin.autostart)
+        self.assertFalse((like.home / "notes").exists())
+
+    def test_what_is_given_replaces_or_joins_what_a_like_box_has(self):
+        (self.home / "projects" / "q").mkdir()
+        (self.home / "projects" / "r").mkdir()
+        self._create(mounts=["projects/p", "projects/q:/q"])
+        other = self.policy.with_name("other.json")
+        other.write_text('{"hosts": ["example.org"]}')
+        like = commands.create(
+            "twin", other, "other-img", ["projects/r:/q:ro"],
+            dirs=self.dirs, tool=("/py", "/cb"), python="/py",
+            libexec="/lx", pythonpath=None, uid=1000, gid=1000,
+            cwd=self.home, environ=self.env, like="agent",
+            runner=FakeHost(self.home))
+        twin = Settings.from_json(like.settings.read_text())
+        self.assertEqual(like.policy.read_text(), other.read_text())
+        self.assertEqual(twin.image, "other-img")
+        self.assertEqual([(m.source.name, m.target, m.readonly)
+                          for m in twin.mounts],
+                         [("p", str(self.home / "projects" / "p"), False),
+                          ("r", "/q", True)])
+
+    def test_a_box_like_none_or_like_nothing_is_refused(self):
+        gone = self.home / "projects" / "gone"
+        gone.mkdir()
+        self._create(mounts=["projects/gone"])
+        gone.rmdir()
+        cases = {"--policy FILE or --like BOX": dict(like=None),
+                 "no box nosuch": dict(like="nosuch"),
+                 "box agent's mount .*gone: not a directory": dict(
+                     like="agent")}
+        for words, kwargs in cases.items():
+            with self.subTest(words), \
+                    self.assertRaisesRegex(commands.BoxError, words):
+                commands.create(
+                    "twin", None, None, [], dirs=self.dirs,
+                    tool=("/py", "/cb"), python="/py", libexec="/lx",
+                    pythonpath=None, uid=1000, gid=1000, cwd=self.home,
+                    environ=self.env, runner=FakeHost(self.home), **kwargs)
+            self.assertFalse(Box("twin", self.dirs).config.exists())
+
+    def test_the_command_line_hands_like_on(self):
+        from moathut import cli
+        for words, like, policy in (
+                (["--like", "agent"], "agent", None),
+                (["--policy", "p"], None, "p")):
+            args = parse(["create", "twin", *words])
+            with mock.patch.object(cli, "create") as create, \
+                    mock.patch("builtins.print"):
+                cli.run_command(args, tool=(), environ=self.env,
+                                cwd=self.home, isatty=False)
+            self.assertEqual(create.call_args.kwargs["like"], like)
+            self.assertEqual(create.call_args.args[1:3], (policy, None))
+
     def test_create_refuses(self):
         self._create()
         bad_policy = self.policy.with_name("bad.json")

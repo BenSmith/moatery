@@ -25,16 +25,20 @@ def build_parser():
                                 metavar=PUBLIC)
     p = sub.add_parser("create", help="lay out a box; nothing starts")
     p.add_argument("name")
-    p.add_argument("--policy", required=True,
+    p.add_argument("--policy",
                    help="the inspector's policy document, copied in")
-    p.add_argument("--image", default=DEFAULT_IMAGE,
-                   help=f"default {DEFAULT_IMAGE}")
+    p.add_argument("--image",
+                   help=f"default {DEFAULT_IMAGE}, or the --like box's")
     p.add_argument("--mount", action="append", default=[],
                    metavar="SRC[:DST][:ro]",
                    help="a host directory the box shares; repeatable")
     p.add_argument("--autostart", action="store_true",
                    help="start it with the user's session, and at boot "
                         "if the user lingers")
+    p.add_argument("--like", metavar="BOX",
+                   help="start from another box's policy, image and "
+                        "mounts; --policy and --image replace its, and "
+                        "--mount adds to them")
     p.add_argument("--dry-run", action="store_true",
                    help="print the files it would write, and write none; "
                         "the image is pulled, to find its trust store")
@@ -184,7 +188,7 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
                      pythonpath=environ.get("PYTHONPATH") or None,
                      uid=os.getuid(), gid=os.getgid(), cwd=cwd,
                      environ=environ, autostart=args.autostart,
-                     dry_run=args.dry_run)
+                     dry_run=args.dry_run, like=args.like)
         if args.dry_run:
             for path, text in box.items():
                 print(f"# {path}\n{text}")

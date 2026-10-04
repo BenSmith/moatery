@@ -69,6 +69,13 @@ on, when the host boots. Without it, a box starts at its first `enter`.
 
 `--dry-run` prints the files `create` would write, and writes nothing.
 
+`--like` makes a box like one you already have: the same policy, image
+and mounts, and a new home.
+
+```
+moathut create work2 --like work
+```
+
 `--mount` shares a host directory with the box. Repeat it for more
 directories. `SRC:DST` puts it at a different path inside, and a
 trailing `:ro` makes it read-only. Your home directory itself can't be
@@ -132,6 +139,7 @@ kept apart from your desktop, and what it sends out is checked.
 | toolbx / distrobox | moathut |
 |---|---|
 | `toolbox create` / `distrobox create` | `moathut create NAME --policy FILE` |
+| `distrobox create --clone` | `moathut create NAME --like BOX` (not its home) |
 | `toolbox enter` / `distrobox enter` | `moathut enter NAME` |
 | `toolbox run CMD` / `distrobox enter -- CMD` | `moathut enter NAME -- CMD` |
 | `toolbox list` / `distrobox list` | `moathut ls` |

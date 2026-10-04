@@ -158,9 +158,11 @@ def _host_bundle():
 
 def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
            libexec, pythonpath, uid, gid, cwd, environ, autostart=False,
-           dry_run=False, runner=run):
+           dry_run=False, like=None, runner=run):
     """The box; with dry_run, what would be written, path to text, and
-    nothing is."""
+    nothing is. A box `like` another starts from its policy, image and
+    mounts: a policy or image given replaces its, and a mount given
+    joins its, replacing one at the same target."""
     box = _box(name, dirs)
     if box.config.exists() or any(p.exists() for p in box.unit_files):
         raise BoxError(f"box {name} exists")
@@ -168,20 +170,33 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
         if runner(["podman", kind, "exists", name],
                   check=False).returncode == 0:
             raise BoxError(f"a {kind} named {name} exists")
-    broker = _broker(_policy(policy_path), dirs)
-    host_bundle = _host_bundle()
     try:
-        mounts = tuple(parse_mount(spec, cwd, dirs.home)
-                       for spec in mount_specs)
+        given = [(parse_mount(spec, cwd, dirs.home), "--mount")
+                 for spec in mount_specs]
     except MountRefused as exc:
         raise BoxError(f"--mount {exc}") from None
+    inherited = []
+    if like is not None:
+        other, other_settings = _existing(like, dirs)
+        policy_path = policy_path or other.policy
+        image = image or other_settings.image
+        targets = {mount.target for mount, _ in given}
+        inherited = [(mount, f"box {like}'s mount")
+                     for mount in other_settings.mounts
+                     if mount.target not in targets]
+    if policy_path is None:
+        raise BoxError("create needs --policy FILE or --like BOX")
+    image = image or DEFAULT_IMAGE
+    broker = _broker(_policy(policy_path), dirs)
+    host_bundle = _host_bundle()
     trust_path = _trust_path(image, runner)
     home_path = str(dirs.home)
-    for mount in mounts:
+    for mount, origin in inherited + given:
         try:
             refuse(mount, dirs, (home_path, trust_path, PROMPT_PATH))
         except MountRefused as exc:
-            raise BoxError(f"--mount {exc}") from None
+            raise BoxError(f"{origin} {exc}") from None
+    mounts = tuple(mount for mount, _ in inherited + given)
     settings = Settings(image=image, trust_path=trust_path,
                         home_path=home_path, uid=uid, gid=gid,
                         mounts=mounts, tool=tuple(tool), python=python,

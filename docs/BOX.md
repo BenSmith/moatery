@@ -24,7 +24,7 @@ so git over ssh cannot leave a box, and git over https can.
 ## Commands
 
 ```
-moathut create NAME --policy FILE [--image IMAGE]
+moathut create NAME (--policy FILE | --like BOX) [--image IMAGE]
                    [--mount SRC[:DST][:ro]]... [--autostart] [--dry-run]
 moathut enter NAME [--root] [-- COMMAND...]
 moathut log NAME [--refused]
@@ -52,6 +52,12 @@ at the next login. With `--dry-run` it prints each file it would write,
 its path first, and writes none and mints nothing; it still refuses
 what `create` would refuse, and pulls the image to find its trust
 store.
+With `--like BOX` it starts from another box's policy, as edited
+since, its image and its mounts: `--policy` and `--image` replace its,
+and a `--mount` joins its, replacing one at the same target. The new box
+gets a home of its own, and is not autostarted without `--autostart`.
+A mount whose source has gone since is refused, naming the box it came
+from.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
 order, the namespace's unit, the rules, the broker and the listeners,

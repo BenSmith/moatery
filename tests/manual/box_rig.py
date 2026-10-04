@@ -140,6 +140,10 @@ THE ROWS
   outside   after `podman pod restart`, outside systemd, the namespace is
             new and has no rules, and enter refuses it; stop, then enter,
             serves it again.
+  like      create --like the box, as the loop left its policy: the
+            new box has its policy, image and mounts, and neither its
+            autostart nor its home; entered, it reads the :ro mount at
+            its DST; rm --home leaves nothing of it.
   rm        credential rm is refused while the box names it; no unit, pod
             or container is left, nor the broker's socket; the home and the
             record stay, and create, with a policy naming no credential,
@@ -245,6 +249,11 @@ STATE = HOME / ".local" / "state" / "moatery" / "box" / BOX
 LOGS = HOME / ".local" / "state" / "log" / "moatery" / "box" / BOX
 SHARE = HOME / ".local" / "share" / "moatery" / "box" / BOX
 BOX_HOME = SHARE / "home"
+# A box made --like the rig's.
+TWIN = "moatery-rig-twin"
+TWIN_CONFIG = CONFIG.parent / TWIN
+TWIN_SHARE = SHARE.parent / TWIN
+TWIN_LOGS = LOGS.parent / TWIN
 QUADLET = HOME / ".config" / "containers" / "systemd"
 UNITS = HOME / ".config" / "systemd" / "user"
 UNIT_FILES = (QUADLET / f"{UNIT}.pod", QUADLET / f"{UNIT}.container",
@@ -408,11 +417,11 @@ def exists(kind):
     return run(["podman", kind, "exists", BOX], check=False).returncode == 0
 
 
-def listed():
+def listed(name=BOX):
     """The box's line in `moathut ls`, as words, or None."""
     for line in box("ls").stdout.splitlines():
         words = line.split()
-        if words and words[0] == BOX:
+        if words and words[0] == name:
             return words
     return None
 
@@ -1506,6 +1515,41 @@ def load_state(unit):
                 unit], check=False).stdout.strip()
 
 
+def like_rows(tag):
+    say("like")
+    made = box("create", TWIN, "--like", BOX, timeout=300)
+    mine, twin = (json.loads((c / "box.json").read_text())
+                  if (c / "box.json").exists() else {}
+                  for c in (CONFIG, TWIN_CONFIG))
+    same = {k: mine.get(k) == twin.get(k) for k in ("image", "mounts")}
+    policy = (TWIN_CONFIG / "policy.json").exists() and (
+        (TWIN_CONFIG / "policy.json").read_bytes()
+        == (CONFIG / "policy.json").read_bytes())
+    row("like: create --like gives the box's policy, as edited, its image "
+        "and its mounts",
+        made.returncode == 0 and policy and all(same.values()),
+        f"rc={made.returncode} {made.stderr.strip()[-200:]}; policy "
+        f"{policy}; {same}")
+    entry = listed(TWIN)
+    row("like: and neither its autostart nor its home",
+        entry == [TWIN, "inactive", IMAGE]
+        and not (TWIN_SHARE / "home" / KEPT).exists(),
+        f"ls: {entry}; {KEPT} in its home: "
+        f"{(TWIN_SHARE / 'home' / KEPT).exists()}")
+    got = box("enter", TWIN, "--", "cat", f"{READONLY_AT}/file",
+              timeout=300)
+    row("like: entered, it reads the :ro mount at its DST",
+        got.returncode == 0 and got.stdout.strip() == tag,
+        f"rc={got.returncode} {got.stdout.strip()!r} "
+        f"{got.stderr.strip()[-200:]}")
+    removed = box("rm", TWIN, "--home")
+    row("like: rm --home leaves nothing of it",
+        removed.returncode == 0 and not TWIN_CONFIG.exists()
+        and not TWIN_SHARE.exists() and listed(TWIN) is None,
+        f"rc={removed.returncode}; config {TWIN_CONFIG.exists()}, share "
+        f"{TWIN_SHARE.exists()}")
+
+
 def rm_rows(tag):
     say("rm")
     refused = box("credential", "rm", CREDENTIAL)
@@ -1607,6 +1651,7 @@ def probe(args, tag, secret):
     stop_rows()
     autostart_rows()
     outside_rows()
+    like_rows(tag)
     rm_rows(tag)
 
 
@@ -1616,14 +1661,16 @@ def clear_leftovers():
     """The rig's own box, by name, as a run with --keep or one cut short
     left it."""
     remove_drop_ins()
-    if (CONFIG / "box.json").exists():
-        box("rm", BOX, "--home")
+    for name, config in ((BOX, CONFIG), (TWIN, TWIN_CONFIG)):
+        if (config / "box.json").exists():
+            box("rm", name, "--home")
     run(["systemctl", "--user", "stop", BROKER_SERVICE], check=False)
     run(["podman", "pod", "rm", "-f", "-i", BOX], check=False)
     run(["podman", "rm", "-f", "-i", BOX], check=False)
     # The box's root writes in its home, as a uid the user is not.
     run(["podman", "unshare", "rm", "-rf", "--", str(CONFIG), str(STATE),
-         str(LOGS), str(SHARE), str(PROJECT), str(READONLY)], check=False)
+         str(LOGS), str(SHARE), str(PROJECT), str(READONLY),
+         str(TWIN_CONFIG), str(TWIN_LOGS), str(TWIN_SHARE)], check=False)
     for path in (MARKER, HOME / WRITTEN, SEALED, DESCRIBED):
         path.unlink(missing_ok=True)
     shutil.rmtree(SLOW, ignore_errors=True)
@@ -1667,9 +1714,10 @@ def teardown(keep):
     say("teardown")
     if not keep:
         remove_drop_ins()
-        if (CONFIG / "box.json").exists():
-            box("rm", BOX, "--home")
-        for path in (PROJECT, READONLY, SLOW):
+        for name, config in ((BOX, CONFIG), (TWIN, TWIN_CONFIG)):
+            if (config / "box.json").exists():
+                box("rm", name, "--home")
+        for path in (PROJECT, READONLY, SLOW, TWIN_LOGS):
             shutil.rmtree(path, ignore_errors=True)
         for path in (MARKER, SEALED, DESCRIBED):
             path.unlink(missing_ok=True)
