@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -16,19 +17,19 @@ from moatery.broker_profiles import (BROKER_DEFAULT_AUTH_FORMAT,
 from moatery.inspect_document import (INSPECT_DIGEST_KEY,
                                       inspect_policy_digest)
 from moatery.inspect_policy import load_policy
+from moatery.sd_notify import notify_ready
 
 from . import credentials, document, record
 from .credentials import CredentialError, brokering, describe
 from .document import AllowRefused
 from .mounts import MountRefused, parse_mount, refuse
-from .netns import (NetnsError, exec_with_pid, load_rules, netns_id,
-                    pod_pid, rules_loaded)
+from .netns import (NetnsError, connect, exec_with_pid, load_rules, make,
+                    netns_id, pod_pid, release, rules_loaded)
 from .paths import Box, boxes_root, credentials_root, described, sealed, \
     valid_name
 from .process import CommandFailed, run
 from .units import (CA_VARIABLES, MARK_PATH, PROMPT_PATH, Settings,
-                    interpreter,
-                    prompt, render)
+                    containers_conf, interpreter, prompt, render)
 
 DEFAULT_IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
 DEFAULT_LIBEXEC = "/usr/libexec/moatery"
@@ -122,18 +123,36 @@ _BASHRC = f"""\
 
 
 def _written(box, settings, broker):
-    """Path to text, for each file the units are and each they mount
+    """Path to text, for each file the units are and each they read
     that is written with them."""
-    return {**render(box, settings, broker), box.prompt: prompt(box)}
+    return {**render(box, settings, broker), box.prompt: prompt(box),
+            box.containers_conf: containers_conf(box)}
 
 
-def _write_units(box, settings, broker):
+# The states in which a unit holds what it started with.
+_UP = ("active", "activating", "deactivating", "reloading")
+
+
+def _running(box, runner):
+    return _state(box.pod_service, runner) in _UP
+
+
+def _write_units(box, settings, broker, runner):
+    """The box's files as `_written` gives them, and the units it no
+    longer has removed. While its pod runs, the files its namespace and
+    its shells started with are kept: a reload would give the running
+    pod a unit bound to a namespace unit that is not running, and the
+    manager would stop it. `enter` writes them at its next start."""
     units = _written(box, settings, broker)
+    kept = ((box.netns_file, box.pod_file, box.containers_conf, box.prompt)
+            if _running(box, runner) else ())
     for path, text in units.items():
+        if path in kept:
+            continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
     for path in box.unit_files:
-        if path not in units:
+        if path not in units and path not in kept:
             path.unlink(missing_ok=True)
     # The workload mounts it, and podman will not start a container with
     # a mount whose source is missing. Empty until the rules name the
@@ -246,7 +265,7 @@ def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
     ca = Path(minted.stdout.strip())
     box.bundle.write_text(ca.read_text() + host_bundle.read_text())
     box.bundle.chmod(0o644)
-    _write_units(box, settings, broker)
+    _write_units(box, settings, broker, runner)
     box.settings.write_text(settings.to_json())
     runner(["systemctl", "--user", "daemon-reload"])
     for service in (box.pod_service, box.service):
@@ -259,8 +278,13 @@ def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
 
 
 def _units_to_stop(box):
-    return [box.pod_service] + (
-        [box.broker_service] if box.broker_file.exists() else [])
+    """The namespace's unit stops the pod, and the pod what is bound to
+    it; the pod is named too, for a box whose units have no namespace's
+    unit yet."""
+    return [box.pod_service] + [
+        unit for unit, path in ((box.netns_service, box.netns_file),
+                                (box.broker_service, box.broker_file))
+        if path.exists()]
 
 
 def _discard(box, *, home, runner):
@@ -353,9 +377,23 @@ def _clear_broker(box, runner):
            check=False)
 
 
+def _refresh(box, settings, dirs, runner):
+    """A stopped box's files written again if this moathut would write
+    them otherwise, so its start is one this moathut made."""
+    broker = _broker(_policy(box.policy), dirs)
+    units = _written(box, settings, broker)
+    if any(not path.exists() or path.read_text() != text
+           for path, text in units.items()) or any(
+            path.exists() for path in box.unit_files if path not in units):
+        _write_units(box, settings, broker, runner)
+        runner(["systemctl", "--user", "daemon-reload"])
+
+
 def enter(name, command, *, root, dirs, cwd, environ, isatty,
           runner=run, execvp=os.execvp, warn=_warn):
     box, settings = _existing(name, dirs)
+    if not _running(box, runner):
+        _refresh(box, settings, dirs, runner)
     if box.broker_file.exists() and _broker_state(box, runner) != "active":
         _reset_broker(box, runner)
     try:
@@ -364,9 +402,8 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
         raise BoxError(f"box {name} did not start ({exc}); see "
                        f"journalctl --user -u '{box.unit}*'") from None
     if not rules_loaded(pod_pid(name, runner), runner):
-        raise BoxError(f"box {name}'s namespace has no moatery rules: its "
-                       "pod was started outside systemd. moathut stop "
-                       f"{name}, then enter it again")
+        raise BoxError(f"box {name}'s namespace has no moatery rules. "
+                       f"moathut stop {name}, then enter it again")
     # Nothing requires them, so the workload starts without them.
     for unit, what, effect in _listeners(box):
         if _state(unit, runner) == "active":
@@ -412,8 +449,7 @@ def rm(name, *, home, dirs, runner=run):
 
 
 def _unprotected(box, runner):
-    """Whether its pod runs without the rules, as one started outside
-    systemd does."""
+    """Whether its pod runs in a namespace without the rules."""
     if runner(["podman", "pod", "exists", box.name],
               check=False).returncode != 0:
         return False
@@ -571,7 +607,7 @@ def _apply_policy(box, settings, staged, broker, runner, pause):
         _clear_broker(box, runner)
     os.replace(staged, box.policy)
     if changed or gone:
-        _write_units(box, settings, broker)
+        _write_units(box, settings, broker, runner)
         runner(["systemctl", "--user", "daemon-reload"])
     if not running:
         return Applied(False)
@@ -700,7 +736,7 @@ def credential_add(credential, secret, *, hosts, env, auth_header,
         staged.unlink(missing_ok=True)
     _replace(described(dirs, credential), new.to_json().encode())
     for box, settings, broker in boxes:
-        _write_units(box, settings, broker)
+        _write_units(box, settings, broker, runner)
     if boxes:
         runner(["systemctl", "--user", "daemon-reload"])
     failed = []
@@ -743,14 +779,46 @@ def credential_rm(credential, *, dirs):
     described(dirs, credential).unlink()
 
 
-def unit_rules(name, *, dirs, runner=run):
-    """The rules into the pod's namespace, then its name where the box
-    reads it. Written in place: the box mounts the file, not the
-    directory."""
-    pid = pod_pid(name, runner)
-    load_rules(pid, runner)
-    with open(_box(name, dirs).netns_mark, "w") as mark:
-        mark.write(netns_id(pid, runner) + "\n")
+def _until_stopped():
+    while True:
+        signal.pause()
+
+
+def unit_netns(name, *, dirs, runner=run, ready=notify_ready,
+               wait=_until_stopped, fork=os.fork):
+    """The box's network namespace, made in the user namespace `podman
+    unshare` is root in, as the netns unit runs it: connected by pasta,
+    the rules in, and its name where the box reads it, written in place,
+    since the box mounts the file and not the directory. What a holder
+    killed left is let go first.
+
+    Then a fork holds it, until `wait` returns or raises, and lets go;
+    this process tells the manager the holder is the unit's main process
+    and returns. podman exits with it, and the holder, the manager's
+    child then, is one whose end the manager sees."""
+    box = _box(name, dirs)
+    if dirs.runtime is None:
+        raise BoxError("XDG_RUNTIME_DIR is not set, and a box's network "
+                       "namespace is held in it")
+    path = box.namespace
+    release(path, runner)
+    try:
+        make(path, runner)
+        connect(path, runner)
+        load_rules(path, runner)
+        with open(box.netns_mark, "w") as mark:
+            mark.write(netns_id(path, runner) + "\n")
+        holder = fork()
+    except BaseException:
+        release(path, runner)
+        raise
+    if holder:
+        ready(main_pid=holder)
+        return
+    try:
+        wait()
+    finally:
+        release(path, runner)
 
 
 def unit_exec(name, argv, *, runner=run, execv=os.execv):

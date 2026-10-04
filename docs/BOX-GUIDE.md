@@ -15,7 +15,7 @@ command does exactly, the files and units, and what is refused and why.
 You need, on the host:
 
 - Python 3.14 and OpenSSL 3.5 or later;
-- podman 5.0 or later, with pasta, and nftables;
+- podman 5.3 or later, with pasta, and nftables;
 - systemd 256 or later;
 - the moatery RPM, which carries `moathut` and the programs it
   runs.
@@ -165,9 +165,8 @@ What you will notice first:
   These would let the box reach the host.
 - **sudo works,** but root in a box has no more network access than
   you do, and can't change the rules.
-- **Start, stop and enter it with moathut,** not with `podman` or a
-  terminal's container menu. See "When the moat doesn't cover you",
-  below.
+- **Enter it with moathut,** not with a terminal's container menu. See
+  "When the moat doesn't cover you", below.
 
 To build an image with your tools:
 
@@ -184,39 +183,39 @@ The build runs on the host, so it doesn't need the box's policy.
 
 ## When the moat doesn't cover you
 
-The box's rules hold for a box moathut started and a shell moathut
-opened. Podman can get round both, and moathut can't stop it, so it
-warns instead.
+The box's network belongs to moathut, not to the box, so nothing in
+the box can change its rules: not root, and not a shell opened with
+`podman exec --privileged`, as Ptyxis opens every container's tabs. A
+box restarted with `podman pod restart` keeps its network and its rules,
+and a box moathut stopped can't be started by podman at all.
 
-**A shell opened with `podman exec --privileged`.** Ptyxis opens every
-container's tabs this way, and lists your boxes in its container menu.
-Such a shell can change the box's rules, so what runs in it can reach
-the network uninspected. It prints
+**Ptyxis.** It lists your boxes in its container menu, and a tab
+opened from there is a privileged shell. It can't change the rules, but
+it has every capability in the box and no seccomp filter, so prefer
+`moathut enter work`. Text printed in a tab can also make Ptyxis open
+the next new tab this way, and a program in the box can print it. A
+Ptyxis profile whose custom command is `moathut enter work`, with
+"Preserve Container" set to never, opens the box the moathut way every
+time.
 
-```
-moathut: this shell is not protected by the moat.
-```
-
-and its prompt reads `⬢ work UNPROTECTED`. Close it, and open shells
-with `moathut enter work`. In Ptyxis, don't open a box from the
-container menu. Text printed in a tab can also make Ptyxis open the
-next new tab this way, and a program in the box can print it. A Ptyxis
-profile whose custom command is `moathut enter work`, with "Preserve
-Container" set to never, opens the box safely every time.
-
-**A box started outside moathut,** with `podman pod restart`, say. Its
-network is new and has none of the rules. Its shells print
+**A container you run yourself** from the box's image isn't the box:
+podman gives it a network of its own, with none of the rules. If it
+mounts the box's files, its shells print
 
 ```
 moathut: box work is not protected by the moat.
 ```
 
-`moathut ls` marks it `unprotected`, and `enter` refuses it. Run
+and its prompt reads `⬢ work UNPROTECTED`. Close it, and use `moathut
+enter work`.
+
+**Rules removed from the host.** You are root over the box's network
+from the host (`podman unshare`), so you can remove its rules. `moathut
+ls` then marks the box `unprotected`, and `enter` refuses it. Run
 `moathut stop work`, then `moathut enter work`.
 
 Only interactive shells warn: a command run with `podman exec work CMD`
-gets no warning. And once a privileged shell has removed the rules,
-only that shell knows; other shells in the box don't.
+gets no warning.
 
 ## When something is refused
 
@@ -376,7 +375,7 @@ broker, so two boxes can use different keys for the same provider.
 
 ```
 moathut ls              # each box, whether it is running, its image,
-                        # and unprotected if it runs without its rules
+                        # and unprotected if its rules are gone
 moathut stop work       # stop it; enter starts it again
 moathut rm work         # remove it; keeps its home and its record
 moathut rm work --home  # remove its home too
@@ -394,12 +393,14 @@ the `journalctl --user -u ...` line to run for the details.
 the journalctl command it prints. A common cause is the image lacking
 something the box needs.
 
-**`box work's namespace has no moatery rules`** means the box was
-started outside moathut, for example with `podman pod start` or
-`podman pod restart`. Its traffic would not be inspected, so `enter`
-refuses it. Run `moathut stop work`, then enter it again. Start
-and stop boxes only with moathut ("When the moat doesn't cover you",
-above).
+**`box work's namespace has no moatery rules`** means the rules were
+removed from the box's network, from the host. Its traffic would not be
+inspected, so `enter` refuses it. Run `moathut stop work`, then enter
+it again ("When the moat doesn't cover you", above).
+
+**After upgrading moatery,** a box that was running keeps the setup it
+started with until you run `moathut stop work`, then `moathut enter
+work`.
 
 **`box work's inspector did not start`** (or responder, or broker):
 `enter` still enters, but warns you. Without the inspector, connections

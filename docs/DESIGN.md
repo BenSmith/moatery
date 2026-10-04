@@ -317,7 +317,9 @@ loaded that dial succeeds, and the list only changes the report.
   container its own. Its listeners belong to one start of the container,
   so they are started with it; [examples/quadlet/](../examples/quadlet/)
   does that with a unit holding the namespace, and moathut
-  ([BOX.md](BOX.md)) is built on it.
+  ([BOX.md](BOX.md)) is built on it, with the namespace made and held
+  in the user's own user namespace, where root in the box cannot change
+  the rules.
 - **Sidecar** needs no host install: the programs are an image. It
   needs more rules, since the programs' own dials leave through the
   workload's namespace.

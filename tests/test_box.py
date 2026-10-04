@@ -16,7 +16,9 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -36,7 +38,8 @@ from moathut.paths import (Box, boxes_root, credentials_root, described,
                                protected, sealed, user_dirs, valid_name)
 from moathut.units import (ALL_CAPABILITIES, ANSWER, CAPABILITIES,
                                MARK_PATH, PROMPT_PATH, Settings,
-                               container_unit, interpreter, prompt, render)
+                               container_unit, containers_conf, interpreter,
+                               prompt, render)
 
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
 DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo", "PartOf")
@@ -99,6 +102,7 @@ class TestNamesAndPaths(unittest.TestCase):
         self.assertEqual(box.pod_file,
                          Path("/c/containers/systemd/moathut-a.pod"))
         self.assertIn(Path("/run/user/7"), protected(dirs))
+        self.assertEqual(box.namespace, Path("/run/user/7/moathut-netns/a"))
 
     def test_the_credentials_are_beside_the_boxes_and_protected(self):
         """Among them, a box named `credentials` would be their
@@ -172,6 +176,7 @@ class TestUnits(unittest.TestCase):
             "/home/u", mounts=(Mount(Path("/home/u/p"), "/w", True),))
         self.units = {p.name: t for p, t in
                       render(self.box, self.settings, None).items()}
+        self.netns = self.units["moathut-agent-netns.service"]
         self.pod = self.units["moathut-agent.pod"]
         self.work = self.units["moathut-agent.container"]
         self.inspect = self.units["moathut-agent-inspect.service"]
@@ -261,14 +266,55 @@ class TestUnits(unittest.TestCase):
                 self.assertEqual(text.count("[Install]"),
                                  name == "moathut-agent.container")
 
-    def test_the_pod_loads_the_rules_and_has_no_cgroup_or_host_names(self):
-        self.assertEqual(_exec_words(self.pod, "ExecStartPost"),
-                         [*self.settings.tool, "unit", "rules", "agent"])
+    def test_the_pod_joins_the_namespace_the_holder_holds(self):
+        """By the path `unit netns` binds it at, %t being the runtime
+        directory; bound to the unit that holds it, and after it, so the
+        rules are in before anything of the pod runs."""
+        (network,) = _keys(self.pod, "Network")
+        kind, _, path = network.partition(":")
+        self.assertEqual(kind, "ns")
+        self.assertEqual(path.replace("%t", str(self.dirs.runtime)),
+                         str(self.box.namespace))
+        self.assertEqual(_keys(self.pod, "BindsTo"), [self.box.netns_service])
+        self.assertIn(self.box.netns_service, _keys(self.pod, "After"))
+        self.assertNotIn("ExecStartPost", self.pod)
+        self.assertEqual(_keys(self.pod, "UserNS"), ["keep-id"])
+
+    def test_the_pod_has_no_cgroup_or_host_names_and_pastas_resolver(self):
         args = _keys(self.pod, "PodmanArgs")
         self.assertIn("--share-parent=false", args)
         self.assertIn("--hosts-file=image", args)
-        self.assertEqual(_keys(self.pod, "Network"), ["pasta"])
-        self.assertEqual(_keys(self.pod, "UserNS"), ["keep-id"])
+        forwarded = netns.PASTA[netns.PASTA.index("--dns-forward") + 1]
+        self.assertEqual(_keys(self.pod, "DNS"), [forwarded])
+
+    def test_the_pod_reads_the_override_without_default_sysctls(self):
+        """Its infra container cannot set a net sysctl in a namespace its
+        user namespace does not own; the workload joins the pod's, which
+        podman sets none in."""
+        self.assertEqual(_keys(self.pod, "Environment"), [
+            f"CONTAINERS_CONF_OVERRIDE={self.box.containers_conf}"])
+        self.assertEqual(tomllib.loads(containers_conf(self.box)),
+                         {"containers": {"default_sysctls": []}})
+        self.assertNotIn("CONTAINERS_CONF_OVERRIDE", self.work)
+
+    def test_the_namespace_is_held_under_podman_unshare_and_notifies(self):
+        """The holder is podman's child, so it sends READY=1 and is not
+        the main process until it says so; `unit netns` on this box, as
+        the command line takes it."""
+        self.assertEqual(_keys(self.netns, "Type"), ["notify"])
+        self.assertEqual(_keys(self.netns, "NotifyAccess"), ["all"])
+        for key in DEPENDENCIES:
+            self.assertEqual(_keys(self.netns, key), [], key)
+        words = _exec_words(self.netns, "ExecStart")
+        tool = len(self.settings.tool)
+        self.assertEqual(words[:2 + tool],
+                         ["podman", "unshare", *self.settings.tool])
+        from moathut import cli
+        with mock.patch.object(cli, "unit_netns") as unit_netns, \
+                mock.patch.object(cli.signal, "signal"):
+            cli.run_command(parse(words[2 + tool:]), tool=(), environ={},
+                            cwd="/", isatty=False)
+        unit_netns.assert_called_once_with("agent", dirs=mock.ANY)
 
     def test_the_workload_cannot_touch_its_namespace(self):
         """Root holds podman's default set at most, and the user nothing:
@@ -317,23 +363,15 @@ class TestUnits(unittest.TestCase):
         self.assertIn(f"{self.box.netns_mark}:{MARK_PATH}:ro,z",
                       _keys(self.work, "Volume"))
 
-    NOT_PRIVILEGED = "00000000800405fb"
-    PRIVILEGED = "000001ffffffffff"
-
-    def _interactive(self, cap_bounding, mark=None, times=1):
-        """An interactive bash reading the prompt `times` times, with
-        /proc/self/status's CapBnd and the mark given: (stderr, PS1)."""
+    def _interactive(self, mark=None, times=1):
+        """An interactive bash reading the prompt `times` times, with the
+        mark given: (stderr, PS1)."""
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        status = tmp / "status"
-        status.write_text(f"Name:\tbash\nCapInh:\t0\n"
-                          f"CapBnd:\t{cap_bounding}\nCapAmb:\t0\n")
         mark_file = tmp / "mark"
         if mark is not None:
             mark_file.write_text(mark and mark + "\n")
         script = tmp / "prompt.sh"
-        script.write_text(prompt(self.box)
-                          .replace("/proc/self/status", str(status))
-                          .replace(MARK_PATH, str(mark_file)))
+        script.write_text(prompt(self.box).replace(MARK_PATH, str(mark_file)))
         reads = f'. "{script}"; ' * times
         done = subprocess.run(
             ["bash", "--norc", "--noprofile", "-i", "-c",
@@ -342,60 +380,38 @@ class TestUnits(unittest.TestCase):
             text=True, check=True, stdin=subprocess.DEVNULL)
         return done.stderr, done.stdout
 
-    def test_a_shell_moathut_opens_is_not_warned(self):
+    def test_a_shell_in_the_rules_namespace_is_not_warned(self):
+        """Whoever opened it: the rules are where it is, and a shell
+        `podman exec --privileged` opens holds its capabilities in a user
+        namespace that does not own the network namespace. An empty mark
+        is one no rules step has written yet."""
         here = os.readlink("/proc/self/ns/net")
         for mark in (here, None, ""):
             with self.subTest(mark=mark):
-                said, ps1 = self._interactive(self.NOT_PRIVILEGED, mark)
+                said, ps1 = self._interactive(mark)
                 self.assertNotIn("not protected", said)
                 self.assertNotIn("UNPROTECTED", ps1)
                 self.assertIn("\u2b22 agent", ps1)
+        self.assertNotIn("CapBnd", prompt(self.box))
 
-    def test_the_warning_is_for_cap_net_admin_alone(self):
-        """Bit 12 of the bounding set, and no other: a box's own set with
-        it added is warned, every capability but it is not."""
-        here = os.readlink("/proc/self/ns/net")
-        net_admin = 1 << 12
-        for bounding, warned in (
-                (int(self.NOT_PRIVILEGED, 16) | net_admin, True),
-                (int(self.PRIVILEGED, 16) & ~net_admin, False)):
-            with self.subTest(bounding=f"{bounding:016x}"):
-                said, _ = self._interactive(f"{bounding:016x}", here)
-                self.assertEqual("this shell is not protected" in said,
-                                 warned)
-
-    def test_a_privileged_shell_is_warned_once_and_its_prompt_says_so(self):
-        """CAP_NET_ADMIN in the bounding set: podman exec --privileged.
-        The profile and the home's .bashrc both read the prompt."""
-        here = os.readlink("/proc/self/ns/net")
-        said, ps1 = self._interactive(self.PRIVILEGED, here, times=2)
+    def test_a_shell_in_another_namespace_is_warned_once(self):
+        """The mark names the namespace the rules went into; a container
+        started by hand from the box's files is in another. The profile
+        and the home's .bashrc both read the prompt."""
+        said, ps1 = self._interactive("net:[1]", times=2)
         self.assertEqual(said.count(
-            "moathut: this shell is not protected by the moat."), 1)
-        self.assertIn("moathut enter agent", said)
-        self.assertNotIn("box agent is not protected", said)
+            "moathut: box agent is not protected by the moat."), 1)
+        self.assertIn("moathut stop agent", said)
         self.assertIn("\u2b22 agent UNPROTECTED", ps1)
         self.assertEqual(ps1.count("\u2b22"), 1)
-
-    def test_a_shell_in_another_namespace_is_warned(self):
-        """The mark names the namespace the rules went into; a box
-        started outside moathut is in a new one."""
-        said, ps1 = self._interactive(self.NOT_PRIVILEGED, "net:[1]")
-        self.assertIn("moathut: box agent is not protected by the moat.",
-                      said)
-        self.assertIn("moathut stop agent", said)
-        self.assertNotIn("this shell is not protected", said)
-        self.assertIn("\u2b22 agent UNPROTECTED", ps1)
 
     def test_a_shell_not_interactive_is_not_warned(self):
         """`bash -c`, `podman exec NAME CMD`: a script's stderr is not
         for a person."""
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        (tmp / "status").write_text(f"CapBnd:\t{self.PRIVILEGED}\n")
         (tmp / "mark").write_text("net:[1]\n")
         (tmp / "prompt.sh").write_text(
-            prompt(self.box)
-            .replace("/proc/self/status", str(tmp / "status"))
-            .replace(MARK_PATH, str(tmp / "mark")))
+            prompt(self.box).replace(MARK_PATH, str(tmp / "mark")))
         said = subprocess.run(
             ["bash", "--norc", "-c", f'. "{tmp / "prompt.sh"}"'],
             env={"PATH": "/usr/bin:/bin"}, capture_output=True,
@@ -461,10 +477,14 @@ class TestUnits(unittest.TestCase):
         settings = _settings("/home/a b%c$d",
                              pythonpath="/src/a b", tool=("/py", "/t x"))
         units = {p.name: t for p, t in render(box, settings, None).items()}
-        pod = units["moathut-agent.pod"]
-        self.assertEqual(_exec_words(pod, "ExecStartPost"),
-                         ["/py", "/t x", "unit", "rules", "agent"])
-        self.assertIn('Environment="PYTHONPATH=/src/a b"', pod)
+        held = units["moathut-agent-netns.service"]
+        self.assertEqual(_exec_words(held, "ExecStart"),
+                         ["podman", "unshare", "/py", "/t x", "unit",
+                          "netns", "agent"])
+        self.assertIn('Environment="PYTHONPATH=/src/a b"', held)
+        self.assertIn('\nEnvironment="CONTAINERS_CONF_OVERRIDE=/home/a b%%c$d'
+                      '/.config/moatery/box/agent/containers.conf"\n',
+                      units["moathut-agent.pod"])
         inspect = units["moathut-agent-inspect.service"]
         self.assertIn("/home/a b%c$d/.config/moatery/box/agent/policy.json",
                       _exec_words(inspect, "ExecStart"))
@@ -658,14 +678,44 @@ class TestRules(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, "", "")
         return runner, calls
 
+    HELD = Path("/run/user/1000/moathut-netns/agent")
+
     def test_the_rules_go_in_with_the_device_read_inside(self):
+        """From the user namespace the namespace is held in, by its
+        path."""
         runner, calls = self._runner({
             "route show default": (0, json.dumps([{"dev": "enp9s0"}]))})
-        netns.load_rules(77, runner)
+        netns.load_rules(self.HELD, runner)
+        self.assertEqual([c[0][:2] for c in calls],
+                         [["nsenter", f"--net={self.HELD}"]] * 2)
         (argv, text), = [c for c in calls if "nft" in c[0]]
-        self.assertEqual(argv[:6], ["podman", "unshare", "nsenter", "-t",
-                                    "77", "-n"])
+        self.assertEqual(argv[2:], ["nft", "-f", "-"])
         self.assertIn('device "enp9s0"', text)
+
+    def test_the_namespace_is_made_connected_and_let_go(self):
+        """A bind mount over an empty file, pasta on it with podman's
+        arguments, then the mount lazily (pasta has it open) and the
+        file, whose removal ends pasta; letting go of nothing is not an
+        error."""
+        held = Path(self.enterContext(tempfile.TemporaryDirectory())) \
+            / "moathut-netns" / "agent"
+        runner, calls = self._runner({})
+        netns.make(held, runner)
+        self.assertTrue(held.is_file())
+        self.assertEqual(held.parent.stat().st_mode & 0o777, 0o700)
+        netns.connect(held, runner)
+        self.assertEqual([c[0] for c in calls], [
+            ["unshare", f"--net={held}", "true"],
+            [*netns.PASTA, "--netns", str(held)]])
+        self.assertEqual(netns.PASTA[0], "pasta")
+        self.assertNotIn("--netns", netns.PASTA)
+        self.assertNotIn("--no-netns-quit", netns.PASTA)
+        refusing, calls = self._runner({"umount": (32, "")})
+        netns.release(held, refusing)
+        netns.release(held, refusing)
+        self.assertEqual([c[0] for c in calls],
+                         [["umount", "-l", str(held)]] * 2)
+        self.assertFalse(held.exists())
 
     def test_no_single_sane_device_is_an_error(self):
         for routes in ([], [{"dev": "a"}, {"dev": "b"}],
@@ -674,18 +724,19 @@ class TestRules(unittest.TestCase):
                 "route show default": (0, json.dumps(routes))})
             with self.subTest(routes=routes), \
                     self.assertRaises(netns.NetnsError):
-                netns.load_rules(77, runner)
+                netns.load_rules(self.HELD, runner)
 
     def test_the_namespace_is_named_as_proc_names_it(self):
         runner, calls = self._runner({"readlink": (0, "net:[4026532424]\n")})
-        self.assertEqual(netns.netns_id(77, runner), "net:[4026532424]")
-        self.assertEqual(calls[0][0], ["podman", "unshare", "readlink",
-                                       "/proc/77/ns/net"])
+        self.assertEqual(netns.netns_id(self.HELD, runner),
+                         "net:[4026532424]")
+        self.assertEqual(calls[0][0], ["nsenter", f"--net={self.HELD}",
+                                       "readlink", "/proc/self/ns/net"])
         for name in ("", "mnt:[4026532424]", "net:[1] x"):
             runner, _ = self._runner({"readlink": (0, name)})
             with self.subTest(name=name), \
                     self.assertRaises(netns.NetnsError):
-                netns.netns_id(77, runner)
+                netns.netns_id(self.HELD, runner)
 
     def test_loaded_means_both_tables(self):
         runner, _ = self._runner({"netdev moatery": (1, "")})
@@ -915,7 +966,7 @@ class FakeHost:
     def __init__(self, state_root, rules=True, load_state="loaded",
                  unshare=True, broker=True, broker_state="active",
                  listeners=True, listener_state="active", dirs=None,
-                 reloads=True, pod=False):
+                 reloads=True, pod=False, pod_state="inactive"):
         self.calls = []
         self.inputs = []
         self.state_root = state_root
@@ -930,8 +981,10 @@ class FakeHost:
         # box's policy to its status file, as the inspector does.
         self.dirs = dirs
         self.reloads = reloads
-        # Whether `podman pod exists` finds the box's pod.
+        # Whether `podman pod exists` finds the box's pod, and what its
+        # unit's state is.
         self.pod = pod
+        self.pod_state = pod_state
 
     def __call__(self, argv, *, input=None, check=True, env=None):
         self.calls.append(argv)
@@ -953,6 +1006,9 @@ class FakeHost:
         elif argv[:3] == ["systemctl", "--user", "is-active"] and \
                 argv[-1].endswith(("-inspect.service", "-resolve.service")):
             out = self.listener_state + "\n"
+        elif argv[:3] == ["systemctl", "--user", "is-active"] and \
+                argv[-1].endswith("-pod.service"):
+            out = self.pod_state + "\n"
         elif argv[:3] == ["systemctl", "--user", "try-restart"] or (
                 argv[:3] == ["systemctl", "--user", "start"] and argv[-1]
                 .endswith(("-inspect.service", "-resolve.service"))):
@@ -1251,36 +1307,121 @@ class TestCommands(unittest.TestCase):
         self.assertTrue(box.netns_mark.exists())
         self.assertIn(str(box.netns_mark), box.container_file.read_text())
 
-    def test_the_rules_step_writes_the_namespace_in_place(self):
-        """The box mounts the file, so a new one would not reach a box
-        already running, and the name is what /proc/self/ns/net reads
-        inside."""
-        box, _ = self._create()
-        box.netns_mark.write_text("net:[1]\n")
-        inode = box.netns_mark.stat().st_ino
-        outputs = {"InfraContainerID": "infra\n", "State.Pid": "77\n",
-                   "route show default": json.dumps([{"dev": "eth0"}]),
-                   "readlink": "net:[4026532424]\n"}
+    def _holder_runner(self, box, fail=None):
+        """What `unit netns` runs, recorded; `fail` names the word whose
+        command exits 1. The namespace's file is there before unshare
+        binds over it."""
         calls = []
+        outputs = {"route show default": json.dumps([{"dev": "eth0"}]),
+                   "readlink": "net:[4026532424]\n"}
 
         def runner(argv, *, input=None, check=True, env=None):
             calls.append(argv)
+            if argv[0] == "unshare":
+                self.assertTrue(box.namespace.is_file())
+            if fail and fail in argv and check:
+                raise commands.CommandFailed(" ".join(argv))
             out = next((v for k, v in outputs.items()
                         if k in " ".join(argv)), "")
             return subprocess.CompletedProcess(argv, 0, out, "")
-        commands.unit_rules("agent", dirs=self.dirs, runner=runner)
-        self.assertEqual(box.netns_mark.read_text(), "net:[4026532424]\n")
-        self.assertEqual(box.netns_mark.stat().st_ino, inode)
-        loaded = next(i for i, a in enumerate(calls) if "nft" in a)
-        named = next(i for i, a in enumerate(calls) if "readlink" in a)
-        self.assertLess(loaded, named)
+        return runner, calls
 
-    def test_the_command_line_hands_the_rules_step_the_dirs(self):
-        from moathut import cli
-        with mock.patch.object(cli, "unit_rules") as unit_rules:
-            cli.run_command(parse(["unit", "rules", "agent"]), tool=(),
-                            environ=self.env, cwd=self.home, isatty=False)
-        unit_rules.assert_called_once_with("agent", dirs=self.dirs)
+    def test_the_namespace_is_made_and_handed_to_a_holder(self):
+        """The rules and the mark before the fork, and ready after it,
+        naming the holder the unit's main process; the mark written in
+        place, since the box mounts the file; what a killed holder left
+        let go first. This process lets go of nothing: the holder has
+        it."""
+        box, _ = self._create()
+        box.netns_mark.write_text("net:[1]\n")
+        inode = box.netns_mark.stat().st_ino
+        runner, calls = self._holder_runner(box)
+        seen = []
+
+        def fork():
+            seen.append(("fork", len(calls), box.netns_mark.read_text()))
+            return 4242
+
+        commands.unit_netns("agent", dirs=self.dirs, runner=runner,
+                            ready=lambda **kw: seen.append(("ready", kw)),
+                            wait=self.fail, fork=fork)
+        held = str(box.namespace)
+        self.assertEqual(calls, [
+            ["umount", "-l", held],
+            ["unshare", f"--net={held}", "true"],
+            [*netns.PASTA, "--netns", held],
+            ["nsenter", f"--net={held}", "ip", "-j", "route", "show",
+             "default"],
+            ["nsenter", f"--net={held}", "nft", "-f", "-"],
+            ["nsenter", f"--net={held}", "readlink", "/proc/self/ns/net"]])
+        self.assertEqual(seen, [("fork", 6, "net:[4026532424]\n"),
+                                ("ready", {"main_pid": 4242})])
+        self.assertEqual(box.netns_mark.stat().st_ino, inode)
+        self.assertTrue(box.namespace.exists())
+
+    def test_the_holder_holds_until_stopped_then_lets_go(self):
+        box, _ = self._create()
+        runner, calls = self._holder_runner(box)
+        seen = []
+
+        def stopped():
+            seen.append(box.namespace.exists())
+            raise SystemExit(0)
+
+        with self.assertRaises(SystemExit):
+            commands.unit_netns("agent", dirs=self.dirs, runner=runner,
+                                ready=self.fail, wait=stopped,
+                                fork=lambda: 0)
+        self.assertEqual(seen, [True])
+        self.assertEqual(calls[-1], ["umount", "-l", str(box.namespace)])
+        self.assertFalse(box.namespace.exists())
+
+    def test_a_namespace_whose_making_fails_is_let_go(self):
+        """Neither forked nor ready."""
+        box, _ = self._create()
+        runner, calls = self._holder_runner(box, fail="nft")
+        with self.assertRaises(commands.CommandFailed):
+            commands.unit_netns("agent", dirs=self.dirs, runner=runner,
+                                ready=self.fail, wait=self.fail,
+                                fork=self.fail)
+        self.assertEqual(calls[-1], ["umount", "-l", str(box.namespace)])
+        self.assertFalse(box.namespace.exists())
+        self.assertEqual(box.netns_mark.read_text(), "")
+
+    def test_a_holder_needs_the_runtime_directory(self):
+        self._create()
+        dirs = self.dirs._replace(runtime=None)
+        with self.assertRaisesRegex(commands.BoxError, "XDG_RUNTIME_DIR"):
+            commands.unit_netns("agent", dirs=dirs, runner=self.fail)
+
+    def test_the_managers_stop_unwinds_the_holder_once(self):
+        """SIGTERM, which systemd stops a unit with, becomes an exit the
+        holder lets go on, with status 0; a second while it does is
+        ignored."""
+        script = """
+import signal
+from unittest import mock
+from moathut import cli
+def held(name, *, dirs):
+    print("held", flush=True)
+    try:
+        signal.pause()
+    finally:
+        signal.raise_signal(signal.SIGTERM)
+        print("let go", flush=True)
+with mock.patch.object(cli, "unit_netns", held):
+    cli.run_command(cli.parse(["unit", "netns", "agent"]), tool=(),
+                    environ={}, cwd="/", isatty=False)
+"""
+        child = subprocess.Popen(
+            [sys.executable, "-c", script], cwd=REPO_ROOT, text=True,
+            stdout=subprocess.PIPE,
+            env={**os.environ, "PYTHONPATH": str(REPO_ROOT)})
+        self.addCleanup(child.kill)
+        self.assertEqual(child.stdout.readline(), "held\n")
+        child.send_signal(15)
+        out, _ = child.communicate(timeout=10)
+        self.assertEqual((child.returncode, out), (0, "let go\n"))
 
     def test_ls_marks_a_box_whose_pod_runs_without_its_rules(self):
         self._create()
@@ -1505,7 +1646,9 @@ class TestCommands(unittest.TestCase):
                 self.assertEqual(len(ran), 1)
                 self.assertEqual(bool(said), not works)
 
-    def test_stop_and_rm_stop_the_broker(self):
+    def test_stop_and_rm_stop_the_namespace_and_the_broker(self):
+        """And the pod, which a box whose units have no namespace's unit
+        yet is stopped by."""
         self._add()
         box, _ = self._create(policy=self._brokered())
         host = FakeHost(self.home)
@@ -1515,13 +1658,66 @@ class TestCommands(unittest.TestCase):
                                                     "stop"]]
         self.assertEqual(len(stops), 2)
         for argv in stops:
-            self.assertEqual(argv[3:], [box.pod_service, box.broker_service])
+            self.assertEqual(argv[3:], [box.pod_service, box.netns_service,
+                                        box.broker_service])
         self.assertFalse(box.broker_file.exists())
         self._create()
         host = FakeHost(self.home)
         commands.stop("agent", dirs=self.dirs, runner=host)
+        self.assertIn(["systemctl", "--user", "stop", box.pod_service,
+                       box.netns_service], host.calls)
+        box.netns_file.unlink()
+        host = FakeHost(self.home)
+        commands.stop("agent", dirs=self.dirs, runner=host)
         self.assertIn(["systemctl", "--user", "stop", box.pod_service],
                       host.calls)
+
+    def test_a_running_pods_files_wait_for_its_next_enter(self):
+        """A box whose files this moathut would write otherwise: while
+        its pod runs, a rewrite of its units keeps the pod's, its
+        namespace's, the override and the prompt; stopped, enter writes
+        every one, and the manager reloads them, before it starts the
+        box. One this moathut wrote is not written again, nor one whose
+        pod runs."""
+        box, _ = self._create()
+        old = {box.pod_file: "[Pod]\nNetwork=pasta\n",
+               box.prompt: "# the prompt it started with\n"}
+        for path, text in old.items():
+            path.write_text(text)
+        box.netns_file.unlink()
+        box.containers_conf.unlink()
+        box.container_file.write_text("from before\n")
+        commands.allow("agent", "example.com", methods=[], paths=[],
+                       dirs=self.dirs, pause=self.fail,
+                       runner=self._host(pod_state="active"))
+        self.assertEqual({p: p.read_text() for p in old}, old)
+        self.assertFalse(box.netns_file.exists())
+        self.assertFalse(box.containers_conf.exists())
+        self.assertNotEqual(box.container_file.read_text(), "from before\n")
+        host = FakeHost(self.home)
+        commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                       cwd=self.home, environ=self.env, isatty=False,
+                       runner=host, execvp=lambda f, a: None)
+        settings = Settings.from_json(box.settings.read_text())
+        for path, text in commands._written(box, settings, None).items():
+            with self.subTest(path=path.name):
+                self.assertEqual(path.read_text(), text)
+        reload = ["systemctl", "--user", "daemon-reload"]
+        start = ["systemctl", "--user", "start", box.service]
+        self.assertLess(host.calls.index(reload), host.calls.index(start))
+        host = FakeHost(self.home)
+        commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                       cwd=self.home, environ=self.env, isatty=False,
+                       runner=host, execvp=lambda f, a: None)
+        self.assertNotIn(reload, host.calls)
+        box.prompt.write_text("# the prompt it started with\n")
+        host = FakeHost(self.home, pod_state="active")
+        commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                       cwd=self.home, environ=self.env, isatty=False,
+                       runner=host, execvp=lambda f, a: None)
+        self.assertNotIn(reload, host.calls)
+        self.assertEqual(box.prompt.read_text(),
+                         "# the prompt it started with\n")
 
     def test_enter_clears_what_a_stop_while_starting_left(self):
         """A broker that is not active, which after a failed start is
@@ -1622,8 +1818,8 @@ class TestCommands(unittest.TestCase):
             self.assertNotIn(box.service, argv)
             self.assertNotIn(box.pod_service, argv)
         self.assertEqual(sorted(p.name for p in box.config.iterdir()),
-                         ["box.json", "bundle.pem", "policy.json",
-                          "prompt.sh"])
+                         ["box.json", "bundle.pem", "containers.conf",
+                          "policy.json", "prompt.sh"])
 
     def test_allow_on_a_stopped_box_applies_from_its_next_start(self):
         box, _ = self._create()
@@ -1731,8 +1927,8 @@ class TestCommands(unittest.TestCase):
             self.assertEqual(host.calls, [])
             self.assertNotIn(".policy.json.new", str(host.calls))
         self.assertEqual(sorted(p.name for p in box.config.iterdir()),
-                         ["box.json", "bundle.pem", "policy.json",
-                          "prompt.sh"])
+                         ["box.json", "bundle.pem", "containers.conf",
+                          "policy.json", "prompt.sh"])
         failing = lambda argv: subprocess.CompletedProcess(argv, 1)
         with self.assertRaisesRegex(commands.BoxError, "exited 1"):
             self._edit(failing)

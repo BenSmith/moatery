@@ -3,12 +3,13 @@
 import argparse
 import getpass
 import os
+import signal
 import sys
 
 from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, BoxError, allow,
                        create, credential_add, credential_ls, credential_rm,
                        edit_policy, enter, log, ls, refused, rm, stop,
-                       unit_exec, unit_rotate, unit_rules, unit_sudoers)
+                       unit_exec, unit_netns, unit_rotate, unit_sudoers)
 from .netns import NetnsError
 from .paths import user_dirs
 from .process import CommandFailed
@@ -96,7 +97,7 @@ def build_parser():
     # For the units' own use; not listed.
     unit = sub.add_parser("unit").add_subparsers(dest="unit_command",
                                                  required=True)
-    unit.add_parser("rules").add_argument("name")
+    unit.add_parser("netns").add_argument("name")
     unit.add_parser("sudoers").add_argument("name")
     unit.add_parser("rotate").add_argument("name")
     unit.add_parser("exec").add_argument("name")
@@ -178,6 +179,11 @@ def print_refused(name, rows, names):
           "[--method M]... [--path P]...")
 
 
+def _stopped(signum, frame):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise SystemExit(0)
+
+
 def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
     dirs = user_dirs(environ)
     if args.command == "create":
@@ -226,13 +232,16 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
         for row in rows:
             if "unprotected" in row[1:]:
                 print(f"moathut: box {row[0]} is not protected by the "
-                      "moat: it runs without its rules, as a box started "
-                      f"outside moathut does. moathut stop {row[0]}, then "
-                      f"moathut enter {row[0]}", file=sys.stderr)
+                      "moat: its namespace has no moatery rules. moathut "
+                      f"stop {row[0]}, then moathut enter {row[0]}",
+                      file=sys.stderr)
     elif args.command == "credential":
         run_credential(args, dirs=dirs, stdin=stdin)
-    elif args.unit_command == "rules":
-        unit_rules(args.name, dirs=dirs)
+    elif args.unit_command == "netns":
+        # The manager stops it with SIGTERM, which then unwinds it, so it
+        # lets go of what it holds; once.
+        signal.signal(signal.SIGTERM, _stopped)
+        unit_netns(args.name, dirs=dirs)
     elif args.unit_command == "sudoers":
         unit_sudoers(args.name, dirs=dirs)
     elif args.unit_command == "rotate":

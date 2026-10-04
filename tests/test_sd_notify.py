@@ -32,6 +32,11 @@ class TestNotifyReady(unittest.TestCase):
         self.assertEqual(sock.recv(64), b"READY=1")
         self.assertEqual(environ, {"OTHER": "1"})
 
+    def test_a_main_pid_is_named_with_ready(self):
+        path, sock = notify_socket(self)
+        notify_ready({"NOTIFY_SOCKET": path}, main_pid=4242)
+        self.assertEqual(sock.recv(64), b"MAINPID=4242\nREADY=1")
+
     def test_an_abstract_socket_is_reached(self):
         name = f"moatery-test-{os.getpid()}-{time.monotonic_ns()}"
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)

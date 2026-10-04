@@ -2,11 +2,12 @@
 
 moathut makes long-lived, inspected containers, called boxes:
 `moathut create NAME --policy FILE`, then `moathut enter NAME`.
-Each box is the netns placement ([DESIGN.md](DESIGN.md)) laid out as
-[examples/quadlet/](../examples/quadlet/): a unit that holds the
-network namespace and loads the rules when it starts (a quadlet `.pod`,
-with the workload its only container), the inspector's and the
-responder's listeners bound in that namespace, and the workload started
+Each box is the netns placement ([DESIGN.md](DESIGN.md)) laid out
+much as [examples/quadlet/](../examples/quadlet/) is: a unit that makes
+the network namespace in the user's own user namespace, holds it, and
+loads the rules into it when it starts; a quadlet `.pod` that joins it,
+with the workload its only container; the inspector's and the
+responder's listeners bound in that namespace; and the workload started
 after them.
 
 [BOX-GUIDE.md](BOX-GUIDE.md) is the user's guide; this is the
@@ -60,10 +61,12 @@ A mount whose source has gone since is refused, naming the box it came
 from.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
-order, the namespace's unit, the rules, the broker and the listeners,
-and the workload. It then checks that the namespace holds both moatery
-tables, and refuses if it does not, before `podman exec -it` as the user
-(or uid 0 with `--root`). A listener that is not running is started
+order, the namespace's unit, which loads the rules, the pod, the broker
+and the listeners, and the workload. A stopped box whose files this
+moathut would write otherwise has them written again first (The units,
+below). It then checks that the namespace holds both moatery tables,
+and refuses if it does not, before `podman exec -it` as the user (or
+uid 0 with `--root`). A listener that is not running is started
 again, and so is a box's broker. If one does not start, `enter` says so
 and enters anyway: without the inspector the workload's connections are
 refused, without the responder its names do not resolve, and without the
@@ -72,10 +75,10 @@ working directory is the host's current one if that is inside a mount,
 and the box's home otherwise.
 
 **stop** stops the namespace's unit, and the broker's; everything bound
-to it stops too.
+to it stops too, and the namespace goes.
 **ls** lists each box, whether its workload is active, its image,
-`autostart` if it has it, and `unprotected` if its pod runs without the
-rules (started outside systemd), with a warning on stderr.
+`autostart` if it has it, and `unprotected` if its pod runs in a
+namespace without the rules, with a warning on stderr.
 **rm** stops the box and removes its units and what podman made from
 them; its home and its record stay unless `--home`.
 
@@ -172,17 +175,20 @@ For box NAME, credential ID:
 | policy | `~/.config/moatery/box/NAME/policy.json` |
 | bundle | `~/.config/moatery/box/NAME/bundle.pem` |
 | prompt | `~/.config/moatery/box/NAME/prompt.sh` |
+| podman's override for the pod | `~/.config/moatery/box/NAME/containers.conf` |
 | CA, certificates, status files, the namespace's name | `~/.local/state/moatery/box/NAME/` |
 | record | `~/.local/state/log/moatery/box/NAME/requests.log`, and `.1` to `.4.gz` |
 | the box's home | `~/.local/share/moatery/box/NAME/home/` |
-| namespace, workload | `~/.config/containers/systemd/moathut-NAME.{pod,container}` |
+| namespace | `~/.config/systemd/user/moathut-NAME-netns.service` |
+| the namespace, held | `$XDG_RUNTIME_DIR/moathut-netns/NAME` |
+| pod, workload | `~/.config/containers/systemd/moathut-NAME.{pod,container}` |
 | inspector, responder, broker | `~/.config/systemd/user/moathut-NAME-{inspect,resolve,broker}.service` |
 | the record's rotation | `~/.config/systemd/user/moathut-NAME-rotate.{service,timer}` |
 | broker's socket | `$XDG_RUNTIME_DIR/moathut/NAME/broker.sock` |
 | credential | `~/.config/moatery/credentials/ID.{cred,json}` |
 
-The container is named NAME, and so is podman's object for its
-namespace, so `podman` commands take the box's name; `create` refuses a
+The container is named NAME, and so is its pod, so `podman` commands
+take the box's name; `create` refuses a
 name podman already uses. The credentials are beside the boxes, not
 among them, where they would be a box's directory.
 
@@ -193,16 +199,42 @@ moathut writes, for each box, the units
 `moathut-NAME.pod` for `example.pod`, `moathut-NAME.container`
 for `example.container`, `moathut-NAME-inspect.service` and
 `-resolve.service` for the example's two listener units, and
-`-broker.service` for `moat-broker.service`. The namespace is made
-as the example's is: pasta, `UserNS=keep-id`, `--hosts-file=image`, so
-the host's hosts file does not answer the workload's names, and no
-cgroup of its own. The units differ from the example's in these ways:
+`-broker.service` for `moat-broker.service`; and one the example does
+not have, `moathut-NAME-netns.service`, the namespace's. The pod has
+`UserNS=keep-id` and `--hosts-file=image`, so the host's hosts file
+does not answer the workload's names, and no cgroup of its own. The
+units differ from the example's in these ways:
 
-- The tool loads the rules (`moathut unit rules NAME`) and starts
-  the listeners in the namespace (`moathut unit exec NAME`), where
-  the example has `moat-pod-netns`; both are among the commands for
-  the units' use. The egress device is read inside the namespace, not
-  on the host.
+- The namespace is not the pod's. The namespace's unit makes it
+  (`moathut unit netns NAME`, under `podman unshare`) in the user
+  namespace `podman unshare` is root in, and binds it at
+  `$XDG_RUNTIME_DIR/moathut-netns/NAME` in podman's mount namespace; a
+  path outside the broker's runtime directory, which the manager removes
+  when the broker stops. It connects the namespace with pasta, given the
+  arguments podman gives a pod's, loads the rules, writes the
+  namespace's name (below), then forks a holder and names it the unit's
+  main process (`MAINPID=`), so that podman exits and the holder, the
+  manager's child then, is one whose end the manager sees: the unit
+  fails, and the pod with it. Stopped, the holder unmounts the namespace
+  and removes the file, at which pasta exits. A holder killed leaves
+  them, and the next start lets them go first.
+- The pod joins that namespace (`Network=ns:%t/moathut-netns/NAME`),
+  and is `BindsTo=` and `After=` its unit. The pod's user namespace
+  (keep-id) is a child of the one that owns the network namespace, so
+  root in the box, even with every capability `podman exec
+  --privileged` gives, cannot change it, and the rules stay.
+  `DNS=169.254.1.1` keeps the box's `resolv.conf` as pasta's would be;
+  the rules send port 53 to the responder whatever the address. podman
+  applies `containers.conf`'s default net sysctls to a container joining
+  a namespace by path, and the pod's infra container may not set them in
+  one its user namespace does not own, so the pod's unit points
+  `CONTAINERS_CONF_OVERRIDE` at the box's `containers.conf`, which
+  empties `default_sysctls`. The workload joins the pod's namespace,
+  which podman sets none in.
+- The tool starts the listeners in the namespace (`moathut unit exec
+  NAME`), where the example has `moat-pod-netns`; it and `unit netns`
+  are among the commands for the units' use. The egress device is read
+  inside the namespace, not on the host.
 - The workload `Wants=` the listeners, where the example's `Requires=`
   them, and a listener that dies is started again
   (`Restart=on-failure`); below says why.
@@ -238,7 +270,7 @@ cgroup of its own. The units differ from the example's in these ways:
   password: the image's own rule asks for one, and the user has none.
   Root in a box is filtered as the user is.
 - The record is rotated by the tool (`moathut unit rotate NAME`),
-  from a timer the namespace's unit `Wants=` and that is `PartOf=` it, a
+  from a timer the pod's unit `Wants=` and that is `PartOf=` it, a
   minute after that unit starts and every ten after, where the example
   has logrotate. Past 32 MiB the record is moved to `.1`, and the
   inspector's main process alone is sent `SIGHUP`, on which it opens the
@@ -261,29 +293,37 @@ cgroup of its own. The units differ from the example's in these ways:
   `/root/.bashrc`; `create` gives a home with no `.bashrc` one that reads
   `/etc/bashrc` and then the prompt, which an image whose `bashrc` does
   not read `/etc/profile.d` needs. A `.bashrc` the home has is kept. It
-  is written with the units, so a box from before it gains it when
-  `allow`, `policy` or `credential add` writes its units again. A mount
-  may not cover it.
+  is written with the units. A mount may not cover it.
 - The prompt also warns, in an interactive shell only, when the shell is
-  not covered by the moat: one whose bounding set holds `CAP_NET_ADMIN`,
-  which only `podman exec --privileged` gives (Ptyxis opens container
-  tabs so), and one in another namespace than the rules were loaded
-  into. Its prompt then reads `⬢ NAME UNPROTECTED`, white on red. The
-  namespace's unit, after loading the rules, writes the namespace's
-  name (`net:[INODE]`, as `/proc/self/ns/net` reads) to `netns` in the
-  box's state directory, in place, since the workload mounts that file
-  read-only at `/run/moathut/netns`. It is made empty with the units,
-  since podman will not start a container whose mount source is missing,
-  and a shell reads an empty one as not knowing. A mount may not cover
-  it.
+  in another namespace than the rules were loaded into, as one in a
+  container run by hand from the box's image and files is. Its prompt
+  then reads `⬢ NAME UNPROTECTED`, white on red. The namespace's unit,
+  after loading the rules, writes the namespace's name (`net:[INODE]`,
+  as `/proc/self/ns/net` reads) to `netns` in the box's state
+  directory, in place, since the workload mounts that file read-only at
+  `/run/moathut/netns`, and leaves it there when it stops. It is made
+  empty with the units, since podman will not start a container whose
+  mount source is missing, and a shell reads an empty one as not
+  knowing. A mount may not cover it. A shell `podman exec --privileged`
+  opens is not warned: it is in the namespace with the rules, and
+  cannot change them.
+- Units written while the box's pod runs, by `allow`, `policy` or
+  `credential add`, leave the namespace's, the pod's, the override and
+  the prompt as they are: after a reload, the manager stops a running
+  unit that has gained a `BindsTo=` on one that is not running. `enter`
+  writes every file when it starts a stopped box, so a box an earlier
+  moathut made is brought up to date by its next `enter` after a
+  `stop`; one started at login is not.
 
 What starts what: `enter` starts `moathut-NAME.service`, which
 `Wants=` and is `After=` the inspector and the responder; they are
-`BindsTo=` and `After=` the namespace's unit, which is active only once
-its `ExecStartPost=` has loaded the rules. A rules load that fails fails
-that unit, and nothing after it starts. It `Wants=` the listeners, so
-its restart brings them back into its new namespace. The inspector
-`Wants=` the broker and starts after it is listening.
+`BindsTo=` and `After=` the pod's unit, which is `BindsTo=` and
+`After=` the namespace's, active only once the namespace is connected
+and has the rules. A rules load that fails fails that unit, and nothing
+after it starts. The pod's unit `Wants=` the listeners, so its restart
+brings them back, into the same namespace, with the same rules. A stop
+of the namespace's unit stops the pod's, and what is bound to it. The
+inspector `Wants=` the broker and starts after it is listening.
 
 Nothing `Requires=` a listener: a restart of a required unit restarts
 what requires it, and the inspector's restart would restart the
@@ -315,7 +355,8 @@ header that is not one, a secret with a line break, a placeholder equal
 to it.
 
 Nothing is passed to podman that the tool does not write itself: no
-network, capability, device, `--privileged` or hosts flag. The
+network but the namespace the tool holds, and no capability, device,
+`--privileged` or hosts flag. The
 workload's unit drops every capability outside podman's default set,
 which has no `NET_ADMIN`, so a `containers.conf` cannot widen root's in
 the box. It adds none, and names the box's user: podman gives the user
@@ -324,28 +365,30 @@ The user holds none.
 
 ## What is not closed
 
-A workload restart, by anything, keeps the namespace and its rules. Two
-things podman allows are not stopped, only warned about:
+A workload restart, by anything, keeps the namespace and its rules, and
+so does a restart of the pod, by the manager or by podman (`podman pod
+restart NAME`): the pod joins the namespace the namespace's unit holds.
+A pod started while that unit is stopped does not start, since the
+namespace's file is gone; and a stopped box leaves no pod or container
+to start: quadlet removes them. A shell opened with `podman exec
+--privileged`, as Ptyxis opens every container's tab, holds every
+capability in the box's user namespace, which does not own the network
+namespace, so it cannot change the rules. It is still a shell with every
+capability in the box and no seccomp filter, and Ptyxis lists boxes in
+its container menu and opens a new tab in the container a tab's text
+last named (OSC 777 or 666), which a workload can print;
+[BOX-GUIDE.md](BOX-GUIDE.md) says how to open boxes from Ptyxis without
+it.
 
-- A box started outside systemd (`podman pod restart NAME`, say) has a
-  new namespace with no rules, and its egress is not inspected. `enter`
-  refuses such a box, `ls` marks it `unprotected`, and an interactive
-  shell in it warns, but a process started in it some other way is not
-  caught. A stopped box leaves no pod or container to start: quadlet
-  removes them.
-- A shell opened with `podman exec --privileged` holds every capability
-  in the box's user namespace, and that user namespace owns the network
-  namespace, so it can change or remove the rules. Ptyxis opens every
-  container's tabs this way, lists boxes in its container menu, and
-  opens a new tab in the container that the tab's text last named
-  (OSC 777 or 666), which a workload can print, unless the profile's
-  "preserve container" is never. Such a shell warns, but other shells in
-  the box cannot tell the rules are gone.
+What stays open, and is warned about:
 
-Joining a namespace the tool holds (`Network=ns:PATH`), made in the
-user's own user namespace, instead of the pod's, would turn the first
-into a failure and the second into a refusal: a probe showed a
-privileged exec refused changes to such a namespace. It is not built.
+- The user, on the host, is root over the namespace (`podman unshare`),
+  and can remove the rules. `enter` refuses such a box and `ls` marks it
+  `unprotected`, but shells already in it cannot tell.
+- A container run by hand from the box's image is not the box: podman
+  gives it a network of its own, without the rules. An interactive shell
+  in one that mounts the box's prompt and mark warns; one that mounts
+  neither cannot know it is the box's.
 
 ## Where it lives
 
@@ -359,7 +402,8 @@ holds the RPM's spec to installing both packages and every program.
 
 ## Requirements
 
-The moatery programs; podman 5.0 or later (quadlet `.pod` units);
+The moatery programs; podman 5.3 or later (quadlet `.pod` units with
+`DNS=`), with pasta; util-linux's `unshare`, `nsenter` and `umount`;
 systemd 256 or later (`LoadCredentialEncrypted=` in a user unit); a
 lingering user (`loginctl enable-linger`) for a box to outlive the login
 session.
@@ -370,18 +414,26 @@ A rig, `tests/manual/box_rig.py`, on a real host, through the command
 line ([tests/manual/README.md](../tests/manual/README.md)):
 
 - the workload's first request at every start, the box's first, each
-  restart of the workload and of the namespace's unit, and `enter` after
-  `stop`, is inspected: the rules and the listeners are in place before
-  it;
+  restart of the workload and of the pod, and `enter` after `stop`, is
+  inspected: the rules and the listeners are in place before it;
 - a rules load that fails starts nothing, and `enter` refuses the box;
 - a listed host answers and an unlisted one is refused 403, as the user
   and as root by sudo; the workload's DNS is the responder's; UDP 443,
   TCP 22 and a stray datagram are dropped and counted;
 - root in the box holds no `CAP_NET_ADMIN`, and the user no capability;
+  root in a shell `podman exec --privileged` opens, and root with every
+  capability in the box's user namespace, are refused changes to the
+  namespace and its rules, and the shell is not warned; the pod is in
+  the namespace the namespace's unit holds, whose pasta has the
+  arguments podman gives a pod's;
 - `enter` runs in the box's home, or the mount the host's directory is
   in; the user's own home is not the box's; a file outside the home is
   gone after a restart;
-- `enter` refuses a box `podman pod restart` started;
+- `podman pod restart` keeps the namespace and its rules; a pod the box
+  left does not start while the namespace's unit is stopped; with a
+  table removed from the host, `ls` marks the box unprotected and
+  `enter` refuses it; a container run by hand from the box's image and
+  files warns;
 - a brokered request reaches a stub provider carrying the sealed key,
   at every start of the broker as well, while the box holds the
   placeholder and has no path to the broker's socket; a stopped broker's
@@ -400,7 +452,7 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
 - a killed inspector is started again, and a stopped one leaves the
   workload running until `enter` starts it;
 - `log` follows a request as it is made;
-- the rotation's timer runs with the namespace's unit, and a record
+- the rotation's timer runs with the pod's unit, and a record
   past its size is moved aside and the next request's line is in a new
   one.
 

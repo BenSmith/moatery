@@ -3,11 +3,12 @@
 
 docs/BOX.md: `moathut credential add`, `create`, `enter`, `log`,
 `allow`, `policy`, `stop` and `rm`, the box's units run by the user's
-manager and quadlet, the netns placement's rules and listeners in the
-pod's namespace, and the box's broker. Run on the proving host as an
-ordinary user, from a checkout:
+manager and quadlet, the namespace its netns unit holds, the netns
+placement's rules and listeners in it, and the box's broker. Run on the
+proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/box_rig.py [--keep] [--without-rules]
+                                    [--without-held-netns]
                                     [--broker-not-ready]
                                     [--listeners-required]
                                     [--without-reload] [--without-reopen]
@@ -18,7 +19,7 @@ The tool is the checkout's bin/moathut running the checkout's
 programs, or, with MOATERY_LIBEXEC=/usr/libexec/moatery, the installed
 moathut. riglib's two host facts need sudo and are undone at teardown.
 
-Beside the units `create` writes, the rig writes five drop-ins, and
+Beside the units `create` writes, the rig writes seven drop-ins, and
 removes them before `rm`:
 
   inspector SSL_CERT_FILE names the stub's certificate, which no system
@@ -32,8 +33,14 @@ removes them before `rm`:
             home; then it sleeps. That request is the window: nothing the
             workload sends may come before the rules, the listeners and
             the broker.
-  pod       for the fail rows, its ExecStartPost= is `false`; with
-            --without-rules, it is empty.
+  netns     for the fail rows, PATH puts an nft that fails ahead of the
+            system's for the holder; with --without-rules, one that loads
+            nothing.
+  pod       for outside's last row, an empty ExecStopPost=, so a stop
+            leaves the pod, as a crash of the manager can.
+  quadlet pod  with --without-held-netns, Network=pasta, and an
+            ExecStartPost= that loads the rules into the pod's own
+            namespace and writes its name where the box reads it.
   rotate    with --without-reopen, for the record's row only, its
             ExecStart= moves the record aside and signals nothing.
 
@@ -56,26 +63,33 @@ THE ROWS
             BindsTo= the pod; each
             listener is BindsTo= and After= the pod; the inspector pulls
             in the broker and is After= it, which is Type=notify and not
-            bound to the pod. The pod pulls in the record's rotation
-            timer, which is PartOf= it.
-  fail      with the pod's rules load failing, enter refuses and the
-            workload never ran: its first act left no line; stop leaves
-            no unit active.
+            bound to the pod. The pod is BindsTo= and After= the
+            namespace's unit, which is Type=notify and bound to nothing,
+            and pulls in the record's rotation timer, which is PartOf= it.
+  fail      with the namespace's rules load failing, enter refuses and
+            the workload never ran: its first act left no line; stop
+            leaves no unit active.
   first     at the box's first start, the workload's first request was
             inspected and brokered: the stub answered 200 and logged its
             path, and the record says forward under the credential.
   premise   root in the box, by sudo, holds no CAP_NET_ADMIN and is refused
             `ip link add`; the user holds no capability at all; the rules
-            are in the pod's namespace; the pod has no cgroup of its own.
+            are in the pod's namespace, which is the one the netns unit
+            holds; the pod has no cgroup of its own.
   enter     as the user, with the box's home as working directory, HOME
             and passwd home; from inside a mount, in the same directory
             inside; with --root, as uid 0. An interactive bash's prompt
             starts with the box's name, magenta, and red as root; the
             box's clock reads in the host's zone.
   warn      no shell enter opens warns, as the user or as root, and the
-            namespace's name the box reads is its own; a shell opened by
-            podman exec --privileged warns that it is not protected, and
-            its prompt says UNPROTECTED.
+            namespace's name the box reads is its own; nor does one
+            podman exec --privileged opens.
+  held      a shell podman exec --privileged opens, root with every
+            capability in the box's user namespace, as Ptyxis opens a
+            container's tab, is refused `ip link add` and `ip link set lo
+            down`; the host's nft with those credentials is refused
+            `nft flush ruleset`, and the rules stay; the pasta serving
+            the box has the arguments podman gives a stock pod's.
   home      the box's home is its own: a file in the user's home is absent
             inside, and one written inside is in the box's home on the
             host and not in the user's. The directories between the home
@@ -131,21 +145,25 @@ THE ROWS
             request's line is in a new record and not in the moved one.
   persist   after a workload restart, a file written outside the home is
             gone and one in it is there.
-  restart   N workload restarts, then N pod restarts, each pod restart a
-            new namespace with the rules in it: at every start the first
-            request was inspected.
-  stop      every unit inactive, the timer too, no pod, no container, and
-            ls says so; then enter starts it, and its first request was
-            inspected.
+  restart   N workload restarts, then N pod restarts, each pod restart
+            in the held namespace, with the rules in it: at every start
+            the first request was inspected.
+  stop      every unit inactive, the timer too, no pod, no container, the
+            namespace let go, and ls says so; then enter starts it, and
+            its first request was inspected.
   autostart the manager loaded the workload as wanted by default.target;
             stopped, the manager's start of default.target, as at login,
             starts it with the rules, and its first request was
             inspected.
-  outside   after `podman pod restart`, outside systemd, the namespace is
-            new and has no rules, and enter refuses it; a shell in it
-            warns that the box is not protected, and ls marks it
-            unprotected; stop, then enter, serves it again, and a shell
-            no longer warns.
+  outside   after `podman pod restart`, outside systemd, the pod is in the
+            held namespace, with the rules, enter serves it, and neither
+            a shell nor ls warns. With a table deleted from the host,
+            where the user is root over the namespace, ls marks it
+            unprotected and says so, and enter refuses it; stop, then
+            enter, serves it again. A container run by hand from the
+            box's image, prompt and mark warns that the box is not
+            protected. A pod the box left, started by podman while the
+            namespace's unit is stopped, does not start.
   like      create --like the box, as the loop left its policy: the
             new box has its policy, image and mounts, and neither its
             autostart nor its home; entered, it reads the :ro mount at
@@ -157,19 +175,25 @@ THE ROWS
             --autostart, default.target does not start it; rm --home removes
             it; then credential rm removes the credential.
 
-`--without-rules` empties the pod's ExecStartPost=, so the pod starts
-with no rules in its namespace: first, the premise that the rules are
-there, enter (which refuses) and every row through it, warn's first
-(enter refuses, and no rules load writes the namespace's name), dns, silent,
-quic, ssh, listed, unlisted, root, the broker's requests, rotate, the
-loop's rows that make a request or read one back, the record's
-rotation, the killed
-inspector's, and enter's, restart, autostart's, each enter after a stop
-with its first request, and outside's shell rows (no rules load writes
-the namespace's name, and ls never stops saying unprotected) must go
-red. (The killed inspector's row is red because an
-enter refused left the broker stopped, and the inspector's restart
-starts it: Wants=.)
+`--without-rules` puts an nft that loads nothing ahead of the system's
+for the holder, so the box starts with no rules in its namespace: first,
+the premise that the rules are there, enter (which refuses) and every
+row through it, warn's first (enter refuses), held's nft row (no rules
+to keep), dns, silent, quic, ssh, listed, unlisted, root, the broker's
+requests, rotate, the loop's rows that make a request or read one back,
+the record's rotation, the killed inspector's, and enter's, restart,
+autostart's, each enter after a stop with its first request, and
+outside's rows that enter serves the box must go red. (The killed
+inspector's row is red because an enter refused left the broker
+stopped, and the inspector's restart starts it: Wants=.)
+
+`--without-held-netns` lets the pod make its own namespace, as
+Network=pasta does, which its keep-id user namespace owns, and loads
+the rules into it at its start: held's rows that root with every
+capability in the box is refused, premise's that the pod's namespace is
+the held one, restart's that each pod restart keeps it, and outside's
+that `podman pod restart` keeps it and that a left pod does not start,
+must go red.
 
 `--listeners-required` adds `Requires=` on both listeners to the
 workload's drop-in, as its unit had before the policy loop: the loop's
@@ -239,6 +263,7 @@ from moathut.record import ROTATE_BYTES, rotated  # noqa
 
 BOX = "moatery-rig-box"
 UNIT = f"moathut-{BOX}"
+NETNS_SERVICE = f"{UNIT}-netns.service"
 POD_SERVICE = f"{UNIT}-pod.service"
 SERVICE = f"{UNIT}.service"
 INSPECT_SERVICE = f"{UNIT}-inspect.service"
@@ -246,8 +271,8 @@ RESOLVE_SERVICE = f"{UNIT}-resolve.service"
 BROKER_SERVICE = f"{UNIT}-broker.service"
 ROTATE_SERVICE = f"{UNIT}-rotate.service"
 ROTATE_TIMER = f"{UNIT}-rotate.timer"
-SERVICES = (POD_SERVICE, INSPECT_SERVICE, RESOLVE_SERVICE, BROKER_SERVICE,
-            SERVICE, ROTATE_SERVICE, ROTATE_TIMER)
+SERVICES = (NETNS_SERVICE, POD_SERVICE, INSPECT_SERVICE, RESOLVE_SERVICE,
+            BROKER_SERVICE, SERVICE, ROTATE_SERVICE, ROTATE_TIMER)
 LISTENERS = {INSPECT_SERVICE, RESOLVE_SERVICE}
 # docs/BOX.md's default.
 IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
@@ -265,13 +290,15 @@ TWIN_SHARE = SHARE.parent / TWIN
 TWIN_LOGS = LOGS.parent / TWIN
 QUADLET = HOME / ".config" / "containers" / "systemd"
 UNITS = HOME / ".config" / "systemd" / "user"
-UNIT_FILES = (QUADLET / f"{UNIT}.pod", QUADLET / f"{UNIT}.container",
-              UNITS / INSPECT_SERVICE, UNITS / RESOLVE_SERVICE,
-              UNITS / BROKER_SERVICE, UNITS / ROTATE_SERVICE,
-              UNITS / ROTATE_TIMER)
-LAID_OUT = (CONFIG / "policy.json", CONFIG / "bundle.pem",
-            CONFIG / "prompt.sh", ca_cert_path(STATE), LOGS, BOX_HOME,
-            BOX_HOME / ".bashrc", *UNIT_FILES)
+UNIT_FILES = (UNITS / NETNS_SERVICE, QUADLET / f"{UNIT}.pod",
+              QUADLET / f"{UNIT}.container", UNITS / INSPECT_SERVICE,
+              UNITS / RESOLVE_SERVICE, UNITS / BROKER_SERVICE,
+              UNITS / ROTATE_SERVICE, UNITS / ROTATE_TIMER)
+WRITTEN_WITH = (CONFIG / "prompt.sh", CONFIG / "containers.conf")
+LAID_OUT = (CONFIG / "policy.json", CONFIG / "bundle.pem", *WRITTEN_WITH,
+            ca_cert_path(STATE), LOGS, BOX_HOME, BOX_HOME / ".bashrc",
+            *UNIT_FILES)
+MARK = STATE / "netns"
 STATUS = STATE / "status.json"
 RESOLVE_STATUS = STATE / "resolve-status.json"
 RECORD = LOGS / "requests.log"
@@ -283,14 +310,31 @@ DESCRIBED = CREDENTIALS / f"{CREDENTIAL}.json"
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR")
                or f"/run/user/{os.getuid()}")
 BROKER_SOCKET = RUNTIME / "moathut" / BOX / "broker.sock"
+# Where the netns unit holds the box's namespace: a file on the host,
+# bound in podman's mount namespace.
+NAMESPACE = RUNTIME / "moathut-netns" / BOX
 
 DROP_INS = {"inspect": UNITS / f"{INSPECT_SERVICE}.d" / "rig.conf",
             "broker": UNITS / f"{BROKER_SERVICE}.d" / "rig.conf",
             "workload": QUADLET / f"{UNIT}.container.d" / "rig.conf",
+            "netns": UNITS / f"{NETNS_SERVICE}.d" / "rig.conf",
             "pod": UNITS / f"{POD_SERVICE}.d" / "rig.conf",
+            "quadlet pod": QUADLET / f"{UNIT}.pod.d" / "rig.conf",
             "rotate": UNITS / f"{ROTATE_SERVICE}.d" / "rig.conf"}
-FAILING_RULES = "[Service]\nExecStartPost=\nExecStartPost=/usr/bin/false\n"
-NO_RULES = "[Service]\nExecStartPost=\n"
+# An nft ahead of the system's on the holder's PATH: one that fails, and
+# one that loads nothing and says it did.
+NFT_FAILS = RIG / "box-nft-fails"
+NFT_LOADS_NOTHING = RIG / "box-nft-noop"
+HOLDER_PATH = "/usr/local/bin:/usr/bin:/usr/sbin"
+FAILING_RULES = f"[Service]\nEnvironment=PATH={NFT_FAILS}:{HOLDER_PATH}\n"
+NO_RULES = f"[Service]\nEnvironment=PATH={NFT_LOADS_NOTHING}:{HOLDER_PATH}\n"
+# With --without-held-netns, the pod makes its own namespace, which its
+# user namespace owns, and this loads the rules into it and names it
+# where the box reads it, as a pod's own start once did.
+OLD_RULES = RIG / "box-old-rules"
+# The pod's unit removes the pod when it stops; emptied, a stop leaves
+# the pod, as a crash of the manager can.
+POD_LEFT = "[Service]\nExecStopPost=\n"
 
 # Inside, the box's home is at the user's home's path.
 INSIDE = str(HOME)
@@ -382,6 +426,17 @@ QUIC_UDP = ("192.0.2.1", "443")
 SSH = "192.0.2.1:22"
 
 RULES = {"table inet moatery", "table netdev moatery"}
+
+OLD_RULES_SCRIPT = f"""\
+# written by tests/manual/box_rig.py: under podman unshare, the rules
+# into the pod's own namespace, and its name where the box reads it.
+from pathlib import Path
+from moathut.netns import load_rules, netns_id, pod_pid
+held = Path(f"/proc/{{pod_pid('{BOX}')}}/ns/net")
+load_rules(held)
+with open("{MARK}", "w") as mark:
+    mark.write(netns_id(held) + "\\n")
+"""
 
 SITECUSTOMIZE = """\
 # written by tests/manual/box_rig.py: the broker's interpreter waits
@@ -524,6 +579,47 @@ def tables(pid):
     return {line.strip() for line in out.splitlines() if line.strip()}
 
 
+def netns_of(pid):
+    """The namespace a process is in, as /proc names it, or None."""
+    if pid is None:
+        return None
+    return run(["podman", "unshare", "readlink", f"/proc/{pid}/ns/net"],
+               check=False).stdout.strip() or None
+
+
+def held():
+    """The namespace held at NAMESPACE, as /proc names it, or None."""
+    return run(["podman", "unshare", "nsenter", f"--net={NAMESPACE}",
+                "readlink", "/proc/self/ns/net"],
+               check=False).stdout.strip() or None
+
+
+def pasta_words(path):
+    """The arguments of the pasta serving the namespace at `path`, as
+    (option, value) pairs without `--netns PATH`, or None."""
+    for proc in Path("/proc").iterdir():
+        try:
+            argv = (proc / "cmdline").read_bytes().split(b"\0")[:-1]
+        except OSError:
+            continue
+        words = [w.decode() for w in argv]
+        # pasta.avx2, which pasta becomes where the CPU has it, keeps
+        # pasta's argv.
+        if not words or not Path(words[0]).name.startswith("pasta") \
+                or str(path) not in words:
+            continue
+        at = words.index("--netns")
+        words = words[1:at] + words[at + 2:]
+        pairs = []
+        for word in words:
+            if pairs and not word.startswith("-") and pairs[-1][1] is None:
+                pairs[-1] = (pairs[-1][0], word)
+            else:
+                pairs.append((word, None))
+        return sorted(pairs, key=str)
+    return None
+
+
 def counter(comment):
     pid = infra_pid()
     if pid is None:
@@ -651,7 +747,7 @@ def create_rows(autostart):
     dry = box(*words, "--dry-run", timeout=300)
     wrote = [str(p) for p in (CONFIG, *UNIT_FILES) if p.exists()]
     made = box(*words, timeout=300)
-    expected = set(UNIT_FILES) | {CONFIG / "prompt.sh"}
+    expected = set(UNIT_FILES) | set(WRITTEN_WITH)
     printed = dry_files(dry.stdout, expected)
     differ = sorted(str(p) for p, text in printed.items()
                     if not p.exists() or p.read_text() != text)
@@ -711,6 +807,16 @@ def chain_rows():
     row("chain: the pod pulls in both listeners",
         LISTENERS <= pod["Wants"] | pod["Requires"],
         f"Wants: {sorted(map(short, pod['Wants'] & LISTENERS))}")
+    held_by = loaded(NETNS_SERVICE)
+    bound = (held_by["BindsTo"] | held_by["PartOf"]
+             | held_by["Requires"]) & set(SERVICES)
+    row("chain: the pod is BindsTo= and After= the namespace's unit, which "
+        "is Type=notify and bound to nothing of the box's",
+        NETNS_SERVICE in pod["BindsTo"] & pod["After"]
+        and held_by["Type"] == {"notify"} and not bound,
+        f"in the pod's BindsTo {NETNS_SERVICE in pod['BindsTo']}, After "
+        f"{NETNS_SERVICE in pod['After']}; the namespace's Type "
+        f"{held_by['Type']}, bound to {sorted(map(short, bound))}")
     timer = loaded(ROTATE_TIMER)
     row("chain: the pod pulls in the record's rotation timer, which is "
         "PartOf= it and triggers the rotation",
@@ -734,8 +840,8 @@ def chain_rows():
 
 
 def fail_rows():
-    say("fail (the pod's rules load fails)")
-    write_drop_in("pod", FAILING_RULES)
+    say("fail (the namespace's rules load fails)")
+    write_drop_in("netns", FAILING_RULES)
     before = len(starts())
     entered = box("enter", BOX, "--", "true")
     # A workload that started writes its line within its curl's 10 s.
@@ -798,6 +904,10 @@ def premise_rows():
     found = tables(pid)
     row("premise: the rules are in the pod's namespace", RULES <= found,
         f"infra pid {pid}: {sorted(found) or 'no tables'}")
+    infra, holding = netns_of(pid), held()
+    row("premise: which is the one the netns unit holds",
+        infra is not None and infra == holding,
+        f"infra {infra!r}; held at {NAMESPACE}: {holding!r}")
     cgroup = run(["podman", "pod", "inspect", BOX, "--format",
                   "{{.CgroupPath}}"], check=False)
     row("premise: the pod has no cgroup of its own",
@@ -858,11 +968,68 @@ def warn_rows():
         f"warned: {[NOT_PROTECTED in s for s in said]}; mark {mark!r}, "
         f"inside {own!r}, infra {infra!r}")
     said, ps1 = interactive("--privileged")
-    row("warn: a shell podman exec --privileged opens warns that it is not "
-        "protected, and its prompt says UNPROTECTED",
-        "this shell is not protected by the moat" in said
-        and f"\u2b22 {BOX} UNPROTECTED" in ps1,
+    row("warn: nor does one podman exec --privileged opens, whose prompt "
+        "is the box's own: it cannot change the rules (held's rows)",
+        NOT_PROTECTED not in said and f"\u2b22 {BOX}" in ps1
+        and "UNPROTECTED" not in ps1,
         f"stderr {said.strip()[-200:]!r}; PS1 {ps1!r}")
+
+
+def held_rows():
+    """What Ptyxis opens a container's tab with, `podman exec
+    --privileged`: root with every capability, in the box's user
+    namespace, which does not own the network namespace."""
+    say("held")
+    refused = {}
+    for words in (["link", "add", "moatery-rig1", "type", "dummy"],
+                  ["link", "set", "lo", "down"]):
+        got = run(["podman", "exec", "--privileged", "--user", "0", BOX,
+                   "ip", *words], check=False, timeout=30)
+        refused[" ".join(words[:2])] = (
+            got.returncode != 0 and "Operation not permitted" in got.stderr)
+        if got.returncode == 0:
+            run(["podman", "exec", "--privileged", "--user", "0", BOX, "ip",
+                 *(["link", "del", "moatery-rig1"] if "add" in words
+                   else ["link", "set", "lo", "up"])], check=False)
+    row("held: a shell podman exec --privileged opens, as root, is refused "
+        "`ip link add` and `ip link set lo down`",
+        all(refused.values()), f"refused: {refused}")
+    # The image has no nft: the host's, with the credentials that exec
+    # gives, root with every capability in the box's user namespace.
+    pid = infra_pid()
+    flush = run(["podman", "unshare", "nsenter", "-t", str(pid), "-U", "-n",
+                 "nft", "flush", "ruleset"], check=False, timeout=30)
+    found = tables(pid)
+    row("held: root with every capability in the box's user namespace is "
+        "refused `nft flush ruleset`, and the rules are still there",
+        flush.returncode != 0 and "Operation not permitted" in flush.stderr
+        and RULES <= found,
+        f"rc={flush.returncode} {flush.stderr.strip()[-160:]}; "
+        f"{sorted(found) or 'no tables'}")
+    if not RULES <= found:
+        say("  the rules are gone: the pod restarted to load them again")
+        before = len(starts())
+        run(["systemctl", "--user", "restart", POD_SERVICE], check=False,
+            timeout=120)
+        await_start(before)
+    stock = "moatery-rig-stock"
+    run(["podman", "pod", "rm", "-f", "-i", stock], check=False)
+    made = run(["podman", "pod", "create", "--name", stock,
+                "--userns=keep-id", "--network", "pasta",
+                "--share-parent=false"], check=False, timeout=120)
+    run(["podman", "pod", "start", stock], check=False, timeout=120)
+    infra = run(["podman", "pod", "inspect", stock, "--format",
+                 "{{.InfraContainerID}}"], check=False).stdout.strip()
+    sandbox = run(["podman", "inspect", "--format",
+                   "{{.NetworkSettings.SandboxKey}}", infra],
+                  check=False).stdout.strip()
+    theirs = pasta_words(sandbox) if sandbox else None
+    ours = pasta_words(NAMESPACE)
+    run(["podman", "pod", "rm", "-f", "-i", stock], check=False, timeout=120)
+    row("held: the box's pasta has the arguments podman gives a pod's",
+        made.returncode == 0 and theirs is not None and ours == theirs,
+        f"podman's: {theirs}; the box's: {ours}"
+        + (f"; {made.stderr.strip()[-160:]}" if made.returncode else ""))
 
 
 def home_rows(tag):
@@ -1091,8 +1258,9 @@ def container_started():
 
 
 def loop_invocations():
-    return {u: invocation(u) for u in (POD_SERVICE, SERVICE, INSPECT_SERVICE,
-                                       RESOLVE_SERVICE, BROKER_SERVICE)}
+    return {u: invocation(u) for u in (NETNS_SERVICE, POD_SERVICE, SERVICE,
+                                       INSPECT_SERVICE, RESOLVE_SERVICE,
+                                       BROKER_SERVICE)}
 
 
 def refused_lines():
@@ -1251,8 +1419,9 @@ def loop_rows():
     after = loop_invocations()
     moved = sorted(short(u) for u in before if before[u] != after[u])
     same = container_started() == started
-    row("loop: nothing restarted: not the listeners, the pod, the workload "
-        "or the broker", moved == [] and same and started != "",
+    row("loop: nothing restarted: not the listeners, the namespace, the "
+        "pod, the workload or the broker",
+        moved == [] and same and started != "",
         f"restarted: {moved}; the workload's container "
         f"{'the same' if same else 'replaced'}")
     enforced = status_digest()
@@ -1473,13 +1642,18 @@ def restart_rows(count, tag):
     for i in range(1, count + 1):
         reset_failed()
         pid, before = infra_pid(), len(starts())
+        was = netns_of(pid)
         run(["systemctl", "--user", "restart", POD_SERVICE], check=False)
         seen = await_start(before)
         now = infra_pid()
         found = tables(now)
-        row(f"restart: pod restart {i} is a new namespace with the rules "
-            "in it", now not in (None, pid) and RULES <= found,
-            f"infra pid {pid} -> {now}: {sorted(found) or 'no tables'}")
+        row(f"restart: pod restart {i} keeps the held namespace, with the "
+            "rules in it",
+            now not in (None, pid) and netns_of(now) == was == held()
+            and RULES <= found,
+            f"infra pid {pid} -> {now}, namespace {was} -> "
+            f"{netns_of(now)}, held {held()}: "
+            f"{sorted(found) or 'no tables'}")
         start_row(f"restart: after pod restart {i}, the first request was "
                   "inspected", seen)
 
@@ -1489,12 +1663,14 @@ def stop_rows():
     stopped = box("stop", BOX)
     now, mine = states(), listed()
     row("stop: every unit inactive, the timer too, no pod, no container, "
-        "and ls says so",
+        "the namespace let go, and ls says so",
         stopped.returncode == 0 and set(now.values()) == {"inactive"}
         and not exists("pod") and not exists("container")
+        and not NAMESPACE.exists()
         and mine is not None and mine[1:2] == ["inactive"],
         f"rc={stopped.returncode}; units {now}; pod {exists('pod')}, "
-        f"container {exists('container')}; ls: {mine}")
+        f"container {exists('container')}; namespace's file "
+        f"{NAMESPACE.exists()}; ls: {mine}")
     before = len(starts())
     entered = box("enter", BOX, "--", "true")
     seen, mine = await_start(before), listed()
@@ -1527,52 +1703,85 @@ def autostart_rows():
 
 
 def outside_rows():
-    say("outside systemd (podman pod restart)")
-    pid, before = infra_pid(), len(starts())
+    say("outside systemd")
+    pid, before, was = infra_pid(), len(starts()), held()
     run(["podman", "pod", "restart", BOX], check=False, timeout=120)
     seen = await_start(before)
     if seen:
-        say(f"  the workload's first request in the new namespace: "
-            f"http={seen[1:2]} (docs/BOX.md, What is not closed)")
+        say(f"  the workload's first request after it: http={seen[1:2]}")
     now = infra_pid()
     found = tables(now)
     entered = box("enter", BOX, "--", "true")
-    row("outside: after podman pod restart the namespace is new and has "
-        "no rules, and enter refuses it",
-        now not in (None, pid) and not RULES & found
-        and entered.returncode != 0
-        and "no moatery rules" in entered.stderr,
-        f"infra pid {pid} -> {now}: {sorted(found) or 'no tables'}; "
-        f"enter rc={entered.returncode} {entered.stderr.strip()[-160:]}")
+    row("outside: after podman pod restart the pod is in the held "
+        "namespace, with the rules, and enter serves it",
+        now not in (None, pid) and netns_of(now) == was is not None
+        and RULES <= found and entered.returncode == 0,
+        f"infra pid {pid} -> {now}, namespace {was} -> {netns_of(now)}: "
+        f"{sorted(found) or 'no tables'}; enter rc={entered.returncode} "
+        f"{entered.stderr.strip()[-160:]}")
     said, ps1 = interactive()
-    row("outside: a shell in it warns that the box is not protected, and "
-        "its prompt says UNPROTECTED",
-        f"box {BOX} is not protected by the moat" in said
-        and f"\u2b22 {BOX} UNPROTECTED" in ps1,
-        f"stderr {said.strip()[-200:]!r}; PS1 {ps1!r}")
+    mine = listed()
+    row("outside: and a shell in it does not warn, nor ls",
+        NOT_PROTECTED not in said and "UNPROTECTED" not in ps1
+        and mine is not None and "unprotected" not in mine,
+        f"stderr {said.strip()[-200:]!r}; PS1 {ps1!r}; ls: {mine}")
+
+    # The user is root over the namespace, from the host: the moat does
+    # not stand against the user, and ls and enter say what is missing.
+    run(["podman", "unshare", "nsenter", f"--net={NAMESPACE}", "nft",
+         "delete", "table", "inet", "moatery"], check=False)
     listing = box("ls")
     mine = listed()
-    row("outside: ls marks it unprotected, and says so",
+    entered = box("enter", BOX, "--", "true")
+    row("outside: with a table deleted from the host, ls marks the box "
+        "unprotected and says so, and enter refuses it",
         mine is not None and mine[-1] == "unprotected"
-        and f"box {BOX} is not protected" in listing.stderr,
-        f"ls: {mine}; stderr {listing.stderr.strip()[-200:]!r}")
+        and f"box {BOX} is not protected" in listing.stderr
+        and entered.returncode != 0 and "no moatery rules" in entered.stderr,
+        f"ls: {mine}; stderr {listing.stderr.strip()[-160:]!r}; enter "
+        f"rc={entered.returncode} {entered.stderr.strip()[-160:]}")
     box("stop", BOX)
     # After the stop no workload is left to write a line.
     before = len(starts())
     entered = box("enter", BOX, "--", "true")
     seen = await_start(before)
-    found = tables(infra_pid())
-    row("outside: stop, then enter, serves it again with the rules",
-        entered.returncode == 0 and RULES <= found,
-        f"rc={entered.returncode} {entered.stderr.strip()[-200:]}; "
-        f"{sorted(found) or 'no tables'}")
-    said, ps1 = interactive()
-    mine = listed()
-    row("outside: and a shell no longer warns, nor ls",
-        NOT_PROTECTED not in said and "UNPROTECTED" not in ps1
+    found, mine = tables(infra_pid()), listed()
+    row("outside: stop, then enter, serves it again with the rules, and ls "
+        "no longer marks it",
+        entered.returncode == 0 and RULES <= found
         and mine is not None and "unprotected" not in mine,
-        f"stderr {said.strip()[-200:]!r}; PS1 {ps1!r}; ls: {mine}")
+        f"rc={entered.returncode} {entered.stderr.strip()[-200:]}; "
+        f"{sorted(found) or 'no tables'}; ls: {mine}")
     start_row("outside: and its first request was inspected", seen)
+
+    got = run(["podman", "run", "--rm", "--network", "none",
+               "-v", f"{CONFIG / 'prompt.sh'}:/etc/profile.d/moathut.sh:ro,z",
+               "-v", f"{MARK}:/run/moathut/netns:ro,z", IMAGE,
+               "bash", "--rcfile", "/etc/profile.d/moathut.sh", "-ic",
+               'printf "%s\\n" "$PS1"'], check=False, timeout=120)
+    row("outside: a container run by hand from the box's image and files "
+        "warns that the box is not protected, and its prompt says "
+        "UNPROTECTED",
+        f"box {BOX} is not protected by the moat" in got.stderr
+        and f"\u2b22 {BOX} UNPROTECTED" in got.stdout,
+        f"rc={got.returncode} stderr {got.stderr.strip()[-200:]!r}; PS1 "
+        f"{got.stdout.strip()!r}")
+
+    write_drop_in("pod", POD_LEFT)
+    box("stop", BOX)
+    left = exists("pod")
+    started = run(["podman", "pod", "start", BOX], check=False, timeout=60)
+    running = infra_pid()
+    row("outside: a pod the box left, started by podman with the "
+        "namespace's unit stopped, does not start: nothing of it runs",
+        left and started.returncode != 0 and running is None
+        and not exists("container"),
+        f"pod left {left}; start rc={started.returncode} "
+        f"{(started.stderr or started.stdout).strip()[-200:]}; infra pid "
+        f"{running}")
+    run(["podman", "pod", "rm", "-f", "-i", BOX], check=False, timeout=60)
+    remove_drop_in("pod")
+    reload()
 
 
 def load_state(unit):
@@ -1694,15 +1903,24 @@ def probe(args, tag, secret):
         say("  the workload Requires= the listeners, as asked")
     fail_rows()
     if args.without_rules:
-        write_drop_in("pod", NO_RULES)
-        say("  the pod's rules NOT loaded, as asked")
+        write_drop_in("netns", NO_RULES)
+        say("  the namespace's rules NOT loaded, as asked")
     else:
-        remove_drop_in("pod")
+        remove_drop_in("netns")
         reload()
+    if args.without_held_netns:
+        pythonpath = "".join(f"Environment=PYTHONPATH={v}\n"
+                             for v in PROGRAM_ENV.values())
+        write_drop_in("quadlet pod", (
+            "[Pod]\nNetwork=\nNetwork=pasta\n[Service]\n" + pythonpath
+            + f"ExecStartPost=podman unshare {sys.executable} -s "
+              f"{OLD_RULES}\n"))
+        say("  the pod makes its own namespace, as asked")
     reset_failed()
     first_rows()
     premise_rows()
     enter_rows(tag)
+    held_rows()
     home_rows(tag)
     dns_rows()
     drop_rows()
@@ -1739,6 +1957,11 @@ def clear_leftovers():
     for path in (MARKER, HOME / WRITTEN, SEALED, DESCRIBED):
         path.unlink(missing_ok=True)
     shutil.rmtree(SLOW, ignore_errors=True)
+    for path in (NFT_FAILS, NFT_LOADS_NOTHING):
+        shutil.rmtree(path, ignore_errors=True)
+    OLD_RULES.unlink(missing_ok=True)
+    run(["podman", "pod", "rm", "-f", "-i", "moatery-rig-stock"],
+        check=False)
 
 
 def material():
@@ -1764,6 +1987,14 @@ def material():
         editor.chmod(0o755)
     SLOW.mkdir(parents=True, exist_ok=True)
     (SLOW / "sitecustomize.py").write_text(SITECUSTOMIZE)
+    for directory, body in ((NFT_FAILS, "echo 'box_rig: nft fails, as "
+                                        "asked' >&2\nexit 1\n"),
+                            (NFT_LOADS_NOTHING, "cat > /dev/null\n")):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "nft").write_text(
+            "#!/bin/sh\n# written by tests/manual/box_rig.py\n" + body)
+        (directory / "nft").chmod(0o755)
+    OLD_RULES.write_text(OLD_RULES_SCRIPT)
     tag = os.urandom(4).hex()
     SUBDIR.mkdir(parents=True)
     READONLY.mkdir(parents=True)
@@ -1782,8 +2013,10 @@ def teardown(keep):
         for name, config in ((BOX, CONFIG), (TWIN, TWIN_CONFIG)):
             if (config / "box.json").exists():
                 box("rm", name, "--home")
-        for path in (PROJECT, READONLY, SLOW, TWIN_LOGS):
+        for path in (PROJECT, READONLY, SLOW, TWIN_LOGS, NFT_FAILS,
+                     NFT_LOADS_NOTHING):
             shutil.rmtree(path, ignore_errors=True)
+        OLD_RULES.unlink(missing_ok=True)
         for path in (MARKER, SEALED, DESCRIBED):
             path.unlink(missing_ok=True)
     riglib.stop_children()
@@ -1798,8 +2031,13 @@ def main():
     ap.add_argument("--keep", action="store_true",
                     help="leave the box and its drop-ins for inspection")
     ap.add_argument("--without-rules", action="store_true",
-                    help="empty the pod's ExecStartPost=; the rows that "
-                         "need the rules must go red")
+                    help="give the namespace's unit an nft that loads "
+                         "nothing; the rows that need the rules must go "
+                         "red")
+    ap.add_argument("--without-held-netns", action="store_true",
+                    help="let the pod make its own namespace, with the "
+                         "rules loaded into it; held's, the held "
+                         "namespace's and outside's rows must go red")
     ap.add_argument("--broker-not-ready", action="store_true",
                     help="make the broker's unit Type=simple; the first "
                          "request after each start of it must go red")
@@ -1857,6 +2095,11 @@ def main():
             "or read one back, the record's rotation, the killed "
             "inspector's and enter's, restart, autostart's, each enter "
             "after a stop, and outside's shell rows are expected red")
+    if args.without_held_netns:
+        expected.append(
+            "--without-held-netns: held's refusals, premise's held "
+            "namespace, restart's pod restarts, and outside's restart and "
+            "left pod are expected red")
     if args.broker_not_ready:
         expected.append(
             "--broker-not-ready: first, the premise of a stop while the "

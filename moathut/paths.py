@@ -9,6 +9,10 @@ from typing import NamedTuple
 # once: no dots, no leading or trailing dash.
 NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?")
 
+# In the user's runtime directory: where each box's network namespace is
+# held, by the box's name.
+NETNS_DIR = "moathut-netns"
+
 
 class Dirs(NamedTuple):
     home: Path
@@ -100,6 +104,11 @@ class Box(NamedTuple):
         return self.config / "prompt.sh"
 
     @property
+    def containers_conf(self):
+        """What podman reads last for the pod."""
+        return self.config / "containers.conf"
+
+    @property
     def state(self):
         return self.dirs.state / "moatery" / "box" / self.name
 
@@ -139,6 +148,13 @@ class Box(NamedTuple):
         return self.dirs.runtime / "moathut" / self.name
 
     @property
+    def namespace(self):
+        """Where the box's network namespace is held: bound there in
+        podman's mount namespace, which `podman unshare` joins, and an
+        empty file in the host's."""
+        return self.dirs.runtime / NETNS_DIR / self.name
+
+    @property
     def broker_socket(self):
         return self.runtime / "broker.sock"
 
@@ -150,6 +166,10 @@ class Box(NamedTuple):
     def container_file(self):
         return (self.dirs.config / "containers" / "systemd"
                 / f"{self.unit}.container")
+
+    @property
+    def netns_file(self):
+        return self.dirs.config / "systemd" / "user" / self.netns_service
 
     @property
     def inspect_file(self):
@@ -173,12 +193,16 @@ class Box(NamedTuple):
 
     @property
     def unit_files(self):
-        return (self.pod_file, self.container_file, self.inspect_file,
-                self.resolve_file, self.broker_file, self.rotate_file,
-                self.rotate_timer_file)
+        return (self.netns_file, self.pod_file, self.container_file,
+                self.inspect_file, self.resolve_file, self.broker_file,
+                self.rotate_file, self.rotate_timer_file)
 
     # quadlet names the services it generates: NAME.pod gives
     # NAME-pod.service, NAME.container gives NAME.service.
+    @property
+    def netns_service(self):
+        return f"{self.unit}-netns.service"
+
     @property
     def pod_service(self):
         return f"{self.unit}-pod.service"
@@ -209,6 +233,6 @@ class Box(NamedTuple):
 
     @property
     def services(self):
-        return (self.pod_service, self.service, self.inspect_service,
-                self.resolve_service, self.broker_service,
-                self.rotate_service, self.rotate_timer)
+        return (self.netns_service, self.pod_service, self.service,
+                self.inspect_service, self.resolve_service,
+                self.broker_service, self.rotate_service, self.rotate_timer)

@@ -1,16 +1,18 @@
-"""A box's units as text: the pod and the workload for quadlet, the
-inspector, the responder and, if its policy names a credential, the
-broker for the user's manager.
+"""A box's units as text: its network namespace's, the inspector's,
+the responder's and, if its policy names a credential, the broker's
+for the user's manager; the pod and the workload for quadlet.
 
 What starts what: `enter` starts the workload's unit, which Wants= and
 is After= the two listener units; they are BindsTo= and After= the
-pod's, which is active only once its ExecStartPost= has loaded the
-rules. The pod Wants= the listeners, so a restart of the pod brings
-them back into its new namespace, and the timer that rotates the
-record, which is PartOf= it. The inspector Wants= and is After=
-the broker, which is ready once it is listening, and holds nothing of
-the namespace: a restart of the pod does not restart it, and `stop`
-stops it.
+pod's, which is BindsTo= and After= the namespace's, active only once
+the namespace is connected and has the rules. The pod joins that
+namespace, so a restart of the pod keeps it, rules and all; the pod
+Wants= the listeners, so a restart brings them back, and the timer that
+rotates the record, which is PartOf= it. A stop of the namespace's unit
+stops the pod, and what is bound to it. The inspector Wants= and is
+After= the broker, which is ready once it is listening, and holds
+nothing of the namespace: a restart of the pod does not restart it, and
+`stop` stops it.
 
 Nothing Requires= a listener, whose restart would restart what does:
 a listener that fails is restarted, and not the workload. Without them
@@ -25,8 +27,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 from .mounts import Mount
-from .netns import PID
-from .paths import sealed
+from .netns import DNS, PID
+from .paths import NETNS_DIR, sealed
 
 # podman's default set, the most root in a box holds; none is
 # CAP_NET_ADMIN. The unit drops every other capability, so a
@@ -145,25 +147,58 @@ def _tool(settings, *args):
     return [*settings.tool, "unit", *args]
 
 
-def pod_unit(box, settings):
+def netns_unit(box, settings):
     return f"""\
-# moatery box {box.name}: the pod, holding the network namespace. Its
-# start loads the rules; the listeners and the workload start after.
+# moatery box {box.name}: its network namespace, made in the user
+# namespace `podman unshare` is root in, of which the box's is a child,
+# and held while this runs. pasta connects it and the rules go in before
+# the pod joins it. Type=notify: started once they are in, when the
+# process that holds it is named the main one. Stopped, it lets the
+# namespace go, and pasta with it.
 
 [Unit]
-Description=moatery box {box.name}: pod and rules
+Description=moatery box {box.name}: network namespace and rules
+
+[Service]
+Type=notify
+NotifyAccess=all
+{_environment(settings)}ExecStart={_exec_line(
+    ["podman", "unshare", *_tool(settings, "netns", box.name)])}
+"""
+
+
+def pod_unit(box, settings):
+    return f"""\
+# moatery box {box.name}: the pod, in the network namespace the box's
+# netns unit holds, which the pod's user namespace does not own. The
+# listeners and the workload start after it.
+
+[Unit]
+Description=moatery box {box.name}: pod
+BindsTo={box.netns_service}
+After={box.netns_service}
 Wants={box.inspect_service} {box.resolve_service} {box.rotate_timer}
 
 [Pod]
 PodName={box.name}
-Network=pasta
+Network=ns:%t/{NETNS_DIR}/{box.name}
+DNS={DNS}
 UserNS=keep-id
 ExitPolicy=continue
 PodmanArgs=--hosts-file=image --share-parent=false
 
 [Service]
-{_environment(settings)}ExecStartPost={_exec_line(
-    _tool(settings, "rules", box.name))}
+Environment={_quoted(f"CONTAINERS_CONF_OVERRIDE={box.containers_conf}")}
+"""
+
+
+def containers_conf(box):
+    return f"""\
+# moatery box {box.name}: read last by podman for the pod. Its infra
+# container joins a network namespace its user namespace does not own,
+# where podman's default net sysctls cannot be set.
+[containers]
+default_sysctls = []
 """
 
 
@@ -348,58 +383,39 @@ OnUnitActiveSec=10min
 
 
 def prompt(box):
-    """Read by every shell in the box. An interactive one the moat does
-    not cover says so: one holding CAP_NET_ADMIN, which only `podman
-    exec --privileged` gives, can change the rules, and one in another
-    namespace than the rules were loaded into has none. Then bash's
-    prompt, the box's name first: magenta, red as root, white on red
-    when not covered. Fedora's /etc/bashrc and the home's .bashrc both
-    read it, and the second changes nothing."""
+    """Read by every shell in the box. An interactive one in another
+    namespace than the rules were loaded into, as a container started
+    from the box's files by hand is, says the moat does not cover it.
+    Then bash's prompt, the box's name first: magenta, red as root,
+    white on red when not covered. Fedora's /etc/bashrc and the home's
+    .bashrc both read it, and the second changes nothing."""
     name = box.name
     warn = r"printf '\033[1;31m%s\033[0m\n  %s\n  %s\n  %s\n  %s\n'"
     return f"""\
 # moatery box {name}: a warning in a shell the moat does not cover, and
 # the box's name before bash's prompt.
-_moathut_why=
+_moathut_unprotected=
 case $- in
 *i*)
     if [ -z "${{_moathut_checked:-}}" ]; then
         _moathut_checked=1
-        # CAP_NET_ADMIN is bit 12 of the bounding set.
-        while read -r _moathut_key _moathut_value; do
-            [ "$_moathut_key" = CapBnd: ] || continue
-            case $_moathut_value in *[!0-9a-fA-F]*|'') continue ;; esac
-            if [ $(( 0x$_moathut_value >> 12 & 1 )) = 1 ]; then
-                _moathut_why=privileged
-            fi
-        done < /proc/self/status
         if [ -s {MARK_PATH} ] &&
                 [ "$(cat {MARK_PATH})" != "$(readlink /proc/self/ns/net)" ]
         then
-            _moathut_why="$_moathut_why namespace"
-        fi
-        case $_moathut_why in *privileged*)
-            {warn} \\
-                'moathut: this shell is not protected by the moat.' \\
-                'It was opened with podman exec --privileged, as Ptyxis' \\
-                "opens a container's tabs. It can change the box's rules," \\
-                'so what runs in it can reach the network uninspected.' \\
-                'Open shells in the box with: moathut enter {name}' >&2 ;;
-        esac
-        case $_moathut_why in *namespace*)
+            _moathut_unprotected=1
             {warn} \\
                 'moathut: box {name} is not protected by the moat.' \\
                 'It was started outside moathut, so its network has none' \\
                 "of the moat's rules: what runs in it reaches the network" \\
                 'uninspected. On the host, run moathut stop {name}' \\
-                'and then moathut enter {name}.' >&2 ;;
-        esac
+                'and then moathut enter {name}.' >&2
+        fi
     fi ;;
 esac
 if [ -n "${{BASH_VERSION:-}}" ] && [ -n "${{PS1:-}}" ]; then
     case $PS1 in
     *'⬢ {name}'*) ;;
-    *) if [ -n "$_moathut_why" ]; then
+    *) if [ -n "$_moathut_unprotected" ]; then
            _moathut='1;37;41'; _moathut_tag=' UNPROTECTED'
        elif [ "$EUID" = 0 ]; then _moathut='1;31'; _moathut_tag=
        else _moathut='35'; _moathut_tag=
@@ -409,14 +425,15 @@ if [ -n "${{BASH_VERSION:-}}" ] && [ -n "${{PS1:-}}" ]; then
        unset _moathut _moathut_tag ;;
     esac
 fi
-unset _moathut_why _moathut_key _moathut_value
+unset _moathut_unprotected
 """
 
 
 def render(box, settings, broker):
     """Unit file path to text, for every unit the box has: the broker's
     only if it has a broker."""
-    units = {box.pod_file: pod_unit(box, settings),
+    units = {box.netns_file: netns_unit(box, settings),
+             box.pod_file: pod_unit(box, settings),
              box.container_file: container_unit(box, settings, broker),
              box.inspect_file: inspect_unit(box, settings, broker),
              box.resolve_file: resolve_unit(box, settings),

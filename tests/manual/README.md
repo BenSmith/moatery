@@ -466,14 +466,15 @@ Outside the rig, the same day, two more ways to hold a VM:
 
 `docs/BOX.md`: `moathut credential add`, `create`, `enter`, `log`,
 `allow`, `policy`, `stop` and `rm`, the box's units run by the user's
-manager and quadlet, the netns placement's rules and listeners in the
-pod's namespace, and the box's broker.
+manager and quadlet, the namespace its netns unit holds, the netns
+placement's rules and listeners in it, and the box's broker.
 The tool is the checkout's `bin/moathut`, or with
 `MOATERY_LIBEXEC=/usr/libexec/moatery` the installed one.
 
 ```bash
 python3 tests/manual/box_rig.py                     # every row green
 python3 tests/manual/box_rig.py --without-rules     # must go red
+python3 tests/manual/box_rig.py --without-held-netns  # must go red
 python3 tests/manual/box_rig.py --broker-not-ready  # must go red
 python3 tests/manual/box_rig.py --listeners-required  # must go red
 python3 tests/manual/box_rig.py --without-reload    # must go red
@@ -482,13 +483,17 @@ python3 tests/manual/box_rig.py --without-autostart  # must go red
 python3 tests/manual/box_rig.py --restarts 10       # more restarts of each
 ```
 
-The fixture is riglib's, and five drop-ins beside the units `create`
+The fixture is riglib's, and seven drop-ins beside the units `create`
 writes, removed before `rm`: the inspector and the broker trust the
 stub's certificate, and under `--without-reload` the inspector's unit
 has no `ExecReload=`; the broker's interpreter sleeps 3 s before it runs,
 so its start has a window, and under `--broker-not-ready` its unit is
-Type=simple; the pod's rules load fails, for two rows, or is empty,
-under `--without-rules`; and the workload's `Exec=` is a script whose
+Type=simple; the namespace's unit finds an nft that fails ahead of the
+system's, for two rows, or one that loads nothing, under
+`--without-rules`; the pod's unit keeps the pod at its stop, for one
+row; under `--without-held-netns` the pod makes its own namespace, and
+loads the rules into it at its start; and the workload's `Exec=` is a
+script whose
 first act at every start is a request to the provider, with a nonce in
 its path, recorded in the box's home, and under `--listeners-required`
 its unit `Requires=` both listeners, as it did before the policy loop;
@@ -506,14 +511,21 @@ apart, long enough for an `allow` to land in it.
 files `create` lays out, and nothing started; the box is made with
 `--autostart`, and `ls` says so. The chain as the manager
 loaded it: the workload wants the listeners and requires neither, the
-broker is Type=notify and bound to nothing, and the pod pulls in the
-record's rotation timer, which is `PartOf=` it. A failing rules
+broker is Type=notify and bound to nothing, the pod is bound to the
+namespace's unit, which is Type=notify and bound to nothing of the
+box's, and the pod pulls in the record's rotation timer, which is
+`PartOf=` it. A failing rules
 load starts nothing: `enter` refuses, the workload's first act never
 happened, and `stop` leaves nothing active. The first request, brokered,
 at the first start, at every workload restart and pod restart, and
 after `stop` and `enter`. Root in the box holds no `CAP_NET_ADMIN` and
-the user no capability; the rules are in the pod's namespace; the pod
-has no cgroup. `enter`'s user, home, working directory and `--root`.
+the user no capability; the rules are in the pod's namespace, which is
+the one the netns unit holds; the pod has no cgroup. Root in a shell
+`podman exec --privileged` opens is refused `ip link add` and `ip link
+set lo down`, and the host's nft with those credentials is refused
+`nft flush ruleset`, the rules staying; that shell does not warn; the
+box's pasta has the arguments podman gives a stock pod's. Each pod
+restart keeps the held namespace. `enter`'s user, home, working directory and `--root`.
 The box's home is not the user's, and the directories between it and a
 mount in it are the user's. A `:ro` mount. The host's hosts file is not
 the box's. riglib's DNS rows, the silent drop, quic, and TCP 22 dropped.
@@ -550,8 +562,13 @@ the home is gone after a restart. Autostart: the manager loaded the
 workload as wanted by `default.target`, and with the box stopped, its
 start of `default.target`, which is what a login or a lingering boot
 does, starts the box with the rules, and the first request is
-inspected; a box made without `--autostart` it does not start. After `podman pod restart` the namespace has no rules and
-`enter` refuses it, and `stop` then `enter` serves it again. `credential
+inspected; a box made without `--autostart` it does not start. After
+`podman pod restart` the pod is in the held namespace, with the rules,
+and `enter` serves it; with a table deleted from the host, `ls` marks
+the box unprotected and `enter` refuses it, and `stop` then `enter`
+serves it again; a container run by hand from the box's image, prompt
+and mark warns; a pod the box left does not start while the namespace's
+unit is stopped. `credential
 rm` is refused while the box names the credential. `rm` leaves no unit,
 pod or container, nor the broker's socket, and keeps the home and the
 record; `create`, with a policy naming no credential, finds the home
