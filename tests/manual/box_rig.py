@@ -57,7 +57,8 @@ THE ROWS
 
   credential  add seals the key: neither file holds it, and ls lists it.
   create    --dry-run first wrote nothing and printed each file create
-            then wrote, as it wrote it; the files docs/BOX.md lists are
+            then wrote, as it wrote it, but the SELinux level, drawn at
+            each; the files docs/BOX.md lists are
             there, with a .bashrc in the home, and nothing started; the
             box is made with --autostart, and ls says so.
   chain     the manager loaded the order: the workload Wants= both
@@ -104,6 +105,10 @@ THE ROWS
             host and not in the user's. The directories between the home
             and a mount inside it are the user's to write in.
   mount     a :ro mount is at the DST it was given, and read-only.
+  label     the workload runs at the box's level, and its home, bundle,
+            prompt and mark are labelled at it; its /dev/shm, the pod's,
+            is writable; a container at podman's own level is refused the
+            box's home, which one at the box's level reads.
   hosts     the host's hosts file, which has the rig's line for the
             provider, is not the box's.
   dns       riglib's rows, asked by the user in the box.
@@ -175,8 +180,10 @@ THE ROWS
             namespace's unit is stopped, does not start.
   like      create --like the box, as the loop left its policy, with
             --seccomp debug: the new box has its policy, image and
-            mounts, and neither its autostart nor its home; entered, it
-            reads the :ro mount at its DST, and under debug ptrace
+            mounts, and neither its autostart, its home nor its level;
+            entered, it reads the :ro mount at its DST, and what the box,
+            entered as well, writes in their shared mount; under debug
+            ptrace
             reaches the kernel and a namespace is refused still; rm
             --home leaves nothing of it.
   rm        credential rm is refused while the box names it; no unit, pod
@@ -386,6 +393,7 @@ FOLLOWED = RIG / "box-log-followed"
 SLOW = RIG / "box-slow"
 PROJECT = RIG / "box-project"
 SUBDIR = PROJECT / "sub"
+SHARED = ".moatery-rig-shared"
 READONLY = RIG / "box-ro"
 READONLY_AT = "/srv/moatery-rig-ro"
 STUB_LOG = RIG / "stub.log"
@@ -816,6 +824,10 @@ def dry_files(text, paths):
     return {k: v.removesuffix("\n") for k, v in files.items()}
 
 
+def unlevelled(text):
+    return re.sub(r"\bs0:c\d+,c\d+\b", "LEVEL", text)
+
+
 def create_rows(autostart):
     say("create")
     words = ("create", BOX, "--policy", str(POLICY),
@@ -828,7 +840,8 @@ def create_rows(autostart):
     expected = set(UNIT_FILES) | set(WRITTEN_WITH)
     printed = dry_files(dry.stdout, expected)
     differ = sorted(str(p) for p, text in printed.items()
-                    if not p.exists() or p.read_text() != text)
+                    if not p.exists()
+                    or unlevelled(p.read_text()) != unlevelled(text))
     row("create: --dry-run wrote nothing, and printed each file create "
         "wrote, as it wrote it",
         dry.returncode == 0 and not wrote and printed and not differ
@@ -1923,6 +1936,57 @@ def load_state(unit):
                 unit], check=False).stdout.strip()
 
 
+def label_of(path):
+    try:
+        return os.getxattr(path, "security.selinux").rstrip(b"\0").decode()
+    except OSError as exc:
+        return exc.strerror
+
+
+def box_level(config=CONFIG):
+    path = config / "box.json"
+    return json.loads(path.read_text()).get("level") if path.exists() \
+        else None
+
+
+def label_rows():
+    """No other box runs at the box's level, so what is labelled with it
+    is the box's alone; podman's own levels are drawn from the same
+    categories, two of 1024, and one drawn twice is a 1 in 523776."""
+    say("label")
+    level = box_level()
+    current = exec_in(["cat", "/proc/self/attr/current"]).stdout
+    current = current.strip("\0\n ")
+    own = {p.name: label_of(p) for p in
+           (BOX_HOME, CONFIG / "bundle.pem", CONFIG / "prompt.sh", MARK)}
+    row("label: the workload runs at the box's level, and its home, "
+        "bundle, prompt and mark are labelled at it",
+        bool(level) and current == f"system_u:system_r:container_t:{level}"
+        and all(v == f"system_u:object_r:container_file_t:{level}"
+                for v in own.values()),
+        f"level {level}; workload {current!r}; {own}")
+    shm = exec_in(["sh", "-c", "touch /dev/shm/moatery-rig && rm "
+                   "/dev/shm/moatery-rig && echo ok"])
+    row("label: its /dev/shm, the pod's, is writable",
+        shm.stdout.strip() == "ok",
+        f"rc={shm.returncode} {shm.stderr.strip()[-200:]}")
+    reads = []
+    for opts in ((), ("--security-opt", f"label=level:{level}")):
+        got = run(["podman", "run", "--rm", "--network", "none",
+                   "--userns", "keep-id", "--user", USER, *opts, "-v",
+                   f"{BOX_HOME}:/d", IMAGE, "ls", "-a", "/d"],
+                  check=False, timeout=120)
+        reads.append(got)
+    other, same = reads
+    row("label: a container at podman's own level is refused the box's "
+        "home, which one at the box's level reads",
+        other.returncode != 0 and "Permission denied" in other.stderr
+        and same.returncode == 0 and ".bashrc" in same.stdout.split(),
+        f"podman's level rc={other.returncode} "
+        f"{other.stderr.strip()[-160:]!r}; the box's rc={same.returncode} "
+        f"{same.stderr.strip()[-160:]!r}")
+
+
 def like_rows(tag):
     say("like")
     made = box("create", TWIN, "--like", BOX, "--seccomp", "debug",
@@ -1940,18 +2004,32 @@ def like_rows(tag):
         f"rc={made.returncode} {made.stderr.strip()[-200:]}; policy "
         f"{policy}; {same}")
     entry = listed(TWIN)
-    row("like: and neither its autostart nor its home; its profile is "
-        "debug, as given",
+    levels = (box_level(), box_level(TWIN_CONFIG))
+    row("like: and neither its autostart, its home nor its level; its "
+        "profile is debug, as given",
         entry == [TWIN, "inactive", IMAGE, "seccomp:debug"]
-        and not (TWIN_SHARE / "home" / KEPT).exists(),
+        and not (TWIN_SHARE / "home" / KEPT).exists()
+        and all(levels) and levels[0] != levels[1],
         f"ls: {entry}; {KEPT} in its home: "
-        f"{(TWIN_SHARE / 'home' / KEPT).exists()}")
+        f"{(TWIN_SHARE / 'home' / KEPT).exists()}; levels {levels}")
     got = box("enter", TWIN, "--", "cat", f"{READONLY_AT}/file",
               timeout=300)
     row("like: entered, it reads the :ro mount at its DST",
         got.returncode == 0 and got.stdout.strip() == tag,
         f"rc={got.returncode} {got.stdout.strip()!r} "
         f"{got.stderr.strip()[-200:]}")
+    shared = PROJECT / SHARED
+    wrote = box("enter", BOX, "--", "sh", "-c", f'echo {tag} > "{shared}"',
+                timeout=300)
+    got = box("enter", TWIN, "--", "cat", str(shared), timeout=300)
+    row("like: what the box, entered as well, writes in their shared "
+        "mount, it reads",
+        wrote.returncode == 0 and got.returncode == 0
+        and got.stdout.strip() == tag,
+        f"box rc={wrote.returncode} {wrote.stderr.strip()[-160:]}; twin "
+        f"rc={got.returncode} {got.stdout.strip()!r} "
+        f"{got.stderr.strip()[-160:]}")
+    box("stop", BOX)
     (TWIN_SHARE / "home" / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)
     debug = seccomp_probe("--user", USER, name=TWIN)
     row("like: under debug, ptrace reaches the kernel, and a namespace is "
@@ -2069,6 +2147,7 @@ def probe(args, tag, secret):
     held_rows()
     seccomp_rows()
     home_rows(tag)
+    label_rows()
     dns_rows()
     drop_rows()
     request_rows()

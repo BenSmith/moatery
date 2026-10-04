@@ -335,7 +335,7 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(_keys(self.work, "Timezone"), ["local"])
 
     def test_the_prompt_is_mounted_read_only(self):
-        self.assertIn(f"{self.box.prompt}:{PROMPT_PATH}:ro,z",
+        self.assertIn(f"{self.box.prompt}:{PROMPT_PATH}:ro,Z",
                       _keys(self.work, "Volume"))
 
     def _prompted(self, ps1, times=1):
@@ -360,7 +360,7 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(self._prompted(""), "")
 
     def test_the_namespace_mark_is_mounted_read_only(self):
-        self.assertIn(f"{self.box.netns_mark}:{MARK_PATH}:ro,z",
+        self.assertIn(f"{self.box.netns_mark}:{MARK_PATH}:ro,Z",
                       _keys(self.work, "Volume"))
 
     def _interactive(self, mark=None, times=1):
@@ -427,12 +427,40 @@ class TestUnits(unittest.TestCase):
         """The working directory is the home podman gives the user."""
         self.assertEqual(_keys(self.work, "WorkingDir"), ["/home/u"])
         volumes = _keys(self.work, "Volume")
-        self.assertIn(f"{self.box.home}:/home/u:z", volumes)
-        self.assertIn(f"{self.box.bundle}:{TRUST}:ro,z", volumes)
+        self.assertIn(f"{self.box.home}:/home/u:Z", volumes)
+        self.assertIn(f"{self.box.bundle}:{TRUST}:ro,Z", volumes)
         self.assertIn("/home/u/p:/w:ro,z", volumes)
         self.assertFalse([v for v in volumes if v.startswith("/home/u:")])
         env = _keys(self.work, "Environment")
         self.assertIn(f"SSL_CERT_FILE={TRUST}", env)
+
+    def test_a_box_runs_at_its_level_and_only_it_reads_its_files(self):
+        """Its pod and its workload at one level, since the workload
+        joins the pod's IPC namespace and its /dev/shm is labelled at the
+        pod's; its own files relabelled to it; a mount shared."""
+        settings = self.settings._replace(level="s0:c3,c5")
+        units = render(self.box, settings, None)
+        pod = units[self.box.pod_file]
+        work = units[self.box.container_file]
+        self.assertIn("--security-opt=label=level:s0:c3,c5",
+                      _keys(pod, "PodmanArgs"))
+        self.assertEqual(_keys(work, "SecurityLabelLevel"), ["s0:c3,c5"])
+        volumes = _keys(work, "Volume")
+        own = (self.box.home, self.box.bundle, self.box.prompt,
+               self.box.netns_mark)
+        self.assertEqual(
+            sorted(v.rsplit(":", 1)[1] for v in volumes
+                   if v.startswith(tuple(map(str, own)))),
+            ["Z", "ro,Z", "ro,Z", "ro,Z"])
+        self.assertIn("/home/u/p:/w:ro,z", volumes)
+        rw = settings._replace(mounts=(Mount(Path("/home/u/p"), "/w",
+                                             False),))
+        self.assertIn("/home/u/p:/w:z", _keys(
+            container_unit(self.box, rw, None), "Volume"))
+
+    def test_with_no_level_podman_picks_one(self):
+        self.assertNotIn("label", " ".join(_keys(self.pod, "PodmanArgs")))
+        self.assertNotIn("SecurityLabelLevel", self.work)
 
     def _handed(self, unit_text):
         """What the launcher runs, with the pod's pid substituted, parsed by
@@ -491,7 +519,7 @@ class TestUnits(unittest.TestCase):
         work = units["moathut-agent.container"]
         self.assertIn(
             "\nVolume=/home/a b%%c$d/.local/share/moatery/box/agent/home:"
-            "/home/a b%%c$d:z\n", work)
+            "/home/a b%%c$d:Z\n", work)
 
 
 class TestCredentials(unittest.TestCase):
@@ -1206,6 +1234,37 @@ class TestCommands(unittest.TestCase):
                          '{"defaultAction": "SCMP_ACT_ALLOW"}\n')
         self.assertFalse(box.config.exists())
 
+    def test_each_box_runs_at_a_level_no_other_box_has(self):
+        """A box like another is given its own."""
+        picks = iter([[5, 3], [3, 5], [9, 7]])
+        with mock.patch.object(commands, "_sample",
+                               lambda population, k: next(picks)):
+            box, _ = self._create()
+            twin = self._like("twin", "agent")
+        levels = [Settings.from_json(b.settings.read_text()).level
+                  for b in (box, twin)]
+        self.assertEqual(levels, ["s0:c3,c5", "s0:c7,c9"])
+        work = twin.container_file.read_text()
+        self.assertEqual(_keys(work, "SecurityLabelLevel"), ["s0:c7,c9"])
+        self.assertIn("--security-opt=label=level:s0:c7,c9",
+                      _keys(twin.pod_file.read_text(), "PodmanArgs"))
+
+    def test_a_box_with_no_level_is_given_one_it_starts_at(self):
+        box, _ = self._create()
+        doc = json.loads(box.settings.read_text())
+        del doc["level"]
+        box.settings.write_text(json.dumps(doc))
+        with mock.patch.object(commands, "_sample",
+                               lambda population, k: [8, 4]):
+            commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                           cwd=self.home, environ=self.env, isatty=False,
+                           runner=FakeHost(self.home),
+                           execvp=lambda f, a: None)
+        self.assertEqual(
+            Settings.from_json(box.settings.read_text()).level, "s0:c4,c8")
+        self.assertEqual(_keys(box.container_file.read_text(),
+                               "SecurityLabelLevel"), ["s0:c4,c8"])
+
     def test_autostart_is_kept_and_rendered(self):
         """Kept in box.json, since `policy` and `credential add` write the
         units again; a box.json from before it was a setting reads as
@@ -1288,7 +1347,9 @@ class TestCommands(unittest.TestCase):
                        dirs=self.dirs, runner=self._host(), pause=self.fail)
         self.assertEqual(box.prompt.read_text(), prompt(box))
 
+    @mock.patch.object(commands, "_sample", lambda population, k: [3, 5])
     def test_a_dry_run_writes_nothing_and_says_what_create_would(self):
+        """The level is drawn at each, and here the same."""
         written = commands.create(
             "agent", self.policy, "img", ["projects/p"], dirs=self.dirs,
             tool=("/py", "/cb"), python="/py", libexec="/lx",

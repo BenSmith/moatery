@@ -79,6 +79,10 @@ class Settings(NamedTuple):
     autostart: bool = False
     # A profile seccomp renders, or None for the box's own, copied in.
     seccomp: str | None = "strict"
+    # The SELinux level its pod and workload run at, and its own files
+    # are labelled with: two categories no other box's has. None, podman
+    # picks one at each start.
+    level: str | None = None
 
     def to_json(self):
         doc = self._asdict()
@@ -187,11 +191,19 @@ Network=ns:%t/{NETNS_DIR}/{box.name}
 DNS={DNS}
 UserNS=keep-id
 ExitPolicy=continue
-PodmanArgs=--hosts-file=image --share-parent=false
+PodmanArgs=--hosts-file=image --share-parent=false{_pod_level(settings)}
 
 [Service]
 Environment={_quoted(f"CONTAINERS_CONF_OVERRIDE={box.containers_conf}")}
 """
+
+
+def _pod_level(settings):
+    """The workload joins the pod's IPC namespace, and its /dev/shm is
+    labelled at the infra container's level."""
+    if settings.level is None:
+        return ""
+    return f" --security-opt=label=level:{settings.level}"
 
 
 def containers_conf(box):
@@ -205,15 +217,19 @@ default_sysctls = []
 
 
 def container_unit(box, settings, broker):
-    volumes = [f"{box.home}:{settings.home_path}:z",
-               f"{box.bundle}:{settings.trust_path}:ro,z",
-               f"{box.prompt}:{PROMPT_PATH}:ro,z",
-               f"{box.netns_mark}:{MARK_PATH}:ro,z"]
+    # The box's own files are labelled with its level, which no other
+    # box's runs at; a mount is the user's, which boxes may share.
+    volumes = [f"{box.home}:{settings.home_path}:Z",
+               f"{box.bundle}:{settings.trust_path}:ro,Z",
+               f"{box.prompt}:{PROMPT_PATH}:ro,Z",
+               f"{box.netns_mark}:{MARK_PATH}:ro,Z"]
     for mount in settings.mounts:
         volumes.append(f"{mount.source}:{mount.target}:"
                        + ("ro,z" if mount.readonly else "z"))
     lines = [f"DropCapability={' '.join(DROPPED[i:i + 5])}"
              for i in range(0, len(DROPPED), 5)]
+    if settings.level is not None:
+        lines.append(f"SecurityLabelLevel={settings.level}")
     lines += [f"Volume={_value(v)}" for v in volumes]
     lines += [f"Environment={_quoted(f'{v}={settings.trust_path}')}"
               for v in CA_VARIABLES]

@@ -70,7 +70,7 @@ on, when the host boots. Without it, a box starts at its first `enter`.
 `--dry-run` prints the files `create` would write, and writes nothing.
 
 `--like` makes a box like one you already have: the same policy, image
-and mounts, and a new home.
+and mounts, and a new home. The two share the mounts.
 
 ```
 moathut create work2 --like work
@@ -113,8 +113,10 @@ Every start is a fresh container from the image. What survives a stop:
 
 - **The box's home.** It has its own home directory, separate from
   yours, so anything installed under it (`pip install --user`, tools in
-  `~/.local`) is kept.
-- **Your mounts.** These are your own directories.
+  `~/.local`) is kept. SELinux keeps every other box and container out
+  of it; you can still reach it from the host.
+- **Your mounts.** These are your own directories. Any box can mount
+  the same directory, so two boxes can work on one project.
 
 What doesn't survive: anything else written to the container, such as a
 `dnf install`. If a box needs a tool every time, build an image that

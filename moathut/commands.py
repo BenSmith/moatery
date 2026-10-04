@@ -3,6 +3,7 @@ takes its inputs as arguments, so the tests can hand them in."""
 
 import json
 import os
+import random
 import shlex
 import shutil
 import signal
@@ -70,11 +71,32 @@ def _box(name, dirs):
     return Box(name, dirs)
 
 
+# How many categories podman picks a container's two from.
+CATEGORIES = 1024
+
+_sample = random.SystemRandom().sample
+
+
+def _free_level(dirs):
+    """Two categories no box has, its SELinux level."""
+    taken = {settings.level for _, settings in _boxes(dirs)}
+    while True:
+        level = "s0:c{},c{}".format(*sorted(_sample(range(CATEGORIES), 2)))
+        if level not in taken:
+            return level
+
+
 def _existing(name, dirs):
+    """The box and its settings: a box with no level is given one, which
+    it runs at from its next start."""
     box = _box(name, dirs)
     if not box.settings.exists():
         raise BoxError(f"no box {name}")
-    return box, Settings.from_json(box.settings.read_text())
+    settings = Settings.from_json(box.settings.read_text())
+    if settings.level is None:
+        settings = settings._replace(level=_free_level(dirs))
+        box.settings.write_text(settings.to_json())
+    return box, settings
 
 
 def _boxes(dirs):
@@ -264,7 +286,8 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
                         home_path=home_path, uid=uid, gid=gid,
                         mounts=mounts, tool=tuple(tool), python=python,
                         libexec=str(libexec), pythonpath=pythonpath,
-                        autostart=autostart, seccomp=profile)
+                        autostart=autostart, seccomp=profile,
+                        level=_free_level(dirs))
     if dry_run:
         return {**_written(box, settings, broker),
                 **({box.seccomp: own} if own is not None else {})}

@@ -59,8 +59,8 @@ below): `strict`, the default, `debug`, or a file, copied in.
 With `--like BOX` it starts from another box's policy, as edited
 since, its image, its mounts and its seccomp profile: `--policy`,
 `--image` and `--seccomp` replace its, and a `--mount` joins its,
-replacing one at the same target. The new box gets a home of its own,
-and is not autostarted without `--autostart`. A mount whose source has
+replacing one at the same target. The new box gets a home and an
+SELinux level of its own, and is not autostarted without `--autostart`. A mount whose source has
 gone since is refused, naming the box it came from.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
@@ -176,6 +176,7 @@ For box NAME, credential ID:
 
 | what | where |
 |---|---|
+| what `create` decided, the level among it | `~/.config/moatery/box/NAME/box.json` |
 | policy | `~/.config/moatery/box/NAME/policy.json` |
 | bundle | `~/.config/moatery/box/NAME/bundle.pem` |
 | prompt | `~/.config/moatery/box/NAME/prompt.sh` |
@@ -268,6 +269,18 @@ units differ from the example's in these ways:
   is never mounted. The workload's working directory is that path too:
   podman writes the passwd entry of a user keep-id brings in with the
   working directory as its home, and `HOME` from it.
+- Each box has an SELinux level of its own, two categories no other box
+  has, drawn at `create` and kept in `box.json`. Its pod and its
+  workload run at it (the pod's `--security-opt label=level:`, the
+  workload's `SecurityLabelLevel=`): the workload joins the pod's IPC
+  namespace, and its `/dev/shm` is labelled at the pod's level. Its
+  home, bundle, prompt and mark are mounted `:Z`, labelled at that
+  level, which a container at any other is refused: another box's, or
+  one run by hand. A start that finds them labelled at it relabels
+  nothing. A mount is `:z`, the label every container reads, so boxes
+  can share a project. A box with no level in `box.json` is given one
+  by the next command that reads it, and runs at it from its next
+  start.
 - The workload's unit names the box's user and drops every capability
   outside podman's default set ("Refused", below).
 - At each start the workload's unit writes a sudoers drop-in, as root in
@@ -437,6 +450,11 @@ What stays open, and is warned about:
 - The user, on the host, is root over the namespace (`podman unshare`),
   and can remove the rules. `enter` refuses such a box and `ls` marks it
   `unprotected`, but shells already in it cannot tell.
+- A box's mounts are labelled for every container to read, so boxes
+  can share them, and so can any container the user runs. Podman draws
+  an ordinary container's level from the same pairs of categories as a
+  box's, without knowing a stopped box's: one drawn twice is one in
+  523776.
 - A container run by hand from the box's image is not the box: podman
   gives it a network of its own, without the rules. An interactive shell
   in one that mounts the box's prompt and mark warns; one that mounts
@@ -483,6 +501,10 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
   its family is written, while a thread, an inet and a netlink socket
   reach the kernel; in a stock container the same calls reach the
   kernel; under `debug`, ptrace does;
+- the workload runs at the box's level, and its home, bundle, prompt and
+  mark are labelled at it; its `/dev/shm` is writable; a container at
+  podman's own level is refused the box's home, and one at the box's
+  reads it; two boxes share a mount, at their two levels;
 - `enter` runs in the box's home, or the mount the host's directory is
   in; the user's own home is not the box's; a file outside the home is
   gone after a restart;
