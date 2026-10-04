@@ -462,6 +462,11 @@ Outside the rig, the same day, two more ways to hold a VM:
   a dropped port fails in the guest at once (curl 7) instead of timing
   out; a listener on the host's end of it saw nothing.
 
+**Every placement after the rename, 2026-10-04.** At 1d34a22, on the
+proving host: host_rig 33/33, netns_rig 30/30, vm_rig 30/30, this rig
+`--placement netns` 20/20 and `--placement sidecar` 22/22, sidecar_rig
+38/38, box_rig 130/130. No defect.
+
 ## box_rig.py — a moathut box, through its command line
 
 `docs/BOX.md`: `moathut credential add`, `create`, `enter`, `log`,
