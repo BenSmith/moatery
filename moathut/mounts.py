@@ -51,8 +51,8 @@ def _overlaps(a, b):
 
 def refuse(mount, dirs, covered):
     """Raise MountRefused for a mount the box may not have. `covered` are
-    the paths inside that a mount must not hide: the box's home and its
-    trust store."""
+    the paths inside that a mount must not hide: the box's home, its
+    trust store and its prompt."""
     source = mount.source
     if not source.is_dir():
         raise MountRefused(f"{source}: not a directory")

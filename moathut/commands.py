@@ -25,7 +25,8 @@ from .netns import exec_with_pid, load_rules, pod_pid, rules_loaded
 from .paths import Box, boxes_root, credentials_root, described, sealed, \
     valid_name
 from .process import CommandFailed, run
-from .units import CA_VARIABLES, Settings, interpreter, render
+from .units import (CA_VARIABLES, PROMPT_PATH, Settings, interpreter,
+                    prompt, render)
 
 DEFAULT_IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
 DEFAULT_LIBEXEC = "/usr/libexec/moatery"
@@ -110,8 +111,22 @@ def _broker(policy, dirs, load=None):
     return broker
 
 
+# Read by a shell in a home with no .bashrc of its own: the image's,
+# then the box's prompt, which bash would otherwise not read.
+_BASHRC = f"""\
+[ -f /etc/bashrc ] && . /etc/bashrc
+[ -f {PROMPT_PATH} ] && . {PROMPT_PATH}
+"""
+
+
+def _written(box, settings, broker):
+    """Path to text, for each file the units are and each they mount
+    that is written with them."""
+    return {**render(box, settings, broker), box.prompt: prompt(box)}
+
+
 def _write_units(box, settings, broker):
-    units = render(box, settings, broker)
+    units = _written(box, settings, broker)
     for path, text in units.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
@@ -143,7 +158,9 @@ def _host_bundle():
 
 def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
            libexec, pythonpath, uid, gid, cwd, environ, autostart=False,
-           runner=run):
+           dry_run=False, runner=run):
+    """The box; with dry_run, what would be written, path to text, and
+    nothing is."""
     box = _box(name, dirs)
     if box.config.exists() or any(p.exists() for p in box.unit_files):
         raise BoxError(f"box {name} exists")
@@ -162,7 +179,7 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
     home_path = str(dirs.home)
     for mount in mounts:
         try:
-            refuse(mount, dirs, (home_path, trust_path))
+            refuse(mount, dirs, (home_path, trust_path, PROMPT_PATH))
         except MountRefused as exc:
             raise BoxError(f"--mount {exc}") from None
     settings = Settings(image=image, trust_path=trust_path,
@@ -170,6 +187,8 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
                         mounts=mounts, tool=tuple(tool), python=python,
                         libexec=str(libexec), pythonpath=pythonpath,
                         autostart=autostart)
+    if dry_run:
+        return _written(box, settings, broker)
     home_existed = box.home.exists()
     try:
         _lay_out(box, settings, broker, policy_path, host_bundle, environ,
@@ -192,6 +211,9 @@ def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
         if target.is_relative_to(settings.home_path):
             (box.home / target.relative_to(settings.home_path)).mkdir(
                 parents=True, exist_ok=True)
+    bashrc = box.home / ".bashrc"
+    if not bashrc.exists():
+        bashrc.write_text(_BASHRC)
     box.policy.write_bytes(Path(policy_path).read_bytes())
     box.policy.chmod(0o600)
     minted = runner([*interpreter(settings),

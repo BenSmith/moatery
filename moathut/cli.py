@@ -35,6 +35,9 @@ def build_parser():
     p.add_argument("--autostart", action="store_true",
                    help="start it with the user's session, and at boot "
                         "if the user lingers")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the files it would write, and write none; "
+                        "the image is pulled, to find its trust store")
     p = sub.add_parser("enter", usage="%(prog)s NAME [--root] "
                                       "[-- COMMAND...]",
                        help="start a box if it is stopped, and run a "
@@ -180,8 +183,13 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
                      or DEFAULT_LIBEXEC,
                      pythonpath=environ.get("PYTHONPATH") or None,
                      uid=os.getuid(), gid=os.getgid(), cwd=cwd,
-                     environ=environ, autostart=args.autostart)
-        print(f"box {box.name} created; moathut enter {box.name}")
+                     environ=environ, autostart=args.autostart,
+                     dry_run=args.dry_run)
+        if args.dry_run:
+            for path, text in box.items():
+                print(f"# {path}\n{text}")
+        else:
+            print(f"box {box.name} created; moathut enter {box.name}")
     elif args.command == "enter":
         enter(args.name, args.argv, root=args.root, dirs=dirs,
               cwd=cwd, environ=environ, isatty=isatty)

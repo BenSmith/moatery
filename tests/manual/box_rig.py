@@ -47,8 +47,10 @@ in the record.
 THE ROWS
 
   credential  add seals the key: neither file holds it, and ls lists it.
-  create    the files docs/BOX.md lists are there, and nothing started;
-            the box is made with --autostart, and ls says so.
+  create    --dry-run first wrote nothing and printed each file create
+            then wrote, as it wrote it; the files docs/BOX.md lists are
+            there, with a .bashrc in the home, and nothing started; the
+            box is made with --autostart, and ls says so.
   chain     the manager loaded the order: the workload Wants= both
             listeners, Requires= neither, and is After= them, and is
             BindsTo= the pod; each
@@ -67,7 +69,9 @@ THE ROWS
             are in the pod's namespace; the pod has no cgroup of its own.
   enter     as the user, with the box's home as working directory, HOME
             and passwd home; from inside a mount, in the same directory
-            inside; with --root, as uid 0.
+            inside; with --root, as uid 0. An interactive bash's prompt
+            starts with the box's name, magenta, and red as root; the
+            box's clock reads in the host's zone.
   home      the box's home is its own: a file in the user's home is absent
             inside, and one written inside is in the box's home on the
             host and not in the user's. The directories between the home
@@ -248,7 +252,8 @@ UNIT_FILES = (QUADLET / f"{UNIT}.pod", QUADLET / f"{UNIT}.container",
               UNITS / BROKER_SERVICE, UNITS / ROTATE_SERVICE,
               UNITS / ROTATE_TIMER)
 LAID_OUT = (CONFIG / "policy.json", CONFIG / "bundle.pem",
-            ca_cert_path(STATE), LOGS, BOX_HOME, *UNIT_FILES)
+            CONFIG / "prompt.sh", ca_cert_path(STATE), LOGS, BOX_HOME,
+            BOX_HOME / ".bashrc", *UNIT_FILES)
 STATUS = STATE / "status.json"
 RESOLVE_STATUS = STATE / "resolve-status.json"
 RECORD = LOGS / "requests.log"
@@ -593,12 +598,38 @@ def credential_rows(secret):
     return added.returncode == 0
 
 
+def dry_files(text, paths):
+    """--dry-run's output as path to text: each file follows a line
+    naming one of `paths`, and a blank line ends it."""
+    files, at = {}, None
+    for line in text.splitlines(keepends=True):
+        if line.startswith("# ") and Path(line[2:].strip()) in paths:
+            at = Path(line[2:].strip())
+            files[at] = ""
+        elif at is not None:
+            files[at] += line
+    return {k: v.removesuffix("\n") for k, v in files.items()}
+
+
 def create_rows(autostart):
     say("create")
-    made = box("create", BOX, "--policy", str(POLICY),
-               "--mount", str(PROJECT),
-               "--mount", f"{READONLY}:{READONLY_AT}:ro",
-               *(["--autostart"] if autostart else []), timeout=300)
+    words = ("create", BOX, "--policy", str(POLICY),
+             "--mount", str(PROJECT),
+             "--mount", f"{READONLY}:{READONLY_AT}:ro",
+             *(["--autostart"] if autostart else []))
+    dry = box(*words, "--dry-run", timeout=300)
+    wrote = [str(p) for p in (CONFIG, *UNIT_FILES) if p.exists()]
+    made = box(*words, timeout=300)
+    expected = set(UNIT_FILES) | {CONFIG / "prompt.sh"}
+    printed = dry_files(dry.stdout, expected)
+    differ = sorted(str(p) for p, text in printed.items()
+                    if not p.exists() or p.read_text() != text)
+    row("create: --dry-run wrote nothing, and printed each file create "
+        "wrote, as it wrote it",
+        dry.returncode == 0 and not wrote and printed and not differ
+        and {p for p in expected if p.exists()} == set(printed),
+        f"rc={dry.returncode} {dry.stderr.strip()[-200:]}; written: "
+        f"{wrote}; printed: {sorted(map(str, printed))}; differ: {differ}")
     missing = [str(p) for p in LAID_OUT if not p.exists()]
     row("create: it laid out every file docs/BOX.md lists",
         made.returncode == 0 and not missing,
@@ -762,6 +793,20 @@ def enter_rows(tag):
     seen = got.stdout.split()
     row("enter: with --root, as uid 0 in /root", seen == ["0", "/root"],
         f"uid, pwd: {seen} {got.stderr.strip()[-200:]}")
+    prompts = [box("enter", BOX, *root, "--", "bash", "-ic",
+                   'printf "%s\\n" "$PS1"').stdout.strip()
+               for root in ([], ["--root"])]
+    named = [f"\\[\\e[{c}m\\]\u2b22 {BOX}\\[\\e[0m\\] "
+             for c in ("35", "1;31")]
+    row("enter: bash's prompt starts with the box's name, magenta, and "
+        "red as root",
+        all(p.startswith(n) for p, n in zip(prompts, named)), f"{prompts}")
+    inside = exec_in(["date", "+%z %Z"]).stdout.strip()
+    outside = run(["date", "+%z %Z"]).stdout.strip()
+    row("enter: the box's clock reads in the host's zone",
+        inside == outside, f"inside {inside!r}, host {outside!r}"
+        + ("; the host is on UTC, so this shows nothing"
+           if outside.startswith("+0000") else ""))
 
 
 def home_rows(tag):

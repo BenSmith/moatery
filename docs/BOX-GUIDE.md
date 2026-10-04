@@ -67,6 +67,8 @@ choose another.
 `--autostart` starts the box whenever you log in, and, with lingering
 on, when the host boots. Without it, a box starts at its first `enter`.
 
+`--dry-run` prints the files `create` would write, and writes nothing.
+
 `--mount` shares a host directory with the box. Repeat it for more
 directories. `SRC:DST` puts it at a different path inside, and a
 trailing `:ro` makes it read-only. Your home directory itself can't be
@@ -91,6 +93,10 @@ moathut enter work -- git clone https://github.com/example/repo
 
 `--root` enters as root. `sudo` also works inside the box, with no
 password. Root in a box is filtered the same way you are.
+
+In bash, the prompt starts with `⬢ work`, so you can tell which box a
+terminal is in: magenta for you, red for root. The box keeps your
+host's time zone.
 
 ## What the box keeps
 

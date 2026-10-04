@@ -9,6 +9,7 @@ parsed by the programs' own parsers, so a flag renamed there fails here.
 """
 
 import ipaddress
+import os
 import json
 import re
 import shlex
@@ -33,7 +34,8 @@ from moathut.mounts import Mount, MountRefused, parse_mount, refuse
 from moathut.paths import (Box, boxes_root, credentials_root, described,
                                protected, sealed, user_dirs, valid_name)
 from moathut.units import (ALL_CAPABILITIES, ANSWER, CAPABILITIES,
-                               Settings, container_unit, interpreter, render)
+                               PROMPT_PATH, Settings, container_unit,
+                               interpreter, prompt, render)
 
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
 DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo", "PartOf")
@@ -281,6 +283,34 @@ class TestUnits(unittest.TestCase):
                          (["1001"], ["1002"]))
         self.assertNotIn("PodmanArgs", self.work)
         self.assertNotIn("Network=", self.work)
+
+    def test_the_workload_keeps_the_hosts_time_zone(self):
+        self.assertEqual(_keys(self.work, "Timezone"), ["local"])
+
+    def test_the_prompt_is_mounted_read_only(self):
+        self.assertIn(f"{self.box.prompt}:{PROMPT_PATH}:ro,z",
+                      _keys(self.work, "Volume"))
+
+    def _prompted(self, ps1, times=1):
+        script = Path(self.enterContext(
+            tempfile.TemporaryDirectory())) / "prompt.sh"
+        script.write_text(prompt(self.box))
+        reads = f'. "{script}"; ' * times
+        # bash unsets an inherited PS1 when it is not interactive.
+        return subprocess.run(
+            ["bash", "--norc", "-c", f'PS1=$P; {reads}printf %s "$PS1"'],
+            env={"P": ps1, "PATH": "/usr/bin:/bin"}, capture_output=True,
+            text=True, check=True).stdout
+
+    def test_the_prompt_names_the_box_once(self):
+        """The profile and the home's .bashrc both read it. Root's is
+        red: a test run as root sees that instead."""
+        colour = "1;31" if os.geteuid() == 0 else "35"
+        want = f"\\[\\e[{colour}m\\]\u2b22 agent\\[\\e[0m\\] [\\u]\\$ "
+        self.assertEqual(self._prompted("[\\u]\\$ ", times=2), want)
+
+    def test_a_shell_with_no_prompt_is_given_none(self):
+        self.assertEqual(self._prompted(""), "")
 
     def test_every_capability_this_kernel_has_is_named(self):
         last = int(Path("/proc/sys/kernel/cap_last_cap").read_text())
@@ -941,6 +971,60 @@ class TestCommands(unittest.TestCase):
                          self.home / "projects" / "p")
         self.assertIn(["systemctl", "--user", "daemon-reload"], host.calls)
 
+    def test_create_gives_a_new_home_a_bashrc_that_reads_the_prompt(self):
+        box, _ = self._create()
+        self.assertEqual(box.prompt.read_text(), prompt(box))
+        lines = (box.home / ".bashrc").read_text().splitlines()
+        self.assertEqual(lines, [
+            "[ -f /etc/bashrc ] && . /etc/bashrc",
+            f"[ -f {PROMPT_PATH} ] && . {PROMPT_PATH}"])
+
+    def test_a_bashrc_the_home_has_is_kept(self):
+        kept = Box("agent", self.dirs).home
+        kept.mkdir(parents=True)
+        (kept / ".bashrc").write_text("mine\n")
+        self._create()
+        self.assertEqual((kept / ".bashrc").read_text(), "mine\n")
+
+    def test_a_box_from_before_the_prompt_gains_it_when_written_again(self):
+        """Its workload's unit is written again, so the file it mounts
+        is."""
+        box, _ = self._create()
+        box.prompt.unlink()
+        box.container_file.write_text("from before the prompt\n")
+        commands.allow("agent", "example.com", methods=[], paths=[],
+                       dirs=self.dirs, runner=self._host(), pause=self.fail)
+        self.assertEqual(box.prompt.read_text(), prompt(box))
+
+    def test_a_dry_run_writes_nothing_and_says_what_create_would(self):
+        written = commands.create(
+            "agent", self.policy, "img", ["projects/p"], dirs=self.dirs,
+            tool=("/py", "/cb"), python="/py", libexec="/lx",
+            pythonpath=None, uid=1000, gid=1000, cwd=self.home,
+            environ=self.env, dry_run=True, runner=(host := FakeHost(
+                self.home)))
+        box = Box("agent", self.dirs)
+        self.assertFalse(box.config.exists())
+        self.assertFalse(box.share.exists())
+        self.assertFalse(any(p.exists() for p in box.unit_files))
+        self.assertFalse([c for c in host.calls if c[0] == "systemctl"
+                          or "moat-mint-ca" in " ".join(c)])
+        self._create(mounts=["projects/p"])
+        self.assertEqual(written, {p: p.read_text() for p in written})
+        self.assertIn(box.prompt, written)
+
+    def test_the_command_line_prints_a_dry_run(self):
+        from moathut import cli
+        args = parse(["create", "agent", "--policy", "p", "--dry-run"])
+        files = {Path("/u/a.pod"): "[Pod]\n", Path("/u/p.sh"): "x\n"}
+        with mock.patch.object(cli, "create", return_value=files) as create, \
+                mock.patch("builtins.print") as printed:
+            cli.run_command(args, tool=(), environ=self.env, cwd=self.home,
+                            isatty=False)
+        self.assertIs(create.call_args.kwargs["dry_run"], True)
+        self.assertEqual([c.args[0] for c in printed.call_args_list],
+                         ["# /u/a.pod\n[Pod]\n", "# /u/p.sh\nx\n"])
+
     def test_create_refuses(self):
         self._create()
         bad_policy = self.policy.with_name("bad.json")
@@ -952,7 +1036,9 @@ class TestCommands(unittest.TestCase):
                  "name": dict(name="Agent"),
                  "policy": dict(name="b", policy=bad_policy),
                  "no credential k": dict(name="c", policy=brokered),
-                 "home directory": dict(name="d", mounts=[str(self.home)])}
+                 "home directory": dict(name="d", mounts=[str(self.home)]),
+                 "would cover /etc/profile.d": dict(
+                     name="e", mounts=["projects/p:/etc/profile.d"])}
         for words, kwargs in cases.items():
             with self.subTest(words), \
                     self.assertRaisesRegex(commands.BoxError, words):
@@ -1275,7 +1361,8 @@ class TestCommands(unittest.TestCase):
             self.assertNotIn(box.service, argv)
             self.assertNotIn(box.pod_service, argv)
         self.assertEqual(sorted(p.name for p in box.config.iterdir()),
-                         ["box.json", "bundle.pem", "policy.json"])
+                         ["box.json", "bundle.pem", "policy.json",
+                          "prompt.sh"])
 
     def test_allow_on_a_stopped_box_applies_from_its_next_start(self):
         box, _ = self._create()
@@ -1383,7 +1470,8 @@ class TestCommands(unittest.TestCase):
             self.assertEqual(host.calls, [])
             self.assertNotIn(".policy.json.new", str(host.calls))
         self.assertEqual(sorted(p.name for p in box.config.iterdir()),
-                         ["box.json", "bundle.pem", "policy.json"])
+                         ["box.json", "bundle.pem", "policy.json",
+                          "prompt.sh"])
         failing = lambda argv: subprocess.CompletedProcess(argv, 1)
         with self.assertRaisesRegex(commands.BoxError, "exited 1"):
             self._edit(failing)

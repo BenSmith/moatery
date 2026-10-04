@@ -25,7 +25,7 @@ so git over ssh cannot leave a box, and git over https can.
 
 ```
 moathut create NAME --policy FILE [--image IMAGE]
-                   [--mount SRC[:DST][:ro]]... [--autostart]
+                   [--mount SRC[:DST][:ro]]... [--autostart] [--dry-run]
 moathut enter NAME [--root] [-- COMMAND...]
 moathut log NAME [--refused]
 moathut allow NAME HOST [--method M]... [--path P]...
@@ -48,7 +48,10 @@ With `--autostart` the workload's unit is wanted by `default.target`,
 so the user's manager starts the box when it starts: at login, or at
 boot for a lingering user. It starts the same chain `enter` does, and
 `ls` marks the box `autostart`. A box stopped with `stop` starts again
-at the next login.
+at the next login. With `--dry-run` it prints each file it would write,
+its path first, and writes none and mints nothing; it still refuses
+what `create` would refuse, and pulls the image to find its trust
+store.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
 order, the namespace's unit, the rules, the broker and the listeners,
@@ -161,6 +164,7 @@ For box NAME, credential ID:
 |---|---|
 | policy | `~/.config/moatery/box/NAME/policy.json` |
 | bundle | `~/.config/moatery/box/NAME/bundle.pem` |
+| prompt | `~/.config/moatery/box/NAME/prompt.sh` |
 | CA, certificates, status files | `~/.local/state/moatery/box/NAME/` |
 | record | `~/.local/state/log/moatery/box/NAME/requests.log`, and `.1` to `.4.gz` |
 | the box's home | `~/.local/share/moatery/box/NAME/home/` |
@@ -242,6 +246,17 @@ cgroup of its own. The units differ from the example's in these ways:
   cannot come ahead of the installed package.
 - No `[Install]` unless `--autostart`: without it a box runs from
   `enter` to `stop`.
+- `Timezone=local`: the workload's clock reads in the host's zone, not
+  the image's (UTC in Fedora's).
+- The prompt is mounted read-only at `/etc/profile.d/moathut.sh`, and
+  puts `⬢ NAME` before bash's prompt, magenta, or red as root. Fedora's
+  `/etc/bashrc` reads it, so root's shell has it from the image's
+  `/root/.bashrc`; `create` gives a home with no `.bashrc` one that reads
+  `/etc/bashrc` and then the prompt, which an image whose `bashrc` does
+  not read `/etc/profile.d` needs. A `.bashrc` the home has is kept. It
+  is written with the units, so a box from before it gains it when
+  `allow`, `policy` or `credential add` writes its units again. A mount
+  may not cover it.
 
 What starts what: `enter` starts `moathut-NAME.service`, which
 `Wants=` and is `After=` the inspector and the responder; they are

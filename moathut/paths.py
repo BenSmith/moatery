@@ -96,6 +96,10 @@ class Box(NamedTuple):
         return self.config / "bundle.pem"
 
     @property
+    def prompt(self):
+        return self.config / "prompt.sh"
+
+    @property
     def state(self):
         return self.dirs.state / "moatery" / "box" / self.name
 

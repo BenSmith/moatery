@@ -54,6 +54,10 @@ DROPPED = tuple(c for c in ALL_CAPABILITIES if c not in CAPABILITIES)
 CA_VARIABLES = ("SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
                 "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO", "PIP_CERT")
 
+# Where the box's prompt is mounted: Fedora's /etc/bashrc reads it, and
+# the home's .bashrc that create writes reads it after.
+PROMPT_PATH = "/etc/profile.d/moathut.sh"
+
 
 class Settings(NamedTuple):
     """What `create` decided, kept in box.json for the other commands."""
@@ -162,7 +166,8 @@ PodmanArgs=--hosts-file=image --share-parent=false
 
 def container_unit(box, settings, broker):
     volumes = [f"{box.home}:{settings.home_path}:z",
-               f"{box.bundle}:{settings.trust_path}:ro,z"]
+               f"{box.bundle}:{settings.trust_path}:ro,z",
+               f"{box.prompt}:{PROMPT_PATH}:ro,z"]
     for mount in settings.mounts:
         volumes.append(f"{mount.source}:{mount.target}:"
                        + ("ro,z" if mount.readonly else "z"))
@@ -196,6 +201,7 @@ Group={settings.gid}
 WorkingDir={_value(settings.home_path)}
 Exec=sleep infinity
 RunInit=true
+Timezone=local
 {body}
 
 [Service]
@@ -334,6 +340,23 @@ PartOf={box.pod_service}
 [Timer]
 OnActiveSec=1min
 OnUnitActiveSec=10min
+"""
+
+
+def prompt(box):
+    """bash's prompt in the box, its name first: magenta, red as root.
+    Fedora's /etc/bashrc and the home's .bashrc both read it, and the
+    second changes nothing."""
+    return f"""\
+# moatery box {box.name}: its name before the prompt.
+if [ -n "${{BASH_VERSION:-}}" ] && [ -n "${{PS1:-}}" ]; then
+    case $PS1 in
+    *'\u2b22 {box.name}'*) ;;
+    *) if [ "$EUID" = 0 ]; then _moathut='1;31'; else _moathut='35'; fi
+       PS1="\\[\\e[${{_moathut}}m\\]\u2b22 {box.name}\\[\\e[0m\\] $PS1"
+       unset _moathut ;;
+    esac
+fi
 """
 
 
