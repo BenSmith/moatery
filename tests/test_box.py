@@ -306,7 +306,7 @@ class TestUnits(unittest.TestCase):
         """The profile and the home's .bashrc both read it. Root's is
         red: a test run as root sees that instead."""
         colour = "1;31" if os.geteuid() == 0 else "35"
-        want = f"\\[\\e[{colour}m\\][agent]\\[\\e[0m\\] [\\u]\\$ "
+        want = f"\\[\\e[{colour}m\\]\u2b22 agent\\[\\e[0m\\] [\\u]\\$ "
         self.assertEqual(self._prompted("[\\u]\\$ ", times=2), want)
 
     def test_a_shell_with_no_prompt_is_given_none(self):

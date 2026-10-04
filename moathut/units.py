@@ -351,9 +351,9 @@ def prompt(box):
 # moatery box {box.name}: its name before the prompt.
 if [ -n "${{BASH_VERSION:-}}" ] && [ -n "${{PS1:-}}" ]; then
     case $PS1 in
-    *'[{box.name}]'*) ;;
+    *'\u2b22 {box.name}'*) ;;
     *) if [ "$EUID" = 0 ]; then _moathut='1;31'; else _moathut='35'; fi
-       PS1="\\[\\e[${{_moathut}}m\\][{box.name}]\\[\\e[0m\\] $PS1"
+       PS1="\\[\\e[${{_moathut}}m\\]\u2b22 {box.name}\\[\\e[0m\\] $PS1"
        unset _moathut ;;
     esac
 fi
