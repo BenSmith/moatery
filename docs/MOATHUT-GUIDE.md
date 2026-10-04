@@ -7,7 +7,7 @@ traffic is dropped. The box can hold a placeholder in place of an API
 key, and the real key is added on the way out, so the box never sees
 it.
 
-This guide is the how-to. [BOX.md](BOX.md) is the reference: what each
+This guide is the how-to. [MOATHUT.md](MOATHUT.md) is the reference: what each
 command does exactly, the files and units, and what is refused and why.
 
 ## Before you start
@@ -204,7 +204,7 @@ anything else, pass a seccomp profile of your own, which is copied in;
 `--seccomp /usr/share/containers/seccomp.json` is podman's default,
 which allows the namespaces nested containers need. A box made `--like` another gets its
 profile. `moathut ls` names a box's profile if it isn't the default.
-[BOX.md](BOX.md), "Seccomp", lists what is refused.
+[MOATHUT.md](MOATHUT.md), "Seccomp", lists what is refused.
 
 ## When the moat doesn't cover you
 
@@ -462,5 +462,5 @@ For a box named `work`:
 | its units | `systemctl --user status 'moathut-work*'` |
 
 Edit the policy with `moathut policy`, not in place: the command
-checks it first and applies it. [BOX.md](BOX.md), "Files", lists the
+checks it first and applies it. [MOATHUT.md](MOATHUT.md), "Files", lists the
 rest.

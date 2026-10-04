@@ -1,7 +1,7 @@
 #!/usr/bin/python3 -s
 """
 moathut: long-lived, inspected containers for command-line
-workloads (docs/BOX.md).
+workloads (docs/MOATHUT.md).
 
 Each box is a network namespace held in the user's own user namespace,
 the moatery rules loaded into it at every start, a quadlet pod joining

@@ -83,8 +83,8 @@ every placement.
 
 ## Documents
 
-- [docs/BOX-GUIDE.md](docs/BOX-GUIDE.md): moathut, as a user's
-  guide; [docs/BOX.md](docs/BOX.md) is its reference.
+- [docs/MOATHUT-GUIDE.md](docs/MOATHUT-GUIDE.md): moathut, as a user's
+  guide; [docs/MOATHUT.md](docs/MOATHUT.md) is its reference.
 - [docs/POLICY.md](docs/POLICY.md): the policy document the inspector
   reads.
 - [docs/DESIGN.md](docs/DESIGN.md): placing moatery, the rules it
@@ -134,7 +134,7 @@ coverage` on every push and pull request.
 
 ## Status
 
-Version 0.5.1. Each placement, and moathut, has a rig that runs it
+Version 0.6.0. Each placement, and moathut, has a rig that runs it
 end to end on a real host: `tests/manual/host_rig.py`, `netns_rig.py`,
 `sidecar_rig.py`, `vm_rig.py`, `vm_placement_rig.py` and `box_rig.py`
 ([tests/manual/README.md](tests/manual/README.md)).

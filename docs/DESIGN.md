@@ -7,7 +7,7 @@ need from the host, what is the same wherever they run, and four
 placements, each run end to end on a real host.
 
 [POLICY.md](POLICY.md) is the policy document, [LOGGING.md](LOGGING.md)
-what moatery reports, and [BOX.md](BOX.md) moathut, which lays out
+what moatery reports, and [MOATHUT.md](MOATHUT.md) moathut, which lays out
 the netns placement below for you.
 
 ## What moatery needs from the host
@@ -317,7 +317,7 @@ loaded that dial succeeds, and the list only changes the report.
   container its own. Its listeners belong to one start of the container,
   so they are started with it; [examples/quadlet/](../examples/quadlet/)
   does that with a unit holding the namespace, and moathut
-  ([BOX.md](BOX.md)) is built on it, with the namespace made and held
+  ([MOATHUT.md](MOATHUT.md)) is built on it, with the namespace made and held
   in the user's own user namespace, where root in the box cannot change
   the rules.
 - **Sidecar** needs no host install: the programs are an image. It
@@ -808,7 +808,7 @@ whoever lays it out does them. `tests/test_closure.py` holds the
 programs to importing nothing that knows what a workload is.
 
 moathut is one such layout, shipped in the same RPM: it writes a
-box's units and loads its rules ([BOX.md](BOX.md)). It stands beside
+box's units and loads its rules ([MOATHUT.md](MOATHUT.md)). It stands beside
 the programs; they never import it.
 
 ## Proving a new placement

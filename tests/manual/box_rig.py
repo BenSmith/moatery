@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """box_rig.py — a moathut box, made and run through its command line.
 
-docs/BOX.md: `moathut credential add`, `create`, `enter`, `log`,
+docs/MOATHUT.md: `moathut credential add`, `create`, `enter`, `log`,
 `allow`, `policy`, `stop` and `rm`, the box's units run by the user's
 manager and quadlet, the namespace its netns unit holds, the netns
 placement's rules and listeners in it, and the box's broker. Run on the
@@ -58,7 +58,7 @@ THE ROWS
   credential  add seals the key: neither file holds it, and ls lists it.
   create    --dry-run first wrote nothing and printed each file create
             then wrote, as it wrote it, but the SELinux level, drawn at
-            each; the files docs/BOX.md lists are
+            each; the files docs/MOATHUT.md lists are
             there, with a .bashrc in the home, and nothing started; the
             box is made with --autostart, and ls says so.
   chain     the manager loaded the order: the workload Wants= both
@@ -300,10 +300,10 @@ ROTATE_TIMER = f"{UNIT}-rotate.timer"
 SERVICES = (NETNS_SERVICE, POD_SERVICE, INSPECT_SERVICE, RESOLVE_SERVICE,
             BROKER_SERVICE, SERVICE, ROTATE_SERVICE, ROTATE_TIMER)
 LISTENERS = {INSPECT_SERVICE, RESOLVE_SERVICE}
-# docs/BOX.md's default.
+# docs/MOATHUT.md's default.
 IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
 
-# docs/BOX.md's table of a box's files.
+# docs/MOATHUT.md's table of a box's files.
 CONFIG = HOME / ".config" / "moatery" / "box" / BOX
 STATE = HOME / ".local" / "state" / "moatery" / "box" / BOX
 LOGS = HOME / ".local" / "state" / "log" / "moatery" / "box" / BOX
@@ -849,7 +849,7 @@ def create_rows(autostart):
         f"rc={dry.returncode} {dry.stderr.strip()[-200:]}; written: "
         f"{wrote}; printed: {sorted(map(str, printed))}; differ: {differ}")
     missing = [str(p) for p in LAID_OUT if not p.exists()]
-    row("create: it laid out every file docs/BOX.md lists",
+    row("create: it laid out every file docs/MOATHUT.md lists",
         made.returncode == 0 and not missing,
         f"rc={made.returncode} {made.stderr.strip()[-300:]}; "
         f"missing: {missing}")
@@ -1142,7 +1142,7 @@ def differing(got, want):
 
 
 def seccomp_rows():
-    """docs/BOX.md's profile, by errno: in a stock container the probe's
+    """docs/MOATHUT.md's profile, by errno: in a stock container the probe's
     arguments reach the kernel, in the box the filter answers first."""
     say("seccomp")
     (BOX_HOME / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)

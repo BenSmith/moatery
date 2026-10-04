@@ -469,7 +469,7 @@ proving host: host_rig 33/33, netns_rig 30/30, vm_rig 30/30, this rig
 
 ## box_rig.py — a moathut box, through its command line
 
-`docs/BOX.md`: `moathut credential add`, `create`, `enter`, `log`,
+`docs/MOATHUT.md`: `moathut credential add`, `create`, `enter`, `log`,
 `allow`, `policy`, `stop` and `rm`, the box's units run by the user's
 manager and quadlet, the namespace its netns unit holds, the netns
 placement's rules and listeners in it, and the box's broker.
@@ -611,7 +611,7 @@ Facts for the design. `podman pod restart` leaves every unit active
 while the workload runs in a new namespace with no rules; its first
 request there got no answer (no responder, and the provider's address
 is the pod's own loopback), and `enter` refuses the box, as
-`docs/BOX.md` says. `systemctl restart` of the pod returns in under a
+`docs/MOATHUT.md` says. `systemctl restart` of the pod returns in under a
 second, before the listeners and the workload are back; quadlet adds
 `Wants=` from the pod to its container, which is what brings the
 workload back. A run takes under two minutes, `--without-rules` under

@@ -10,7 +10,7 @@ with the workload its only container; the inspector's and the
 responder's listeners bound in that namespace; and the workload started
 after them.
 
-[BOX-GUIDE.md](BOX-GUIDE.md) is the user's guide; this is the
+[MOATHUT-GUIDE.md](MOATHUT-GUIDE.md) is the user's guide; this is the
 reference.
 
 ## What a box is for
@@ -442,7 +442,7 @@ makes no namespace and mounts nothing, but it is still a shell with
 every capability in the box, and Ptyxis lists
 boxes in its container menu and opens a new tab in the container a
 tab's text last named (OSC 777 or 666), which a workload can print;
-[BOX-GUIDE.md](BOX-GUIDE.md) says how to open boxes from Ptyxis without
+[MOATHUT-GUIDE.md](MOATHUT-GUIDE.md) says how to open boxes from Ptyxis without
 it.
 
 What stays open, and is warned about:

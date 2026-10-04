@@ -14,7 +14,7 @@ question:
 The responder writes a status file of its own. The drop chain in the
 workload's namespace counts the packets it drops. Where each one lives
 depends on how the programs were placed: `examples/README.md` gives the
-paths for the user units, and [BOX.md](BOX.md), "Files", gives them for
+paths for the user units, and [MOATHUT.md](MOATHUT.md), "Files", gives them for
 a box.
 
 ## The journal
