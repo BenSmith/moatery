@@ -467,12 +467,12 @@ proving host: host_rig 33/33, netns_rig 30/30, vm_rig 30/30, this rig
 `--placement netns` 20/20 and `--placement sidecar` 22/22, sidecar_rig
 38/38, box_rig 130/130. No defect.
 
-## box_rig.py — a moathut box, through its command line
+## box_rig.py — a moathut hut, through its command line
 
 `docs/MOATHUT.md`: `moathut credential add`, `create`, `enter`, `log`,
-`allow`, `policy`, `stop` and `rm`, the box's units run by the user's
+`allow`, `policy`, `stop` and `rm`, the hut's units run by the user's
 manager and quadlet, the namespace its netns unit holds, the netns
-placement's rules and listeners in it, and the box's broker.
+placement's rules and listeners in it, and the hut's broker.
 The tool is the checkout's `bin/moathut`, or with
 `MOATERY_LIBEXEC=/usr/libexec/moatery` the installed one.
 
@@ -501,43 +501,43 @@ row; under `--without-held-netns` the pod makes its own namespace, and
 loads the rules into it at its start; and the workload's `Exec=` is a
 script whose
 first act at every start is a request to the provider, with a nonce in
-its path, recorded in the box's home, and under `--listeners-required`
+its path, recorded in the hut's home, and under `--listeners-required`
 its unit `Requires=` both listeners, as it did before the policy loop;
 and under `--without-reopen`, for the record's row alone, the
 rotation's `ExecStart=` is an `mv` of the record and signals nothing.
 That request is the window: the row for each start is the stub's log and
 the record naming its nonce.
 The provider is brokered: the rig seals a key with `credential add`, the
-box holds a placeholder, and the stub answers 200 only to the sealed
+hut holds a placeholder, and the stub answers 200 only to the sealed
 key, which only the broker has, and 401 to anything else. Its
 `/slow/N/` path, with the key, is a download of N 64 KiB chunks 0.1 s
 apart, long enough for an `allow` to land in it.
 
 **Rows.** `credential add` seals the key, and neither file holds it. The
-files `create` lays out, and nothing started; the box is made with
+files `create` lays out, and nothing started; the hut is made with
 `--autostart`, and `ls` says so. The chain as the manager
 loaded it: the workload wants the listeners and requires neither, the
 broker is Type=notify and bound to nothing, the pod is bound to the
 namespace's unit, which is Type=notify and bound to nothing of the
-box's, and the pod pulls in the record's rotation timer, which is
+hut's, and the pod pulls in the record's rotation timer, which is
 `PartOf=` it. A failing rules
 load starts nothing: `enter` refuses, the workload's first act never
 happened, and `stop` leaves nothing active. The first request, brokered,
 at the first start, at every workload restart and pod restart, and
-after `stop` and `enter`. Root in the box holds no `CAP_NET_ADMIN` and
+after `stop` and `enter`. Root in the hut holds no `CAP_NET_ADMIN` and
 the user no capability; the rules are in the pod's namespace, which is
 the one the netns unit holds; the pod has no cgroup. Root in a shell
 `podman exec --privileged` opens is refused `ip link add` and `ip link
 set lo down`, and the host's nft with those credentials is refused
 `nft flush ruleset`, the rules staying; that shell does not warn; the
-box's pasta has the arguments podman gives a stock pod's. Each pod
+hut's pasta has the arguments podman gives a stock pod's. Each pod
 restart keeps the held namespace. `enter`'s user, home, working directory and `--root`.
-The box's home is not the user's, and the directories between it and a
+The hut's home is not the user's, and the directories between it and a
 mount in it are the user's. A `:ro` mount. The host's hosts file is not
-the box's. riglib's DNS rows, the silent drop, quic, and TCP 22 dropped.
+the hut's. riglib's DNS rows, the silent drop, quic, and TCP 22 dropped.
 The brokered host and the unlisted one, as the user and as root by sudo.
-The box's placeholder, by exec and by `enter`, and never the key; the
-broker's socket on the host and not in the box, and no TCP socket. A
+The hut's placeholder, by exec and by `enter`, and never the key; the
+broker's socket on the host and not in the hut, and no TCP socket. A
 stopped broker: a request is refused 502, never reaches the provider,
 and the record says `credential broker unreachable`; `enter` starts it
 again. The premise that systemd will not start a broker stopped while
@@ -565,17 +565,17 @@ record padded past 32 MiB, the manager's run of the rotation moves it
 aside, and the next request's line is in a new record and not in the
 moved one. A file outside
 the home is gone after a restart. Autostart: the manager loaded the
-workload as wanted by `default.target`, and with the box stopped, its
+workload as wanted by `default.target`, and with the hut stopped, its
 start of `default.target`, which is what a login or a lingering boot
-does, starts the box with the rules, and the first request is
-inspected; a box made without `--autostart` it does not start. After
+does, starts the hut with the rules, and the first request is
+inspected; a hut made without `--autostart` it does not start. After
 `podman pod restart` the pod is in the held namespace, with the rules,
 and `enter` serves it; with a table deleted from the host, `ls` marks
-the box unprotected and `enter` refuses it, and `stop` then `enter`
-serves it again; a container run by hand from the box's image, prompt
-and mark warns; a pod the box left does not start while the namespace's
+the hut unprotected and `enter` refuses it, and `stop` then `enter`
+serves it again; a container run by hand from the hut's image, prompt
+and mark warns; a pod the hut left does not start while the namespace's
 unit is stopped. `credential
-rm` is refused while the box names the credential. `rm` leaves no unit,
+rm` is refused while the hut names the credential. `rm` leaves no unit,
 pod or container, nor the broker's socket, and keeps the home and the
 record; `create`, with a policy naming no credential, finds the home
 again and writes no broker; `rm --home` removes it; then `credential rm`
@@ -588,13 +588,13 @@ none of which the unit suite could see:
   to the command: the parser took everything after the name. Found
   writing the rig. The words after the first `--` are the command's now.
 - a mount inside the home had its mount point, and every directory above
-  it, made by the runtime as the box's root: the user could not write in
+  it, made by the runtime as the hut's root: the user could not write in
   its own `~/.local`, and `rm --home`, which ignored errors, left the
   home and said nothing. `create` makes those directories as the user,
   and `rm --home` removes the home through `podman unshare`.
-- the box's user held all eleven of podman's default capabilities,
+- the hut's user held all eleven of podman's default capabilities,
   effective and ambient, and could `chown` a root file without sudo. The
-  home row above passed over a stale home the box's root owned, which is
+  home row above passed over a stale home the hut's root owned, which is
   how it showed. Podman gives a non-root user what `--cap-add` names,
   and a container whose user is not named gets root's set, which exec as
   the keep-id user keeps. The unit drops every capability outside the
@@ -610,7 +610,7 @@ left out the home row goes red, `Permission denied`.
 Facts for the design. `podman pod restart` leaves every unit active
 while the workload runs in a new namespace with no rules; its first
 request there got no answer (no responder, and the provider's address
-is the pod's own loopback), and `enter` refuses the box, as
+is the pod's own loopback), and `enter` refuses the hut, as
 `docs/MOATHUT.md` says. `systemctl restart` of the pod returns in under a
 second, before the listeners and the workload are back; quadlet adds
 `Wants=` from the pod to its container, which is what brings the
@@ -717,25 +717,25 @@ manager outlives the ssh session, and `start default.target` is the
 job the manager queues at its own start.
 
 **No user site, 2026-10-03.** 103/103 against the RPM, with every
-program's shebang and every interpreter line a box's units carry
+program's shebang and every interpreter line a hut's units carry
 running `python3 -s`. The run before it was 102/103: `log` did not
 end within 10 s of its SIGINT, once, and the rerun was green. `log`
 starts with the rig's own interpreter, which the change does not
 touch.
 
 The same day, autostart was proven at a real boot, outside the rig: a
-box created with `--autostart`, linger on, the host rebooted. The
+hut created with `--autostart`, linger on, the host rebooted. The
 linger session (logind class `manager`) started the user's manager, and
 the chain was active with its rules loaded before the first login
 (class `user`).
 
-**The held namespace, 2026-10-04.** The box's namespace moved from its
+**The held namespace, 2026-10-04.** The hut's namespace moved from its
 pod to the netns unit (podman 5.8.7, systemd 259.9, crun 1.28,
 kernel 7.2). 120/121 at first: the chain row read systemd's default
 `Requires=app.slice basic.target` on the netns unit as a binding; it
-asks now for none of the box's units. Then 121/121. A shell `podman
+asks now for none of the hut's units. Then 121/121. A shell `podman
 exec --privileged` opens was refused `ip link add` and `ip link set lo
-down`, and the host's nft as root with every capability in the box's
+down`, and the host's nft as root with every capability in the hut's
 user namespace was refused `nft flush ruleset` ("Operation not
 permitted"), the tables staying; a left pod's `podman pod start` failed
 with `crun: open .../moathut-netns/NAME: No such file or directory`.
@@ -752,7 +752,7 @@ Facts for the design, from probes beside the rig the same day:
   pasta kept the cgroup populated. The holder is a fork whose parent
   exits, so podman exits 0 and the holder's parent is the user manager;
   its `kill -9` then failed the unit, and the pod and pasta went with
-  it, and the next `enter` served the box again;
+  it, and the next `enter` served the hut again;
 - moat-netns-listen's pidfd join of the infra's user and network
   namespaces at once works on a namespace the parent user namespace
   owns; joining the user namespace first, then the network one, is
@@ -760,13 +760,13 @@ Facts for the design, from probes beside the rig the same day:
 - a daemon-reload that gives a running unit `BindsTo=` on an inactive
   one stops it (two bare user units), which is why a running pod's
   network files wait for its next `enter`;
-- a privileged exec keeps the box's seccomp filter and `container_t`
+- a privileged exec keeps the hut's seccomp filter and `container_t`
   label: podman's exec changes capabilities alone, and crun applies the
-  container's filter to every exec. The box's user, without any
+  container's filter to every exec. The hut's user, without any
   capability, can already `unshare -Urn` and, inside, add links, open
   the netfilter socket and mount a tmpfs.
 
-**The box's seccomp profile, 2026-10-04.** On the proving host
+**The hut's seccomp profile, 2026-10-04.** On the proving host
 (podman 5.8.7, crun 1.28, libseccomp 2.6.1, kernel 7.2.5): 126/126.
 `--podman-seccomp` 124/126, the two rows of refusals, every call of
 the probe reaching the kernel there (`clone3` EINVAL, `setns` EBADF,
@@ -775,7 +775,7 @@ by podman's profile and one with an upper bit in its family made. The
 unit tests' breaks (moathut's unit line, the file written with the
 units, each of the profile's shapes) each turned a test red.
 
-Beside the rig, in a box-shaped container (keep-id, the toolbox image)
+Beside the rig, in a container shaped like a hut (keep-id, the toolbox image)
 under each profile: sudo, `dnf install`, git over HTTPS, curl and
 threaded subprocesses worked under `strict` as under podman's default;
 gdb ("During startup program exited with code 127"), strace and
@@ -783,7 +783,7 @@ gdb ("During startup program exited with code 127"), strace and
 libseccomp's readings, measured the same day, are in
 `tests/test_seccomp.py`'s docstring.
 
-**A box's SELinux level, 2026-10-04.** On the proving host (podman
+**A hut's SELinux level, 2026-10-04.** On the proving host (podman
 5.8.7, SELinux enforcing): 130/130. Beside the rig, by hand: a
 container at a level of its own in a pod at podman's random one ran at
 its own level and wrote its `:Z` mount, and was refused `/dev/shm`,
@@ -794,7 +794,7 @@ unchanged: podman relabelled nothing. A container at another fixed
 level, and one at podman's random one, were refused the directory.
 The unit tests' breaks (the pod's level, the workload's, a level
 different from the pod's, each of the four `:Z` mounts, a mount made
-`:Z`, create's level, the level given a box without one, a level drawn
+`:Z`, create's level, the level given a hut without one, a level drawn
 twice, categories unsorted) each turned a test red.
 
 **The sidecar's SELinux level, 2026-10-04.** On the proving host

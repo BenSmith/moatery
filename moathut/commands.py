@@ -35,7 +35,7 @@ from .units import (CA_VARIABLES, MARK_PATH, PROMPT_PATH, Settings,
 DEFAULT_IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
 DEFAULT_LIBEXEC = "/usr/libexec/moatery"
 
-# The system bundles this knows, Fedora's first. The box's is mounted
+# The system bundles this knows, Fedora's first. The hut's is mounted
 # over the first of these its image has.
 TRUST_PATHS = ("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
                "/etc/ssl/certs/ca-certificates.crt",
@@ -56,7 +56,7 @@ chmod 0440 /etc/sudoers.d/moathut
 
 PASSED_THROUGH = ("TERM", "COLORTERM", "LANG")
 
-# What a credential's variable may not be: the box sets these itself.
+# What a credential's variable may not be: the hut sets these itself.
 RESERVED = CA_VARIABLES + PASSED_THROUGH
 
 
@@ -66,7 +66,7 @@ class BoxError(Exception):
 
 def _box(name, dirs):
     if not valid_name(name):
-        raise BoxError(f"{name!r}: a box's name is lowercase letters, "
+        raise BoxError(f"{name!r}: a hut's name is lowercase letters, "
                        "digits and inner dashes, 48 at most")
     return Box(name, dirs)
 
@@ -78,7 +78,7 @@ _sample = random.SystemRandom().sample
 
 
 def _free_level(dirs):
-    """Two categories no box has, its SELinux level."""
+    """Two categories no hut has, its SELinux level."""
     taken = {settings.level for _, settings in _boxes(dirs)}
     while True:
         level = "s0:c{},c{}".format(*sorted(_sample(range(CATEGORIES), 2)))
@@ -87,11 +87,11 @@ def _free_level(dirs):
 
 
 def _existing(name, dirs):
-    """The box and its settings: a box with no level is given one, which
+    """The hut and its settings: a hut with no level is given one, which
     it runs at from its next start."""
     box = _box(name, dirs)
     if not box.settings.exists():
-        raise BoxError(f"no box {name}")
+        raise BoxError(f"no hut {name}")
     settings = Settings.from_json(box.settings.read_text())
     if settings.level is None:
         settings = settings._replace(level=_free_level(dirs))
@@ -124,22 +124,22 @@ def _policy(path):
 
 
 def _broker(policy, dirs, load=None):
-    """The box's broker, from its policy and the credentials it names."""
+    """The hut's broker, from its policy and the credentials it names."""
     try:
         broker = brokering(
             policy, load or (lambda c: credentials.read(dirs, c)))
     except CredentialError as exc:
         raise BoxError(f"policy: {exc}") from None
     if broker and dirs.runtime is None:
-        raise BoxError("XDG_RUNTIME_DIR is not set, and a box's broker "
+        raise BoxError("XDG_RUNTIME_DIR is not set, and a hut's broker "
                        "listens in it")
     return broker
 
 
 # Written into a home that lacks them, as Fedora's /etc/skel has them:
 # the login shell enter starts reads .bash_profile, which reads .bashrc,
-# which puts ~/.local/bin on PATH, where an installer run in the box puts
-# its tools, and reads the box's prompt, which bash would otherwise not.
+# which puts ~/.local/bin on PATH, where an installer run in the hut puts
+# its tools, and reads the hut's prompt, which bash would otherwise not.
 _BASH_PROFILE = """\
 [ -f ~/.bashrc ] && . ~/.bashrc
 """
@@ -156,7 +156,7 @@ export PATH
 
 def _written(box, settings, broker):
     """Path to text, for each file the units are and each they read
-    that is written with them: a box's own seccomp profile is not, and
+    that is written with them: a hut's own seccomp profile is not, and
     stays as it was copied in."""
     written = {**render(box, settings, broker), box.prompt: prompt(box),
                box.containers_conf: containers_conf(box)}
@@ -164,7 +164,7 @@ def _written(box, settings, broker):
         try:
             written[box.seccomp] = seccomp.render(settings.seccomp)
         except ValueError as exc:
-            raise BoxError(f"box {box.name}: {exc}") from None
+            raise BoxError(f"hut {box.name}: {exc}") from None
     return written
 
 
@@ -177,7 +177,7 @@ def _running(box, runner):
 
 
 def _write_units(box, settings, broker, runner):
-    """The box's files as `_written` gives them, and the units it no
+    """The hut's files as `_written` gives them, and the units it no
     longer has removed. While its pod runs, the files its namespace and
     its shells started with are kept: a reload would give the running
     pod a unit bound to a namespace unit that is not running, and the
@@ -195,7 +195,7 @@ def _write_units(box, settings, broker, runner):
             path.unlink(missing_ok=True)
     # The workload mounts it, and podman will not start a container with
     # a mount whose source is missing. Empty until the rules name the
-    # namespace, which the box reads as not knowing.
+    # namespace, which the hut reads as not knowing.
     box.netns_mark.parent.mkdir(parents=True, exist_ok=True)
     box.netns_mark.touch()
 
@@ -242,14 +242,14 @@ def _own_profile(given, cwd):
 def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
            libexec, pythonpath, uid, gid, cwd, environ, autostart=False,
            dry_run=False, like=None, profile=None, runner=run):
-    """The box; with dry_run, what would be written, path to text, and
-    nothing is. A box `like` another starts from its policy, image,
+    """The hut; with dry_run, what would be written, path to text, and
+    nothing is. A hut `like` another starts from its policy, image,
     mounts and seccomp profile: a policy, image or profile given
     replaces its, and a mount given joins its, replacing one at the same
     target. `profile` names one of seccomp's or a file, copied in."""
     box = _box(name, dirs)
     if box.config.exists() or any(p.exists() for p in box.unit_files):
-        raise BoxError(f"box {name} exists")
+        raise BoxError(f"hut {name} exists")
     for kind in ("container", "pod"):
         if runner(["podman", kind, "exists", name],
                   check=False).returncode == 0:
@@ -271,11 +271,11 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
         policy_path = policy_path or other.policy
         image = image or other_settings.image
         targets = {mount.target for mount, _ in given}
-        inherited = [(mount, f"box {like}'s mount")
+        inherited = [(mount, f"hut {like}'s mount")
                      for mount in other_settings.mounts
                      if mount.target not in targets]
     if policy_path is None:
-        raise BoxError("create needs --policy FILE or --like BOX")
+        raise BoxError("create needs --policy FILE or --like HUT")
     if own is not None:
         profile = None
     elif profile is None:
@@ -316,7 +316,7 @@ def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
     for path in (box.config, box.state, box.logs, box.home):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
     # The runtime makes a missing mount point, and each directory above
-    # it, as the box's root, which the user could not write in its own
+    # it, as the hut's root, which the user could not write in its own
     # home.
     for mount in settings.mounts:
         target = PurePosixPath(mount.target)
@@ -352,7 +352,7 @@ def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
 
 def _units_to_stop(box):
     """The namespace's unit stops the pod, and the pod what is bound to
-    it; the pod is named too, for a box whose units have no namespace's
+    it; the pod is named too, for a hut whose units have no namespace's
     unit yet."""
     return [box.pod_service] + [
         unit for unit, path in ((box.netns_service, box.netns_file),
@@ -378,7 +378,7 @@ def _discard(box, *, home, runner):
 
 
 def _remove_home(box, runner):
-    # The box's other uids write in its home too: root by sudo, and the
+    # The hut's other uids write in its home too: root by sudo, and the
     # runtime.
     runner(["podman", "unshare", "rm", "-rf", "--", str(box.share)],
            check=False)
@@ -417,7 +417,7 @@ def _broker_state(box, runner):
 
 
 def _listeners(box):
-    """Each listener's unit, and what the box's workload finds while it
+    """Each listener's unit, and what the hut's workload finds while it
     is not running."""
     return ((box.inspect_service, "inspector",
              "its connections are refused"),
@@ -455,7 +455,7 @@ def _clear_broker(box, runner):
 
 
 def _refresh(box, settings, dirs, runner):
-    """A stopped box's files written again if this moathut would write
+    """A stopped hut's files written again if this moathut would write
     them otherwise, so its start is one this moathut made."""
     broker = _broker(_policy(box.policy), dirs)
     units = _written(box, settings, broker)
@@ -476,10 +476,10 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
     try:
         runner(["systemctl", "--user", "start", box.service])
     except CommandFailed as exc:
-        raise BoxError(f"box {name} did not start ({exc}); see "
+        raise BoxError(f"hut {name} did not start ({exc}); see "
                        f"journalctl --user -u '{box.unit}*'") from None
     if not rules_loaded(pod_pid(name, runner), runner):
-        raise BoxError(f"box {name}'s namespace has no moatery rules. "
+        raise BoxError(f"hut {name}'s namespace has no moatery rules. "
                        f"moathut stop {name}, then enter it again")
     # Nothing requires them, so the workload starts without them.
     for unit, what, effect in _listeners(box):
@@ -488,14 +488,14 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
         runner(["systemctl", "--user", "reset-failed", unit], check=False)
         if runner(["systemctl", "--user", "start", unit],
                   check=False).returncode != 0:
-            warn(f"box {name}'s {what} did not start, and {effect} until "
+            warn(f"hut {name}'s {what} did not start, and {effect} until "
                  f"it does; see journalctl --user -u {unit}")
     # Started again if it stopped; without it, a request with one of its
     # credentials is refused, not sent without.
     if box.broker_file.exists() and runner(
             ["systemctl", "--user", "start", box.broker_service],
             check=False).returncode != 0:
-        warn(f"box {name}'s broker did not start, and requests with its "
+        warn(f"hut {name}'s broker did not start, and requests with its "
              f"credentials are refused; see journalctl --user -u "
              f"{box.broker_service}")
     uid, gid = (0, 0) if root else (settings.uid, settings.gid)
@@ -517,7 +517,7 @@ def stop(name, *, dirs, runner=run):
 
 
 def rm(name, *, home, dirs, runner=run):
-    """Remove the box, or with `home`, the home a box removed without it
+    """Remove the hut, or with `home`, the home a hut removed without it
     left behind."""
     box = _box(name, dirs)
     if box.settings.exists():
@@ -525,9 +525,9 @@ def rm(name, *, home, dirs, runner=run):
     elif home and box.share.exists():
         _remove_home(box, runner)
     else:
-        raise BoxError(f"no box {name}")
+        raise BoxError(f"no hut {name}")
     if home and box.share.exists():
-        raise BoxError(f"box {name} is removed but its home is not: "
+        raise BoxError(f"hut {name} is removed but its home is not: "
                        f"podman unshare rm -rf {box.share}")
     return [str(box.logs)] + ([] if home else [str(box.home)])
 
@@ -551,7 +551,7 @@ def _ptyxis_get(runner, key):
 
 
 def ptyxis_add(name, *, dirs, runner=run):
-    """Write the box's Ptyxis profile, or write it again."""
+    """Write the hut's Ptyxis profile, or write it again."""
     _, settings = _existing(name, dirs)
     if not _has_ptyxis(runner):
         raise BoxError("Ptyxis's settings are not installed here: no "
@@ -562,7 +562,7 @@ def ptyxis_add(name, *, dirs, runner=run):
     default = _ptyxis_get(runner, "default-profile-uuid")
     if not default or default[0] not in listed or default[0] == own:
         raise BoxError("Ptyxis has no default profile of its own, so the "
-                       "box's would become it: open Ptyxis once, then "
+                       "hut's would become it: open Ptyxis once, then "
                        "run this again")
     path = ptyxis.profile_path(name)
     for key, value in ptyxis.keys(settings, name):
@@ -574,7 +574,7 @@ def ptyxis_add(name, *, dirs, runner=run):
 
 
 def ptyxis_remove(name, *, runner=run):
-    """Remove the box's Ptyxis profile; whether it had one."""
+    """Remove the hut's Ptyxis profile; whether it had one."""
     _box(name, None)
     if not _has_ptyxis(runner):
         return False
@@ -623,7 +623,7 @@ def log(name, *, dirs, write=print, pause=time.sleep):
 
 
 def refused(name, *, dirs):
-    """The refusals in the box's record its policy would still make, and
+    """The refusals in the hut's record its policy would still make, and
     the names its workload asked for that no list admits."""
     box, _settings = _existing(name, dirs)
     policy = _policy(box.policy)
@@ -635,7 +635,7 @@ def refused(name, *, dirs):
 
 def allow(name, host, *, methods, paths, dirs, runner=run,
           pause=time.sleep):
-    """Widen the box's policy for HOST and apply it. None if the policy
+    """Widen the hut's policy for HOST and apply it. None if the policy
     allows it already."""
     box, settings = _existing(name, dirs)
     policy = _policy(box.policy)
@@ -652,7 +652,7 @@ def allow(name, host, *, methods, paths, dirs, runner=run,
 
 def edit_policy(name, *, dirs, environ, isatty, runner=run,
                 edit=subprocess.run, ask=input, pause=time.sleep):
-    """Open a copy of the box's policy in the user's editor, and apply it
+    """Open a copy of the hut's policy in the user's editor, and apply it
     once it loads. A copy that does not is opened again, if there is a
     terminal to ask on. None if it came back unchanged."""
     box, settings = _existing(name, dirs)
@@ -695,7 +695,7 @@ def _private(path, text):
 
 def _checked(box, text, dirs):
     """The text staged beside the policy, loaded as the inspector will
-    load it, and the broker it gives the box; or raise, staging nothing."""
+    load it, and the broker it gives the hut; or raise, staging nothing."""
     staged = box.config / ".policy.json.new"
     try:
         _private(staged, text)
@@ -718,7 +718,7 @@ _RELOAD_POLL = 0.1
 
 
 class Applied(NamedTuple):
-    """What a new policy did to a box. `restarted` is why its inspector
+    """What a new policy did to a hut. `restarted` is why its inspector
     was restarted rather than reloaded, or None; `moved`, whether the
     workload's unit changed while it ran, which it has from its next
     start."""
@@ -776,12 +776,12 @@ def _apply_policy(box, settings, staged, broker, runner, pause):
             runner(["systemctl", "--user", "try-restart",
                     box.inspect_service])
         except CommandFailed as exc:
-            raise BoxError(f"box {box.name}'s policy is replaced, but its "
+            raise BoxError(f"hut {box.name}'s policy is replaced, but its "
                            f"inspector did not start again ({exc}); see "
                            f"journalctl --user -u {box.inspect_service}"
                            ) from None
     if broker_failed:
-        raise BoxError(f"box {box.name}'s policy is replaced, but its broker "
+        raise BoxError(f"hut {box.name}'s policy is replaced, but its broker "
                        "did not start, and requests with its credentials "
                        "are refused; see journalctl --user -u "
                        f"{box.broker_service}")
@@ -814,7 +814,7 @@ def _enforcing(box, digest, pause):
 
 
 def _naming(credential, dirs):
-    """The boxes whose policies name the credential, with their settings
+    """The huts whose policies name the credential, with their settings
     and policies."""
     for box, settings in _boxes(dirs):
         policy = _policy(box.policy)
@@ -835,9 +835,9 @@ def _replace(path, data, mode=0o600):
 def credential_add(credential, secret, *, hosts, env, auth_header,
                    auth_format, dirs, runner=run):
     """Seal the secret, or replace one sealed before: what is not given is
-    kept, and so is the placeholder. The boxes naming it are written
+    kept, and so is the placeholder. The huts naming it are written
     again and their brokers restarted. Returns their names and whether
-    the variable changed, which a running box's workload has from its
+    the variable changed, which a running hut's workload has from its
     next start."""
     if not valid_name(credential):
         raise BoxError(f"{credential!r}: a credential's id is lowercase "
@@ -867,7 +867,7 @@ def credential_add(credential, secret, *, hosts, env, auth_header,
         try:
             boxes.append((box, settings, _broker(policy, dirs, load)))
         except BoxError as exc:
-            raise BoxError(f"box {box.name}: {exc}") from None
+            raise BoxError(f"hut {box.name}: {exc}") from None
     credentials_root(dirs).mkdir(mode=0o700, parents=True, exist_ok=True)
     path = sealed(dirs, credential)
     staged = path.with_name(f".{path.name}.new")
@@ -931,10 +931,10 @@ def _until_stopped():
 
 def unit_netns(name, *, dirs, runner=run, ready=notify_ready,
                wait=_until_stopped, fork=os.fork):
-    """The box's network namespace, made in the user namespace `podman
+    """The hut's network namespace, made in the user namespace `podman
     unshare` is root in, as the netns unit runs it: connected by pasta,
-    the rules in, and its name where the box reads it, written in place,
-    since the box mounts the file and not the directory. What a holder
+    the rules in, and its name where the hut reads it, written in place,
+    since the hut mounts the file and not the directory. What a holder
     killed left is let go first.
 
     Then a fork holds it, until `wait` returns or raises, and lets go;
@@ -943,7 +943,7 @@ def unit_netns(name, *, dirs, runner=run, ready=notify_ready,
     child then, is one whose end the manager sees."""
     box = _box(name, dirs)
     if dirs.runtime is None:
-        raise BoxError("XDG_RUNTIME_DIR is not set, and a box's network "
+        raise BoxError("XDG_RUNTIME_DIR is not set, and a hut's network "
                        "namespace is held in it")
     path = box.namespace
     release(path, runner)

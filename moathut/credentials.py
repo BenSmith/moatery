@@ -1,8 +1,8 @@
 """Credentials: each sealed once to this user and host, and held by the
-broker of every box whose policy names it.
+broker of every hut whose policy names it.
 
-A credential's hosts are the most it is sent to. A box's broker holds
-it for those of them the box's policy brokers with it, so an edited
+A credential's hosts are the most it is sent to. A hut's broker holds
+it for those of them the hut's policy brokers with it, so an edited
 policy cannot send a key anywhere its `credential add` did not name.
 """
 
@@ -46,7 +46,7 @@ class Credential(NamedTuple):
 
 
 class Broker(NamedTuple):
-    """What a box's broker holds: the credential each host it serves is
+    """What a hut's broker holds: the credential each host it serves is
     sent, and those credentials, in the order the policy names them."""
     hosts: tuple
     credentials: tuple
@@ -74,7 +74,7 @@ def describe(credential, hosts, env, auth_header, auth_format, fiction,
     if not named:
         raise CredentialError("a credential needs a --host")
     if not _VARIABLE.fullmatch(env) or env in reserved:
-        raise CredentialError(f"--env {env!r} is not a variable a box's "
+        raise CredentialError(f"--env {env!r} is not a variable a hut's "
                               "credential may set")
     if "{secret}" not in auth_format:
         raise CredentialError(f"--auth-format {auth_format!r} has no "
@@ -106,7 +106,7 @@ def read(dirs, credential):
 
 
 def brokering(policy, load):
-    """The broker a box with this policy has, or None if it names no
+    """The broker a hut with this policy has, or None if it names no
     credential. `load` gives a credential by its id, or raises."""
     named = list(dict.fromkeys(e.credential for e in policy.policy
                                if e.credential))

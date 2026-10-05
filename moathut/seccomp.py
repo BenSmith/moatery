@@ -1,6 +1,6 @@
-"""The seccomp profiles a box's workload runs under, as podman reads
+"""The seccomp profiles a hut's workload runs under, as podman reads
 them. Each is podman's default, its capability conditions resolved
-against the box's, refusing more: making a namespace, in which the box's
+against the hut's, refusing more: making a namespace, in which the hut's
 user would be root, and the mount calls; the keyring, a vsock, and
 io_uring. `strict`, the default, refuses as well the calls that reach
 into another process, which `debug` allows.
@@ -120,7 +120,7 @@ ARCH_ALLOWED = (
     (("riscv64",), ("riscv_flush_icache",)),
 )
 
-# podman's, allowed with a capability. Those the box holds are allowed,
+# podman's, allowed with a capability. Those the hut holds are allowed,
 # the rest refused.
 GATED = (
     ("SYS_CHROOT", ("chroot",)),
@@ -149,7 +149,7 @@ OBSOLETE = (
     "swapon", "syscall", "sysfs", "uselib", "userfaultfd", "ustat", "vm86",
     "vm86old", "vmsplice")
 
-# The mount calls: a box's root holds no CAP_SYS_ADMIN, and nothing in it
+# The mount calls: a hut's root holds no CAP_SYS_ADMIN, and nothing in it
 # can be root in a namespace of its own.
 MOUNTS = ("fsconfig", "fsmount", "fsopen", "fspick", "mount",
           "mount_setattr", "move_mount", "open_tree", "open_tree_attr",

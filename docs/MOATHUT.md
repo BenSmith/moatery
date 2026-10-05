@@ -1,8 +1,8 @@
 # moathut
 
-moathut makes long-lived, inspected containers, called boxes:
+moathut makes long-lived, inspected containers, called huts:
 `moathut create NAME --policy FILE`, then `moathut enter NAME`.
-Each box is the netns placement ([DESIGN.md](DESIGN.md)) laid out
+Each hut is the netns placement ([DESIGN.md](DESIGN.md)) laid out
 much as [examples/quadlet/](../examples/quadlet/) is: a unit that makes
 the network namespace in the user's own user namespace, holds it, and
 loads the rules into it when it starts; a quadlet `.pod` that joins it,
@@ -13,18 +13,18 @@ after them.
 [MOATHUT-GUIDE.md](MOATHUT-GUIDE.md) is the user's guide; this is the
 reference.
 
-## What a box is for
+## What a hut is for
 
 An agent or a toolchain run from a terminal. It reaches the hosts its
 policy lists, over HTTPS and HTTP; it holds a placeholder where a
 provider's key would be; and it shares with the host only the
 directories `create` was told to mount. Every other port is dropped,
-so git over ssh cannot leave a box, and git over https can.
+so git over ssh cannot leave a hut, and git over https can.
 
 ## Commands
 
 ```
-moathut create NAME (--policy FILE | --like BOX) [--image IMAGE]
+moathut create NAME (--policy FILE | --like HUT) [--image IMAGE]
                    [--mount SRC[:DST][:ro]]... [--seccomp PROFILE]
                    [--autostart] [--dry-run]
 moathut enter NAME [--root] [-- COMMAND...]
@@ -41,62 +41,62 @@ moathut ptyxis NAME [--remove]
 moathut ls
 ```
 
-**create** writes the box's files (below), mints its CA with
+**create** writes the hut's files (below), mints its CA with
 `moat-mint-ca`, builds its bundle, and runs `systemctl --user
 daemon-reload`. Nothing starts. The image defaults to
 `registry.fedoraproject.org/fedora-toolbox:44`, Fedora's own, which has
 the git, Python, ssh client and manual pages `fedora:44` leaves out.
 
 - `--autostart`: the workload's unit is wanted by `default.target`, so
-  the user's manager starts the box when it starts: at login, or at boot
+  the user's manager starts the hut when it starts: at login, or at boot
   for a lingering user. It starts the same chain `enter` does, and `ls`
-  marks the box `autostart`. A box stopped with `stop` starts again at
+  marks the hut `autostart`. A hut stopped with `stop` starts again at
   the next login.
 - `--dry-run`: it prints each file it would write, its path first, and
   writes none and mints nothing. It still refuses what `create` would
   refuse, and pulls the image to find its trust store.
 - `--seccomp`: the workload's seccomp profile ("Seccomp", below):
   `strict`, the default, `debug`, or a file, copied in.
-- `--like BOX`: it starts from another box's policy, as edited since,
+- `--like HUT`: it starts from another hut's policy, as edited since,
   its image, its mounts and its seccomp profile. `--policy`, `--image`
   and `--seccomp` replace its, and a `--mount` joins its, replacing one
-  at the same target. The new box gets a home and an SELinux level of
+  at the same target. The new hut gets a home and an SELinux level of
   its own, and is not autostarted without `--autostart`. A mount whose
-  source has gone since is refused, naming the box it came from.
+  source has gone since is refused, naming the hut it came from.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
 order, the namespace's unit, which loads the rules, the pod, the broker
-and the listeners, and the workload. A stopped box whose files this
+and the listeners, and the workload. A stopped hut whose files this
 moathut would write otherwise has them written again first (The units,
 below). It then checks that the namespace holds both moatery tables,
 and refuses if it does not, before `podman exec -it` as the user (or
 uid 0 with `--root`). A listener that is not running is started
-again, and so is a box's broker. If one does not start, `enter` says so
+again, and so is a hut's broker. If one does not start, `enter` says so
 and enters anyway: without the inspector the workload's connections are
 refused, without the responder its names do not resolve, and without the
 broker a request with its credentials is refused, not sent without. The
 working directory is the host's current one if that is inside a mount,
-and the box's home otherwise.
+and the hut's home otherwise.
 
 **stop** stops the namespace's unit, and the broker's; everything bound
 to it stops too, and the namespace goes.
 
-**ls** lists each box, whether its workload is active, its image, its
+**ls** lists each hut, whether its workload is active, its image, its
 seccomp profile if not `strict` (`seccomp:debug`, or `seccomp:own` for a
 file), `autostart` if it has it, and `unprotected` if its pod runs in a
 namespace without the rules, with a warning on stderr.
 
-**rm** stops the box and removes its units and what podman made from
+**rm** stops the hut and removes its units and what podman made from
 them; its home and its record stay unless `--home`. With `--home`, a
-box already removed has the home it left removed. It removes the box's
+hut already removed has the home it left removed. It removes the hut's
 Ptyxis profile too.
 
 **ptyxis** writes a Ptyxis profile, `moathut NAME`, whose tabs run
 `moathut enter NAME` on the host (`default-container` `session`) and
-whose new tabs do the same whatever the box has printed
+whose new tabs do the same whatever the hut has printed
 (`preserve-container` `never`). It sets the profile's keys with
 `gsettings` at `/org/gnome/Ptyxis/Profiles/UUID/`, the UUID one derived
-from the box's name, and adds it to `profile-uuids`. Ptyxis's default is
+from the hut's name, and adds it to `profile-uuids`. Ptyxis's default is
 the listed profile `default-profile-uuid` names, else the first listed,
 so it refuses unless Ptyxis has a default of its own. `--remove`
 removes the profile; a Ptyxis from Flatpak, whose settings are its own,
@@ -107,7 +107,7 @@ is not reached.
 The command line is simple. The policy is where the effort goes: every
 host the workload reaches has to be listed.
 
-- **log** follows the box's record, one line per request or refused
+- **log** follows the hut's record, one line per request or refused
   connection, from its last twenty, and on into the next file when it is
   rotated. With `--refused` it prints instead the lines, in the record
   and the rotated ones it keeps, whose decision is `drop`, counted by
@@ -129,9 +129,9 @@ host the workload reaches has to be listed.
 - Either checks the edited document with the inspector's own loader
   (`moatery.inspect_policy.load_policy`), and its credentials as
   `create` does, before it replaces the file, so a mistake is an error
-  at the command and not a box whose inspector will not start. A policy
+  at the command and not a hut whose inspector will not start. A policy
   that names a credential for the first time gains a broker, and one that
-  names none loses it: the box's units are written again. Then, if they
+  names none loses it: the hut's units are written again. Then, if they
   are running, the inspector and the responder are reloaded
   ([POLICY.md](POLICY.md)): a request already relaying finishes, and
   the next is decided against the new document. Nothing is cut, and
@@ -140,18 +140,18 @@ host the workload reaches has to be listed.
   which a broker gained or lost does, when `tls` changed, or when it
   did not take the reload; a restart binds again in the same namespace,
   a connection in the gap is refused, not let through, and one open is
-  cut. The command says which it did. A stopped box has the policy from
+  cut. The command says which it did. A stopped hut has the policy from
   its next start; a running workload has a new credential's variable
   from its next start.
 
-Package installs inside a box are the hard case: a mirror list spreads
+Package installs inside a hut are the hard case: a mirror list spreads
 over many hosts, and the install does not outlive a stop (next
-section). A box's tools are better built into its image.
+section). A hut's tools are better built into its image.
 
 ## What persists
 
 Quadlet runs the workload with `--replace --rm`, and removes it at
-stop: every start is a new container from the image. The box's home is
+stop: every start is a new container from the image. The hut's home is
 a mount, so it persists, and with it anything installed under it (`pip
 install --user`, an installer that writes to `~/.local`). The image's
 filesystem does not, and neither does a `dnf install`.
@@ -165,34 +165,34 @@ variable, the header and format (the broker's defaults are `x-api-key`
 and `{secret}`), and a placeholder. `--auth-header` and `--auth-format`
 are the broker's own flags, so its refusals name the flag that was
 given. The placeholder is always generated, never given: it is written
-into the box's units and environment, where nothing secret belongs. All
+into the hut's units and environment, where nothing secret belongs. All
 of it is checked by the broker's own `build_profiles` with the real
 secret first, so a key the broker would refuse is refused here. A
-credential is sealed once and serves every box whose policy names it.
+credential is sealed once and serves every hut whose policy names it.
 
 Adding an ID that exists replaces it: the secret, and whichever of the
 hosts, variable, header and format are given; the placeholder stays.
-The units of every box whose policy names it are written again and a
+The units of every hut whose policy names it are written again and a
 running broker is restarted, which a request in the gap finds refused.
 A changed variable reaches a running workload at its next start. A
-replacement a box could no longer hold is refused, and nothing changes.
+replacement a hut could no longer hold is refused, and nothing changes.
 
 **credential ls** lists each credential: its ID, its variable, its
-hosts, and the boxes whose policy names it. **credential rm** refuses
-while a box's policy names the credential.
+hosts, and the huts whose policy names it. **credential rm** refuses
+while a hut's policy names the credential.
 
-A credential's hosts are the most it is sent to. Each box has its own
+A credential's hosts are the most it is sent to. Each hut has its own
 broker, holding the credentials its policy names, for those of their
 hosts the policy brokers with them: the inspector's own choice of
 credential for a host, among the hosts `credential add` named. The
-broker picks a credential by `Host`, so a broker for every box lets two
-boxes hold different keys for one provider, and `rm` takes the box's
+broker picks a credential by `Host`, so a broker for every hut lets two
+huts hold different keys for one provider, and `rm` takes the hut's
 broker with it. The workload's environment gets each named credential's
 variable, set to its placeholder.
 
 ## Files
 
-For box NAME, credential ID:
+For hut NAME, credential ID:
 
 | what | where |
 |---|---|
@@ -204,7 +204,7 @@ For box NAME, credential ID:
 | seccomp profile | `~/.config/moatery/box/NAME/seccomp.json` |
 | CA, certificates, status files, the namespace's name | `~/.local/state/moatery/box/NAME/` |
 | record | `~/.local/state/log/moatery/box/NAME/requests.log`, and `.1` to `.4.gz` |
-| the box's home | `~/.local/share/moatery/box/NAME/home/` |
+| the hut's home | `~/.local/share/moatery/box/NAME/home/` |
 | namespace | `~/.config/systemd/user/moathut-NAME-netns.service` |
 | the namespace, held | `$XDG_RUNTIME_DIR/moathut-netns/NAME` |
 | pod, workload | `~/.config/containers/systemd/moathut-NAME.{pod,container}` |
@@ -214,13 +214,13 @@ For box NAME, credential ID:
 | credential | `~/.config/moatery/credentials/ID.{cred,json}` |
 
 The container is named NAME, and so is its pod, so `podman` commands
-take the box's name; `create` refuses a name podman already uses. The
-credentials are beside the boxes, not among them, where they would be a
-box's directory.
+take the hut's name; `create` refuses a name podman already uses. The
+credentials are beside the huts, not among them, where they would be a
+hut's directory.
 
 ## The units
 
-moathut writes, for each box, the units
+moathut writes, for each hut, the units
 [examples/quadlet/](../examples/quadlet/) has as files:
 `moathut-NAME.pod` for `example.pod`, `moathut-NAME.container`
 for `example.container`, `moathut-NAME-inspect.service` and
@@ -247,14 +247,14 @@ units differ from the example's in these ways:
 - The pod joins that namespace (`Network=ns:%t/moathut-netns/NAME`),
   and is `BindsTo=` and `After=` its unit. The pod's user namespace
   (keep-id) is a child of the one that owns the network namespace, so
-  root in the box, even with every capability `podman exec
+  root in the hut, even with every capability `podman exec
   --privileged` gives, cannot change it, and the rules stay.
-  `DNS=169.254.1.1` keeps the box's `resolv.conf` as pasta's would be;
+  `DNS=169.254.1.1` keeps the hut's `resolv.conf` as pasta's would be;
   the rules send port 53 to the responder whatever the address. podman
   applies `containers.conf`'s default net sysctls to a container joining
   a namespace by path, and the pod's infra container may not set them in
   one its user namespace does not own, so the pod's unit points
-  `CONTAINERS_CONF_OVERRIDE` at the box's `containers.conf`, which
+  `CONTAINERS_CONF_OVERRIDE` at the hut's `containers.conf`, which
   empties `default_sysctls`. The workload joins the pod's namespace,
   which podman sets none in.
 - The tool starts the listeners in the namespace (`moathut unit exec
@@ -264,7 +264,7 @@ units differ from the example's in these ways:
 - The workload `Wants=` the listeners, where the example's `Requires=`
   them, and a listener that dies is started again
   (`Restart=on-failure`); below says why.
-- Each box has a broker of its own, written only if its policy names a
+- Each hut has a broker of its own, written only if its policy names a
   credential, and with no `[Install]`. The inspector `Wants=` and is
   ordered `After=` it, as in the example: not `Requires=`, which would
   restart the inspector, and with it the workload, at every new key.
@@ -285,33 +285,33 @@ units differ from the example's in these ways:
   is set in the workload's environment from `credential add`.
   A package that rebuilds the system bundle cannot replace it: the
   rebuild renames a new file over the mount point, which fails with
-  `EBUSY`. Upgrading Fedora's `ca-certificates` in a box therefore fails
+  `EBUSY`. Upgrading Fedora's `ca-certificates` in a hut therefore fails
   its `%posttrans`, and dnf reports the transaction failed, with the
-  packages installed and the box's bundle unchanged.
-- Each box has a home of its own, a directory on the host that only it
+  packages installed and the hut's bundle unchanged.
+- Each hut has a home of its own, a directory on the host that only it
   mounts, at the path the user's home has on the host: keep-id maps the
   user to the same name and uid inside. The user's own home directory
   is never mounted. The workload's working directory is that path too:
   podman writes the passwd entry of a user keep-id brings in with the
   working directory as its home, and `HOME` from it.
-- Each box has an SELinux level of its own, two categories no other box
+- Each hut has an SELinux level of its own, two categories no other hut
   has, drawn at `create` and kept in `box.json`. Its pod and its
   workload run at it (the pod's `--security-opt label=level:`, the
   workload's `SecurityLabelLevel=`): the workload joins the pod's IPC
   namespace, and its `/dev/shm` is labelled at the pod's level. Its
   home, bundle, prompt and mark are mounted `:Z`, labelled at that
-  level, which a container at any other is refused: another box's, or
+  level, which a container at any other is refused: another hut's, or
   one run by hand. A start that finds them labelled at it relabels
-  nothing. A mount is `:z`, the label every container reads, so boxes
-  can share a project. A box with no level in `box.json` is given one
+  nothing. A mount is `:z`, the label every container reads, so huts
+  can share a project. A hut with no level in `box.json` is given one
   by the next command that reads it, and runs at it from its next
   start.
-- The workload's unit names the box's user and drops every capability
+- The workload's unit names the hut's user and drops every capability
   outside podman's default set ("Refused", below).
 - At each start the workload's unit writes a sudoers drop-in, as root in
   the container (`ExecStartPost=`), giving the user sudo without a
   password: the image's own rule asks for one, and the user has none.
-  Root in a box is filtered as the user is.
+  Root in a hut is filtered as the user is.
 - The record is rotated by the tool (`moathut unit rotate NAME`),
   from a timer the pod's unit `Wants=` and that is `PartOf=` it, a
   minute after that unit starts and every ten after, where the example
@@ -321,12 +321,12 @@ units differ from the example's in these ways:
   openssl mints, which a HUP ends. Four are kept, all but `.1`
   compressed: a line being written as the record moved lands in `.1`,
   which is compressed at the rotation after. The inspector stops writing
-  a record past 512 MiB, and a box writing that much in ten minutes
+  a record past 512 MiB, and a hut writing that much in ten minutes
   loses its lines until the next rotation. The tool, not logrotate,
   which neither the image nor every host has.
 - The programs run with python's `-s`, so the user's own site-packages
   cannot come ahead of the installed package.
-- No `[Install]` unless `--autostart`: without it a box runs from
+- No `[Install]` unless `--autostart`: without it a hut runs from
   `enter` to `stop`.
 - `Timezone=local`: the workload's clock reads in the host's zone, not
   the image's (UTC in Fedora's).
@@ -342,10 +342,10 @@ units differ from the example's in these ways:
   it.
 - The prompt also warns, in an interactive shell only, when the shell is
   in another namespace than the rules were loaded into, as one in a
-  container run by hand from the box's image and files is. Its prompt
+  container run by hand from the hut's image and files is. Its prompt
   then reads `⬢ NAME UNPROTECTED`, white on red. The namespace's unit,
   after loading the rules, writes the namespace's name (`net:[INODE]`,
-  as `/proc/self/ns/net` reads) to `netns` in the box's state
+  as `/proc/self/ns/net` reads) to `netns` in the hut's state
   directory, in place, since the workload mounts that file read-only at
   `/run/moathut/netns`, and leaves it there when it stops. It is made
   empty with the units, since podman will not start a container whose
@@ -353,11 +353,11 @@ units differ from the example's in these ways:
   knowing. A mount may not cover it. A shell `podman exec --privileged`
   opens is not warned: it is in the namespace with the rules, and
   cannot change them.
-- Units written while the box's pod runs, by `allow`, `policy` or
+- Units written while the hut's pod runs, by `allow`, `policy` or
   `credential add`, leave the namespace's, the pod's, the override and
   the prompt as they are: after a reload, the manager stops a running
   unit that has gained a `BindsTo=` on one that is not running. `enter`
-  writes every file when it starts a stopped box, so a box an earlier
+  writes every file when it starts a stopped hut, so a hut an earlier
   moathut made is brought up to date by its next `enter` after a
   `stop`; one started at login is not.
 
@@ -385,16 +385,16 @@ them; one that dies is started again (`Restart=on-failure`).
 - a mount that overlaps `$XDG_RUNTIME_DIR`, a moatery directory above,
   or podman's or systemd's user configuration and storage: those hold
   the broker's socket, the CA's key, the sealed credentials, and the
-  units that load a box's rules, which a box able to write them could
+  units that load a hut's rules, which a hut able to write them could
   drop;
 - a name outside `[a-z0-9-]`, or one podman already uses;
 - a policy naming a credential that has not been added, an entry naming
   one for a host `credential add` did not name, a credential an earlier
   entry takes every host of, and two credentials setting one variable;
-- a credential in a box when `XDG_RUNTIME_DIR` is not set, since the
+- a credential in a hut when `XDG_RUNTIME_DIR` is not set, since the
   broker's socket is in it.
 
-`credential add` refuses a host that is not a name, a variable the box
+`credential add` refuses a host that is not a name, a variable the hut
 sets itself (the CA variables, `TERM`, `COLORTERM`, `LANG`), a format
 without `{secret}`, and whatever the broker would refuse at its start: a
 header that is not one, a secret with a line break, a placeholder equal
@@ -405,24 +405,24 @@ network but the namespace the tool holds, and no capability, device,
 `--privileged` or hosts flag. The workload's unit drops every
 capability outside podman's default set,
 which has no `NET_ADMIN`, so a `containers.conf` cannot widen root's in
-the box. It adds none, and names the box's user: podman gives the user
+the hut. It adds none, and names the hut's user: podman gives the user
 the capabilities a unit adds, and root's when the unit names no user.
 The user holds none.
 
 ## Seccomp
 
-The workload's unit names the box's profile (`SeccompProfile=`), and
+The workload's unit names the hut's profile (`SeccompProfile=`), and
 crun loads it for every process in the container and every `podman
 exec`, a privileged one too: an exec changes capabilities, not the
 filter.
 
 `strict`, the default, is podman's default profile (containers-common)
-with its capability conditions resolved for the box's capabilities,
+with its capability conditions resolved for the hut's capabilities,
 refusing more:
 
 | refused | fails with | why |
 |---|---|---|
-| `unshare` and `clone` with a `CLONE_NEW*` flag; `setns` | EPERM | nothing in the box is root in a namespace of its own, where the kernel's network and mount code is open to it |
+| `unshare` and `clone` with a `CLONE_NEW*` flag; `setns` | EPERM | nothing in the hut is root in a namespace of its own, where the kernel's network and mount code is open to it |
 | `clone3` | ENOSYS | glibc falls back to `clone`, whose flags the filter can read; `clone3`'s are behind a pointer |
 | `mount`, `umount2`, `pivot_root`, `fsopen`, `fsmount`, `fsconfig`, `fspick`, `open_tree`, `move_mount`, `mount_setattr` | EPERM | |
 | `ptrace`, `process_vm_readv`, `process_vm_writev`, `pidfd_getfd` | EPERM | `debug` allows them |
@@ -435,17 +435,17 @@ with code 127", strace "ptrace(PTRACE_SEIZE, ...): Operation not
 permitted", and `unshare -Ur` "unshare failed: Operation not
 permitted". `debug` is `strict` with the four ptrace calls allowed, for
 gdb, strace and profilers; neither makes a namespace. A named profile is
-written again with the units, so a box takes the profile of the moathut
+written again with the units, so a hut takes the profile of the moathut
 that starts it; a file given to `--seccomp` is kept as it was copied.
 
-`strict` breaks containers inside a box (podman, buildah), bubblewrap
+`strict` breaks containers inside a hut (podman, buildah), bubblewrap
 and the sandboxes built on it (Flatpak's, Claude Code's on Linux),
-Chromium's sandbox, and anything that runs `unshare`. A box that needs
+Chromium's sandbox, and anything that runs `unshare`. A hut that needs
 them takes a profile of its own; `--seccomp
 /usr/share/containers/seccomp.json` is podman's default.
 
-Refusing ptrace narrows the kernel a box reaches. It does not keep the
-box's processes from one another: they share a user, and
+Refusing ptrace narrows the kernel a hut reaches. It does not keep the
+hut's processes from one another: they share a user, and
 `/proc/PID/mem` is a file, not a call the filter sees.
 
 podman's default refuses a vsock by comparing the whole register, while
@@ -460,35 +460,35 @@ A workload restart, by anything, keeps the namespace and its rules, and
 so does a restart of the pod, by the manager or by podman (`podman pod
 restart NAME`): the pod joins the namespace the namespace's unit holds.
 A pod started while that unit is stopped does not start, since the
-namespace's file is gone; and a stopped box leaves no pod or container
+namespace's file is gone; and a stopped hut leaves no pod or container
 to start: quadlet removes them. A shell opened with `podman exec
---privileged`, as Ptyxis opens every container's tab, runs as the box's
+--privileged`, as Ptyxis opens every container's tab, runs as the hut's
 user with no capability in effect, but its bounding set is every
 capability (`000001ffffffffff`, where a moathut shell's is
 `00000000800405fb`), so root in it, by sudo, holds every capability in
-the box's user namespace. That namespace does not own the network
+the hut's user namespace. That namespace does not own the network
 namespace, so even that root cannot change the rules. It keeps the
-box's seccomp profile and SELinux label, which podman's exec does not
+hut's seccomp profile and SELinux label, which podman's exec does not
 change, so it makes no namespace and mounts nothing, but it is still a
-shell whose sudo has every capability in the box, and Ptyxis lists
-boxes in its container menu and opens a new tab in the container a
+shell whose sudo has every capability in the hut, and Ptyxis lists
+huts in its container menu and opens a new tab in the container a
 tab's text last named (OSC 777 or 666), which a workload can print;
-`moathut ptyxis NAME` writes a profile that opens the box without it.
+`moathut ptyxis NAME` writes a profile that opens the hut without it.
 
 What stays open, and is warned about:
 
 - The user, on the host, is root over the namespace (`podman unshare`),
-  and can remove the rules. `enter` refuses such a box and `ls` marks it
+  and can remove the rules. `enter` refuses such a hut and `ls` marks it
   `unprotected`, but shells already in it cannot tell.
-- A box's mounts are labelled for every container to read, so boxes
+- A hut's mounts are labelled for every container to read, so huts
   can share them, and so can any container the user runs. Podman draws
   an ordinary container's level from the same pairs of categories as a
-  box's, without knowing a stopped box's: the chance of one drawn twice
+  hut's, without knowing a stopped hut's: the chance of one drawn twice
   is one in 523776.
-- A container run by hand from the box's image is not the box: podman
+- A container run by hand from the hut's image is not the hut: podman
   gives it a network of its own, without the rules. An interactive shell
-  in one that mounts the box's prompt and mark warns; one that mounts
-  neither cannot know it is the box's.
+  in one that mounts the hut's prompt and mark warns; one that mounts
+  neither cannot know it is the hut's.
 
 ## Where it lives
 
@@ -500,7 +500,7 @@ The moatery RPM carries it, `/usr/bin/moathut` and the package beside
 `tests/test_closure.py` holds both: the imports, and the RPM's spec
 installing both packages and every program.
 Its bash completion, `completions/moathut.bash`, is installed where
-bash-completion loads it; it completes commands, options, box names
+bash-completion loads it; it completes commands, options, hut names
 from `~/.config/moatery/box` and credential names, and
 `tests/test_completion.py` holds it to the parser and those paths.
 
@@ -509,7 +509,7 @@ from `~/.config/moatery/box` and credential names, and
 The moatery programs; podman 5.3 or later (quadlet `.pod` units with
 `DNS=`), with pasta; util-linux's `unshare`, `nsenter` and `umount`;
 systemd 256 or later (`LoadCredentialEncrypted=` in a user unit); a
-lingering user (`loginctl enable-linger`) for a box to outlive the login
+lingering user (`loginctl enable-linger`) for a hut to outlive the login
 session.
 
 ## Proving it
@@ -517,38 +517,38 @@ session.
 A rig, `tests/manual/box_rig.py`, on a real host, through the command
 line ([tests/manual/README.md](../tests/manual/README.md)):
 
-- the workload's first request at every start, the box's first, each
+- the workload's first request at every start, the hut's first, each
   restart of the workload and of the pod, and `enter` after `stop`, is
   inspected: the rules and the listeners are in place before it;
-- a rules load that fails starts nothing, and `enter` refuses the box;
+- a rules load that fails starts nothing, and `enter` refuses the hut;
 - a listed host answers and an unlisted one is refused 403, as the user
   and as root by sudo; the workload's DNS is the responder's; UDP 443,
   TCP 22 and a stray datagram are dropped and counted;
-- root in the box holds no `CAP_NET_ADMIN`, and the user no capability;
+- root in the hut holds no `CAP_NET_ADMIN`, and the user no capability;
   root in a shell `podman exec --privileged` opens, and root with every
-  capability in the box's user namespace, are refused changes to the
+  capability in the hut's user namespace, are refused changes to the
   namespace and its rules, and the shell is not warned; the pod is in
   the namespace the namespace's unit holds, whose pasta has the
   arguments podman gives a pod's;
-- the box's user, and root in a privileged exec, are refused by the
+- the hut's user, and root in a privileged exec, are refused by the
   profile a namespace, a mount, ptrace, the keyring and a vsock however
   its family is written, while a thread, an inet and a netlink socket
   reach the kernel; in a stock container the same calls reach the
   kernel; under `debug`, ptrace does;
-- the workload runs at the box's level, and its home, bundle, prompt and
+- the workload runs at the hut's level, and its home, bundle, prompt and
   mark are labelled at it; its `/dev/shm` is writable; a container at
-  podman's own level is refused the box's home, and one at the box's
-  reads it; two boxes share a mount, at their two levels;
-- `enter` runs in the box's home, or the mount the host's directory is
-  in; the user's own home is not the box's; a file outside the home is
+  podman's own level is refused the hut's home, and one at the hut's
+  reads it; two huts share a mount, at their two levels;
+- `enter` runs in the hut's home, or the mount the host's directory is
+  in; the user's own home is not the hut's; a file outside the home is
   gone after a restart;
-- `podman pod restart` keeps the namespace and its rules; a pod the box
+- `podman pod restart` keeps the namespace and its rules; a pod the hut
   left does not start while the namespace's unit is stopped; with a
-  table removed from the host, `ls` marks the box unprotected and
-  `enter` refuses it; a container run by hand from the box's image and
+  table removed from the host, `ls` marks the hut unprotected and
+  `enter` refuses it; a container run by hand from the hut's image and
   files warns;
 - a brokered request reaches a stub provider carrying the sealed key,
-  at every start of the broker as well, while the box holds the
+  at every start of the broker as well, while the hut holds the
   placeholder and has no path to the broker's socket; a stopped broker's
   request is refused, never sent without the key, and `enter` starts it
   again, even after a stop while it started; a new key with `credential
@@ -556,9 +556,9 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
   restarted;
 - `rm` leaves no unit, container or namespace, nor the broker's socket,
   and keeps the home and the record, which `create` finds again; `rm
-  --home` removes the home; `credential rm` is refused while a box names
+  --home` removes the home; `credential rm` is refused while a hut names
   the credential;
-- `log --refused` names a host the box was refused; `allow` lists it and
+- `log --refused` names a host the hut was refused; `allow` lists it and
   reloads the listeners, a download running through it finishing whole,
   and the host is dialled after;
 - a `policy` edit the loader refuses changes and restarts nothing;

@@ -320,7 +320,7 @@ loaded that dial succeeds, and the list only changes the report.
   so they are started with it; [examples/quadlet/](../examples/quadlet/)
   does that with a unit holding the namespace, and moathut
   ([MOATHUT.md](MOATHUT.md)) is built on it, with the namespace made and held
-  in the user's own user namespace, where root in the box cannot change
+  in the user's own user namespace, where root in the hut cannot change
   the rules.
 - **Sidecar** needs no host install: the programs are an image. It
   needs more rules, since the programs' own dials leave through the
@@ -556,7 +556,7 @@ neighbour discovery.
 
 **Proved by** `tests/manual/netns_rig.py`, which runs this recipe;
 [examples/quadlet/](../examples/quadlet/) is it as a quadlet pod, and
-`tests/manual/box_rig.py` proves moathut, which lays it out per box.
+`tests/manual/box_rig.py` proves moathut, which lays it out per hut.
 
 ## Sidecar: moatery in the workload's pod
 
@@ -810,7 +810,7 @@ whoever lays it out does them. `tests/test_closure.py` holds the
 programs to importing nothing that knows what a workload is.
 
 moathut is one such layout, shipped in the same RPM: it writes a
-box's units and loads its rules ([MOATHUT.md](MOATHUT.md)). It stands beside
+hut's units and loads its rules ([MOATHUT.md](MOATHUT.md)). It stands beside
 the programs; they never import it.
 
 ## Proving a new placement

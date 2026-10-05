@@ -207,7 +207,7 @@ class TestThePackageIsTheClosure(unittest.TestCase):
 
 def _box_imports(path):
     """(moathut modules, moatery modules, other top-level names) one
-    file of the box's imports."""
+    file of the hut's imports."""
     box, lib, other = set(), set(), set()
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.ImportFrom):
@@ -307,7 +307,7 @@ class TestTheRpmCarriesEverything(unittest.TestCase):
     def test_every_program_leaves_the_user_site_off(self):
         """Run as a user, a program would otherwise import from that
         user's site-packages ahead of the installed package -- and a
-        directory in the user's home can be a box's mount. Under SELinux
+        directory in the user's home can be a hut's mount. Under SELinux
         the probe is also a denial logged on every start."""
         programs = [*self._programs("libexec"), *self._programs("bin"),
                     Path(REPO_ROOT) / "container" / "moat-sidecar"]

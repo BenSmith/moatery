@@ -1,4 +1,4 @@
-"""Where a box's files are, from its name and the user's directories."""
+"""Where a hut's files are, from its name and the user's directories."""
 
 import os
 import re
@@ -9,8 +9,8 @@ from typing import NamedTuple
 # once: no dots, no leading or trailing dash.
 NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?")
 
-# In the user's runtime directory: where each box's network namespace is
-# held, by the box's name.
+# In the user's runtime directory: where each hut's network namespace is
+# held, by the hut's name.
 NETNS_DIR = "moathut-netns"
 
 
@@ -48,7 +48,7 @@ def boxes_root(dirs):
 
 
 def credentials_root(dirs):
-    """Beside the boxes, not among them, where a box's name could be
+    """Beside the huts, not among them, where a hut's name could be
     its."""
     return dirs.config / "moatery" / "credentials"
 
@@ -62,8 +62,8 @@ def described(dirs, credential):
 
 
 def protected(dirs):
-    """What no box may mount, or mount a parent of, or mount from inside:
-    every box's key, policy, record and home, the units that load its
+    """What no hut may mount, or mount a parent of, or mount from inside:
+    every hut's key, policy, record and home, the units that load its
     rules, podman's storage, and the runtime directory the broker's
     socket is in."""
     paths = [dirs.config / "moatery", dirs.state / "moatery",
@@ -127,7 +127,7 @@ class Box(NamedTuple):
 
     @property
     def netns_mark(self):
-        """The namespace the rules were last loaded into, which the box
+        """The namespace the rules were last loaded into, which the hut
         reads to tell whether it is in that one."""
         return self.state / "netns"
 
@@ -154,7 +154,7 @@ class Box(NamedTuple):
 
     @property
     def namespace(self):
-        """Where the box's network namespace is held: bound there in
+        """Where the hut's network namespace is held: bound there in
         podman's mount namespace, which `podman unshare` joins, and an
         empty file in the host's."""
         return self.dirs.runtime / NETNS_DIR / self.name

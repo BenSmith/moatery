@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""box_rig.py — a moathut box, made and run through its command line.
+"""box_rig.py — a moathut hut, made and run through its command line.
 
 docs/MOATHUT.md: `moathut credential add`, `create`, `enter`, `log`,
-`allow`, `policy`, `stop` and `rm`, the box's units run by the user's
+`allow`, `policy`, `stop` and `rm`, the hut's units run by the user's
 manager and quadlet, the namespace its netns unit holds, the netns
-placement's rules and listeners in it, and the box's broker. Run on the
+placement's rules and listeners in it, and the hut's broker. Run on the
 proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/box_rig.py [--keep] [--without-rules]
@@ -28,7 +28,7 @@ removes them before `rm`:
   broker    the same, and a PYTHONPATH whose sitecustomize sleeps 3 s, so
             the broker's start has a window a request can fall in; with
             --broker-not-ready, Type=simple.
-  workload  Exec= is a script in the box's home in place of `sleep
+  workload  Exec= is a script in the hut's home in place of `sleep
             infinity`; with --podman-seccomp, SeccompProfile= names
             podman's default. At every start its first act is a request to the
             provider, whose nonce and status it appends to a file in the
@@ -42,13 +42,13 @@ removes them before `rm`:
             leaves the pod, as a crash of the manager can.
   quadlet pod  with --without-held-netns, Network=pasta, and an
             ExecStartPost= that loads the rules into the pod's own
-            namespace and writes its name where the box reads it.
+            namespace and writes its name where the hut reads it.
   rotate    with --without-reopen, for the record's row only, its
             ExecStart= moves the record aside and signals nothing.
 
 The stub is on the host's 127.0.0.1, which the pod cannot reach, so
 anything the stub answers came by the inspector's dial. The provider is
-brokered: the box holds a placeholder, and the stub answers 200 only to
+brokered: the hut holds a placeholder, and the stub answers 200 only to
 the key the rig sealed, which only the broker holds, and 401 to anything
 else. Every request's path carries a nonce, found in the stub's log and
 in the record.
@@ -60,7 +60,7 @@ THE ROWS
             then wrote, as it wrote it, but the SELinux level, drawn at
             each; the files docs/MOATHUT.md lists are
             there, with a .bashrc in the home, and nothing started; the
-            box is made with --autostart, and ls says so.
+            hut is made with --autostart, and ls says so.
   chain     the manager loaded the order: the workload Wants= both
             listeners, Requires= neither, and is After= them, and is
             BindsTo= the pod; each
@@ -72,46 +72,46 @@ THE ROWS
   fail      with the namespace's rules load failing, enter refuses and
             the workload never ran: its first act left no line; stop
             leaves no unit active.
-  first     at the box's first start, the workload's first request was
+  first     at the hut's first start, the workload's first request was
             inspected and brokered: the stub answered 200 and logged its
             path, and the record says forward under the credential.
-  premise   root in the box, by sudo, holds no CAP_NET_ADMIN and is refused
+  premise   root in the hut, by sudo, holds no CAP_NET_ADMIN and is refused
             `ip link add`; the user holds no capability at all; the rules
             are in the pod's namespace, which is the one the netns unit
             holds; the pod has no cgroup of its own.
-  enter     as the user, with the box's home as working directory, HOME
+  enter     as the user, with the hut's home as working directory, HOME
             and passwd home; from inside a mount, in the same directory
             inside; with --root, as uid 0. An interactive bash's prompt
-            starts with the box's name, magenta, and red as root; the
-            box's clock reads in the host's zone.
+            starts with the hut's name, magenta, and red as root; the
+            hut's clock reads in the host's zone.
   warn      no shell enter opens warns, as the user or as root, and the
-            namespace's name the box reads is its own; nor does one
+            namespace's name the hut reads is its own; nor does one
             podman exec --privileged opens.
   held      a shell podman exec --privileged opens, root with every
-            capability in the box's user namespace, as Ptyxis opens a
+            capability in the hut's user namespace, as Ptyxis opens a
             container's tab, is refused `ip link add` and `ip link set lo
             down`; the host's nft with those credentials is refused
             `nft flush ruleset`, and the rules stay; the pasta serving
-            the box has the arguments podman gives a stock pod's.
+            the hut has the arguments podman gives a stock pod's.
   seccomp   a probe whose calls each take an argument the kernel
             rejects: in a stock container every one reaches the kernel,
             a vsock with an upper bit in its family among them; in the
-            box, the profile refuses the user, and root in a privileged
+            hut, the profile refuses the user, and root in a privileged
             exec, a namespace, a mount, ptrace, the keyring and a vsock
             however written, and lets a thread, an unshare of nothing
             new and an inet and a netlink socket through.
-  home      the box's home is its own: a file in the user's home is absent
-            inside, and one written inside is in the box's home on the
+  home      the hut's home is its own: a file in the user's home is absent
+            inside, and one written inside is in the hut's home on the
             host and not in the user's. The directories between the home
             and a mount inside it are the user's to write in.
   mount     a :ro mount is at the DST it was given, and read-only.
-  label     the workload runs at the box's level, and its home, bundle,
+  label     the workload runs at the hut's level, and its home, bundle,
             prompt and mark are labelled at it; its /dev/shm, the pod's,
             is writable; a container at podman's own level is refused the
-            box's home, which one at the box's level reads.
+            hut's home, which one at the hut's level reads.
   hosts     the host's hosts file, which has the rig's line for the
-            provider, is not the box's.
-  dns       riglib's rows, asked by the user in the box.
+            provider, is not the hut's.
+  dns       riglib's rows, asked by the user in the hut.
   silent    a filtered UDP send returns rc=0 while the drop counter moves.
   quic      a UDP send to 443 moves the quic counter, and is dropped.
   ssh       a TCP connect to port 22 times out, and is dropped.
@@ -122,8 +122,8 @@ THE ROWS
   root      root, by sudo, which drops the CA variables, is inspected the
             same: the listed host verifies through the bundle mounted over
             the system store, and the unlisted one gets the 403.
-  broker    the box holds the placeholder, by exec and by enter, and never
-            the key; the broker's socket is on the host and not in the box,
+  broker    the hut holds the placeholder, by exec and by enter, and never
+            the key; the broker's socket is on the host and not in the hut,
             and it holds no TCP socket. Stopped, a request is refused 502,
             never reaches the provider, and the record says why; enter
             starts it again, and a request is served. Premise: systemd
@@ -175,18 +175,18 @@ THE ROWS
             where the user is root over the namespace, ls marks it
             unprotected and says so, and enter refuses it; stop, then
             enter, serves it again. A container run by hand from the
-            box's image, prompt and mark warns that the box is not
-            protected. A pod the box left, started by podman while the
+            hut's image, prompt and mark warns that the hut is not
+            protected. A pod the hut left, started by podman while the
             namespace's unit is stopped, does not start.
-  like      create --like the box, as the loop left its policy, with
-            --seccomp debug: the new box has its policy, image and
+  like      create --like the hut, as the loop left its policy, with
+            --seccomp debug: the new hut has its policy, image and
             mounts, and neither its autostart, its home nor its level;
-            entered, it reads the :ro mount at its DST, and what the box,
+            entered, it reads the :ro mount at its DST, and what the hut,
             entered as well, writes in their shared mount; under debug
             ptrace
             reaches the kernel and a namespace is refused still; rm
             --home leaves nothing of it.
-  rm        credential rm is refused while the box names it; no unit, pod
+  rm        credential rm is refused while the hut names it; no unit, pod
             or container is left, nor the broker's socket; the home and the
             record stay, and create, with a policy naming no credential,
             finds the home again and writes no broker; made without
@@ -194,31 +194,31 @@ THE ROWS
             it; then credential rm removes the credential.
 
 `--without-rules` puts an nft that loads nothing ahead of the system's
-for the holder, so the box starts with no rules in its namespace: first,
+for the holder, so the hut starts with no rules in its namespace: first,
 the premise that the rules are there, enter (which refuses) and every
-row through it on the rig's box (warn's first and the broker's
+row through it on the rig's hut (warn's first and the broker's
 placeholder among them), held's nft row (no rules to keep), dns,
 silent, quic, ssh, listed, unlisted, root, the broker's requests,
 rotate, the loop's rows that make a request or read one back, the
 record's rotation, the killed inspector's, and enter's, restart,
 stop's enter and its first request, autostart's, and outside's rows
-that enter serves the box, with its ls, must go red. (The killed
+that enter serves the hut, with its ls, must go red. (The killed
 inspector's row is red because an enter refused left the broker
 stopped, and the inspector's restart starts it: Wants=.) The like and
-rm rows enter other boxes, which the drop-in is not on.
+rm rows enter other huts, which the drop-in is not on.
 
 `--without-held-netns` lets the pod make its own namespace, as
 Network=pasta does, which its keep-id user namespace owns, and loads
 the rules into it at its start: held's rows that root with every
-capability in the box is refused, premise's that the pod's namespace is
+capability in the hut is refused, premise's that the pod's namespace is
 the held one, restart's that each pod restart keeps it, and outside's
 that `podman pod restart` keeps it and that a left pod does not start,
 must go red.
 
 `--podman-seccomp` runs the workload under podman's default seccomp
-profile: seccomp's rows that the box's user, and root in a privileged
+profile: seccomp's rows that the hut's user, and root in a privileged
 exec, are refused by the profile must go red. Its stock container's row
-and the row of what a box does stay green, and so does the like box's,
+and the row of what a hut does stay green, and so does the like hut's,
 which the drop-in is not on.
 
 `--listeners-required` adds `Requires=` on both listeners to the
@@ -243,7 +243,7 @@ logrotate configuration without its `postrotate` would: the record's
 row that the next request's line is in the new record must go red,
 since the inspector writes on into the file it has open.
 
-`--without-autostart` makes the box without --autostart: the create
+`--without-autostart` makes the hut without --autostart: the create
 row's ls, and the autostart rows, must go red, and outside's first,
 which restarts the pod the autostart row started.
 
@@ -303,13 +303,13 @@ LISTENERS = {INSPECT_SERVICE, RESOLVE_SERVICE}
 # docs/MOATHUT.md's default.
 IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
 
-# docs/MOATHUT.md's table of a box's files.
+# docs/MOATHUT.md's table of a hut's files.
 CONFIG = HOME / ".config" / "moatery" / "box" / BOX
 STATE = HOME / ".local" / "state" / "moatery" / "box" / BOX
 LOGS = HOME / ".local" / "state" / "log" / "moatery" / "box" / BOX
 SHARE = HOME / ".local" / "share" / "moatery" / "box" / BOX
 BOX_HOME = SHARE / "home"
-# A box made --like the rig's.
+# A hut made --like the rig's.
 TWIN = "moatery-rig-twin"
 TWIN_CONFIG = CONFIG.parent / TWIN
 TWIN_SHARE = SHARE.parent / TWIN
@@ -337,7 +337,7 @@ DESCRIBED = CREDENTIALS / f"{CREDENTIAL}.json"
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR")
                or f"/run/user/{os.getuid()}")
 BROKER_SOCKET = RUNTIME / "moathut" / BOX / "broker.sock"
-# Where the netns unit holds the box's namespace: a file on the host,
+# Where the netns unit holds the hut's namespace: a file on the host,
 # bound in podman's mount namespace.
 NAMESPACE = RUNTIME / "moathut-netns" / BOX
 
@@ -357,13 +357,13 @@ FAILING_RULES = f"[Service]\nEnvironment=PATH={NFT_FAILS}:{HOLDER_PATH}\n"
 NO_RULES = f"[Service]\nEnvironment=PATH={NFT_LOADS_NOTHING}:{HOLDER_PATH}\n"
 # With --without-held-netns, the pod makes its own namespace, which its
 # user namespace owns, and this loads the rules into it and names it
-# where the box reads it, as a pod's own start once did.
+# where the hut reads it, as a pod's own start once did.
 OLD_RULES = RIG / "box-old-rules"
 # The pod's unit removes the pod when it stops; emptied, a stop leaves
 # the pod, as a crash of the manager can.
 POD_LEFT = "[Service]\nExecStopPost=\n"
 
-# Inside, the box's home is at the user's home's path.
+# Inside, the hut's home is at the user's home's path.
 INSIDE = str(HOME)
 START = ".moatery-rig-start"
 STARTS = ".moatery-rig-starts"
@@ -457,7 +457,7 @@ RULES = {"table inet moatery", "table netdev moatery"}
 
 OLD_RULES_SCRIPT = f"""\
 # written by tests/manual/box_rig.py: under podman unshare, the rules
-# into the pod's own namespace, and its name where the box reads it.
+# into the pod's own namespace, and its name where the hut reads it.
 from pathlib import Path
 from moathut.netns import load_rules, netns_id, pod_pid
 held = Path(f"/proc/{{pod_pid('{BOX}')}}/ns/net")
@@ -499,7 +499,7 @@ print(json.dumps({
     "socket netlink audit": call(41, 16, 3, 9),
 }))
 """
-# What the probe's calls get from the box's profile, strict.
+# What the probe's calls get from the hut's profile, strict.
 SECCOMP_REFUSED = {
     "clone NEWUSER": "EPERM", "clone NEWNET": "EPERM",
     "unshare NEWUSER": "EPERM", "clone3": "ENOSYS", "setns": "EPERM",
@@ -513,7 +513,7 @@ SECCOMP_KERNEL = {
     "unshare NEWUSER": "EINVAL", "clone3": "EINVAL", "setns": "EBADF",
     "mount": "ENOENT", "ptrace": "ESRCH", "process_vm_readv": "0",
     "pidfd_getfd": "EBADF", "keyctl": "ENOTSUP"}
-# And what the box does, which reaches the kernel under either.
+# And what the hut does, which reaches the kernel under either.
 SECCOMP_ALLOWED = {
     "clone THREAD": "EINVAL", "unshare nothing new": "EINVAL",
     "socket inet": "EINVAL", "socket netlink route": "0",
@@ -532,7 +532,7 @@ time.sleep(3)
 """
 
 
-# --- the tool and the box ----------------------------------------------------
+# --- the tool and the hut ----------------------------------------------------
 
 def box(*args, cwd=RIG, timeout=180, input=None, env=None):
     """moathut as the user types it, with `input`, or nothing, on its
@@ -548,7 +548,7 @@ def exec_in(argv, *, user=USER, timeout=30):
                timeout=timeout)
 
 
-# What an interactive bash in the box prints first: the prompt's warnings.
+# What an interactive bash in the hut prints first: the prompt's warnings.
 SHELL_PS1 = ["bash", "-ic", 'printf "%s\\n" "$PS1"']
 NOT_PROTECTED = "not protected by the moat"
 
@@ -581,7 +581,7 @@ def exists(kind):
 
 
 def listed(name=BOX):
-    """The box's line in `moathut ls`, as words, or None."""
+    """The hut's line in `moathut ls`, as words, or None."""
     for line in box("ls").stdout.splitlines():
         words = line.split()
         if words and words[0] == name:
@@ -806,7 +806,7 @@ def credential_rows(secret):
         f"{[p.name for p in files]}; holding the key: {holding}; "
         f"mode {mode}")
     mine = credential_listed()
-    row("credential: ls lists it for the provider, named by no box",
+    row("credential: ls lists it for the provider, named by no hut",
         mine == [CREDENTIAL, CREDENTIAL_ENV, PROVIDER, "-"], f"{mine}")
     return added.returncode == 0
 
@@ -855,7 +855,7 @@ def create_rows(autostart):
         f"missing: {missing}")
     running = {k: v for k, v in states().items() if v != "inactive"}
     mine = listed()
-    row("create: nothing started, and ls lists the box inactive on the "
+    row("create: nothing started, and ls lists the hut inactive on the "
         "default image, started at login",
         not running and not exists("pod")
         and mine == [BOX, "inactive", IMAGE, "autostart"],
@@ -902,7 +902,7 @@ def chain_rows():
     bound = (held_by["BindsTo"] | held_by["PartOf"]
              | held_by["Requires"]) & set(SERVICES)
     row("chain: the pod is BindsTo= and After= the namespace's unit, which "
-        "is Type=notify and bound to nothing of the box's",
+        "is Type=notify and bound to nothing of the hut's",
         NETNS_SERVICE in pod["BindsTo"] & pod["After"]
         and held_by["Type"] == {"notify"} and not bound,
         f"in the pod's BindsTo {NETNS_SERVICE in pod['BindsTo']}, After "
@@ -937,7 +937,7 @@ def fail_rows():
     entered = box("enter", BOX, "--", "true")
     # A workload that started writes its line within its curl's 10 s.
     wrote = await_(lambda: len(starts()) > before, 15)
-    row("fail: enter refuses a box whose rules load fails",
+    row("fail: enter refuses a hut whose rules load fails",
         entered.returncode != 0 and "did not start" in entered.stderr,
         f"rc={entered.returncode} {entered.stderr.strip()[-200:]}")
     row("fail: the workload never ran: its first act wrote nothing, and "
@@ -956,10 +956,10 @@ def first_rows():
     say("first start")
     before = len(starts())
     entered = box("enter", BOX, "--", "true")
-    row("enter: starts the box and runs a command in it",
+    row("enter: starts the hut and runs a command in it",
         entered.returncode == 0,
         f"rc={entered.returncode} {entered.stderr.strip()[-300:]}")
-    start_row("first: at the box's first start, the workload's first "
+    start_row("first: at the hut's first start, the workload's first "
               "request was inspected", await_start(before))
 
 
@@ -972,7 +972,7 @@ def premise_rows():
         key, _, value = line.partition(":")
         if key in ("CapBnd", "CapEff"):
             caps[key] = int(value.strip(), 16)
-    row("premise: root in the box, by sudo, holds no CAP_NET_ADMIN",
+    row("premise: root in the hut, by sudo, holds no CAP_NET_ADMIN",
         uid == "0" and len(caps) == 2
         and not any(v & (1 << 12) for v in caps.values()),
         f"sudo id -u: {uid!r}; "
@@ -982,7 +982,7 @@ def premise_rows():
         key, _, value = line.partition(":")
         if key in ("CapPrm", "CapEff", "CapAmb"):
             user[key] = int(value.strip(), 16)
-    row("premise: the user in the box holds no capability",
+    row("premise: the user in the hut holds no capability",
         len(user) == 3 and not any(user.values()),
         ", ".join(f"{k}={v:016x}" for k, v in user.items()))
     add = sudo_in(["ip", "link", "add", "moatery-rig0", "type", "dummy"])
@@ -1012,7 +1012,7 @@ def enter_rows(tag):
               'id -u; pwd; echo "$HOME"; '
               'getent passwd "$(id -u)" | cut -d: -f6')
     seen = got.stdout.splitlines()
-    row("enter: as the user, with the box's home as working directory, "
+    row("enter: as the user, with the hut's home as working directory, "
         "HOME and passwd home",
         seen == [str(os.getuid()), INSIDE, INSIDE, INSIDE],
         f"uid, pwd, HOME, passwd home: {seen} {got.stderr.strip()[-200:]}")
@@ -1030,12 +1030,12 @@ def enter_rows(tag):
                for root in ([], ["--root"])]
     named = [f"\\[\\e[{c}m\\]\u2b22 {BOX}\\[\\e[0m\\] "
              for c in ("35", "1;31")]
-    row("enter: bash's prompt starts with the box's name, magenta, and "
+    row("enter: bash's prompt starts with the hut's name, magenta, and "
         "red as root",
         all(p.startswith(n) for p, n in zip(prompts, named)), f"{prompts}")
     inside = exec_in(["date", "+%z %Z"]).stdout.strip()
     outside = run(["date", "+%z %Z"]).stdout.strip()
-    row("enter: the box's clock reads in the host's zone",
+    row("enter: the hut's clock reads in the host's zone",
         inside == outside, f"inside {inside!r}, host {outside!r}"
         + ("; the host is on UTC, so this shows nothing"
            if outside.startswith("+0000") else ""))
@@ -1055,7 +1055,7 @@ def warn_rows():
     infra = run(["podman", "unshare", "readlink", f"/proc/{pid}/ns/net"],
                 check=False).stdout.strip() if pid else None
     row("warn: no shell enter opens warns, as the user or as root, and the "
-        "namespace the box reads is its own",
+        "namespace the hut reads is its own",
         all(got.returncode == 0 for got in entered)
         and not any(NOT_PROTECTED in s for s in said)
         and mark is not None and mark == own == infra,
@@ -1064,7 +1064,7 @@ def warn_rows():
         f"inside {own!r}, infra {infra!r}")
     said, ps1 = interactive("--privileged")
     row("warn: nor does one podman exec --privileged opens, whose prompt "
-        "is the box's own: it cannot change the rules (held's rows)",
+        "is the hut's own: it cannot change the rules (held's rows)",
         NOT_PROTECTED not in said and f"\u2b22 {BOX}" in ps1
         and "UNPROTECTED" not in ps1,
         f"stderr {said.strip()[-200:]!r}; PS1 {ps1!r}")
@@ -1072,7 +1072,7 @@ def warn_rows():
 
 def held_rows():
     """What Ptyxis opens a container's tab with, `podman exec
-    --privileged`: root with every capability, in the box's user
+    --privileged`: root with every capability, in the hut's user
     namespace, which does not own the network namespace."""
     say("held")
     refused = {}
@@ -1090,12 +1090,12 @@ def held_rows():
         "`ip link add` and `ip link set lo down`",
         all(refused.values()), f"refused: {refused}")
     # The image has no nft: the host's, with the credentials that exec
-    # gives, root with every capability in the box's user namespace.
+    # gives, root with every capability in the hut's user namespace.
     pid = infra_pid()
     flush = run(["podman", "unshare", "nsenter", "-t", str(pid), "-U", "-n",
                  "nft", "flush", "ruleset"], check=False, timeout=30)
     found = tables(pid)
-    row("held: root with every capability in the box's user namespace is "
+    row("held: root with every capability in the hut's user namespace is "
         "refused `nft flush ruleset`, and the rules are still there",
         flush.returncode != 0 and "Operation not permitted" in flush.stderr
         and RULES <= found,
@@ -1121,14 +1121,14 @@ def held_rows():
     theirs = pasta_words(sandbox) if sandbox else None
     ours = pasta_words(NAMESPACE)
     run(["podman", "pod", "rm", "-f", "-i", stock], check=False, timeout=120)
-    row("held: the box's pasta has the arguments podman gives a pod's",
+    row("held: the hut's pasta has the arguments podman gives a pod's",
         made.returncode == 0 and theirs is not None and ours == theirs,
-        f"podman's: {theirs}; the box's: {ours}"
+        f"podman's: {theirs}; the hut's: {ours}"
         + (f"; {made.stderr.strip()[-160:]}" if made.returncode else ""))
 
 
 def seccomp_probe(*podman_exec, name=BOX):
-    """The probe's errnos, run by `podman exec` in the box `name`."""
+    """The probe's errnos, run by `podman exec` in the hut `name`."""
     got = run(["podman", "exec", *podman_exec, name, "python3",
                f"{INSIDE}/{SECCOMP_PROBE}"], check=False, timeout=60)
     try:
@@ -1143,7 +1143,7 @@ def differing(got, want):
 
 def seccomp_rows():
     """docs/MOATHUT.md's profile, by errno: in a stock container the probe's
-    arguments reach the kernel, in the box the filter answers first."""
+    arguments reach the kernel, in the hut the filter answers first."""
     say("seccomp")
     (BOX_HOME / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)
     got = run(["podman", "run", "--rm", "--network", "none", "--userns",
@@ -1163,12 +1163,12 @@ def seccomp_rows():
         f"differing: {differing(stock, SECCOMP_KERNEL)}; vsock "
         f"{stock.get('vsock')}, with an upper bit {upper}")
     mine = seccomp_probe("--user", USER)
-    row("seccomp: the box's user is refused, by the profile, a namespace, "
+    row("seccomp: the hut's user is refused, by the profile, a namespace, "
         "a mount, ptrace, the keyring and a vsock however its family is "
         "written",
         not differing(mine, SECCOMP_REFUSED),
         f"differing: {differing(mine, SECCOMP_REFUSED)}")
-    row("seccomp: and what a box does reaches the kernel: a thread, an "
+    row("seccomp: and what a hut does reaches the kernel: a thread, an "
         "unshare of nothing new, an inet and a netlink socket",
         not differing(mine, SECCOMP_ALLOWED),
         f"differing: {differing(mine, SECCOMP_ALLOWED)}")
@@ -1184,15 +1184,15 @@ def home_rows(tag):
     seen = exec_in(["sh", "-c",
                     f'test -e "{MARKER}" && echo present || echo absent; '
                     f'echo {tag} > "{INSIDE}/{WRITTEN}"']).stdout.strip()
-    row("home: a file in the user's own home is not in the box",
+    row("home: a file in the user's own home is not in the hut",
         seen == "absent" and MARKER.exists(),
         f"{MARKER.name} inside: {seen}; on the host: {MARKER.exists()}")
     on_host = BOX_HOME / WRITTEN
     wrote = on_host.exists() and on_host.read_text().strip() == tag
-    row("home: a file written in it is in the box's home on the host, "
+    row("home: a file written in it is in the hut's home on the host, "
         "not the user's",
         wrote and not (HOME / WRITTEN).exists(),
-        f"in the box's home: {wrote}; in the user's: "
+        f"in the hut's home: {wrote}; in the user's: "
         f"{(HOME / WRITTEN).exists()}")
 
     between = [f"{INSIDE}/{d}" for d in PROJECT.relative_to(HOME).parents
@@ -1215,9 +1215,9 @@ def home_rows(tag):
     say("hosts")
     inside = exec_in(["cat", "/etc/hosts"]).stdout
     host = Path("/etc/hosts").read_text()
-    row("hosts: the host's hosts file, with the rig's line, is not the box's",
+    row("hosts: the host's hosts file, with the rig's line, is not the hut's",
         HOSTS_MARK in host and HOSTS_MARK not in inside,
-        f"the line on the host: {HOSTS_MARK in host}; in the box: "
+        f"the line on the host: {HOSTS_MARK in host}; in the hut: "
         f"{HOSTS_MARK in inside}")
 
 
@@ -1307,7 +1307,7 @@ def broker_rows(secret):
     fiction = placeholder()
     env = exec_in(["env"]).stdout
     got = box("enter", BOX, "--", "printenv", CREDENTIAL_ENV)
-    row("broker: the box holds the placeholder, by exec and by enter, and "
+    row("broker: the hut holds the placeholder, by exec and by enter, and "
         "never the key",
         fiction is not None
         and f"{CREDENTIAL_ENV}={fiction}" in env.splitlines()
@@ -1318,7 +1318,7 @@ def broker_rows(secret):
         f"{got.stdout.strip()!r}; the key in either: "
         f"{secret in env or secret in got.stdout}")
     inside = exec_in(["test", "-e", str(BROKER_SOCKET)]).returncode
-    row("broker: its socket is on the host, and the box has no path to it",
+    row("broker: its socket is on the host, and the hut has no path to it",
         BROKER_SOCKET.is_socket() and inside != 0,
         f"{BROKER_SOCKET} a socket on the host: {BROKER_SOCKET.is_socket()};"
         f" test -e inside: rc={inside}")
@@ -1387,9 +1387,9 @@ def rotate_rows():
     path = f"/rotated/{os.urandom(8).hex()}"
     got = exec_in([*CURL, f"https://{PROVIDER}{path}"])
     ok, detail = served(path, got.stdout.strip())
-    row("rotate: credential add with the new key, and the box's next "
+    row("rotate: credential add with the new key, and the hut's next "
         "request carries it",
-        added.returncode == 0 and f"box {BOX}:" in added.stdout and ok,
+        added.returncode == 0 and f"hut {BOX}:" in added.stdout and ok,
         f"rc={added.returncode} {added.stdout.strip()!r} "
         f"{added.stderr.strip()[-160:]}; {detail}")
     after = {u: invocation(u) for u in before}
@@ -1540,7 +1540,7 @@ def terminal_rows():
 
 
 def loop_rows():
-    say("loop: log, allow and policy on the running box")
+    say("loop: log, allow and policy on the running hut")
     # The responder counts a name at the query and writes its status on a
     # 30 s tick.
     listed_name = await_(lambda: UNLISTED in RESOLVE_STATUS.read_text()
@@ -1597,14 +1597,14 @@ def loop_rows():
     edited = box("policy", BOX, env={"EDITOR": str(BAD_EDITOR),
                                      "VISUAL": ""})
     row("loop: policy refuses a document the loader refuses, at the "
-        "command, and the box's policy is unchanged",
+        "command, and the hut's policy is unchanged",
         edited.returncode == 1 and "'hosts'" in edited.stderr
         and (CONFIG / "policy.json").read_text() == text,
         f"rc={edited.returncode} {edited.stderr.strip()[-200:]!r}")
     moved = sorted(short(u) for u in before
                    if before[u] != loop_invocations()[u])
     ok, detail = provider_served("loop-refused")
-    row("loop: and the running box keeps its listeners: none restarted, "
+    row("loop: and the running hut keeps its listeners: none restarted, "
         "and the provider is served", moved == [] and ok,
         f"restarted: {moved}; {detail}")
     terminal_rows()
@@ -1831,8 +1831,8 @@ def stop_rows():
 
 def autostart_rows():
     """What the manager does at login, or at boot for a lingering user, is
-    start default.target; it is started here the same way, the box
-    stopped, and it is the manager that starts the box."""
+    start default.target; it is started here the same way, the hut
+    stopped, and it is the manager that starts the hut."""
     say("autostart")
     wanted = show(SERVICE, "WantedBy").split()
     box("stop", BOX)
@@ -1842,7 +1842,7 @@ def autostart_rows():
     seen = await_start(before)
     now, found = states(), tables(infra_pid())
     row("autostart: the manager's start of default.target starts the "
-        "stopped box, with the rules",
+        "stopped hut, with the rules",
         "default.target" in wanted and now["workload"] == "active"
         and RULES <= found,
         f"WantedBy={wanted}; units {now}; {sorted(found) or 'no tables'}")
@@ -1880,10 +1880,10 @@ def outside_rows():
     listing = box("ls")
     mine = listed()
     entered = box("enter", BOX, "--", "true")
-    row("outside: with a table deleted from the host, ls marks the box "
+    row("outside: with a table deleted from the host, ls marks the hut "
         "unprotected and says so, and enter refuses it",
         mine is not None and mine[-1] == "unprotected"
-        and f"box {BOX} is not protected" in listing.stderr
+        and f"hut {BOX} is not protected" in listing.stderr
         and entered.returncode != 0 and "no moatery rules" in entered.stderr,
         f"ls: {mine}; stderr {listing.stderr.strip()[-160:]!r}; enter "
         f"rc={entered.returncode} {entered.stderr.strip()[-160:]}")
@@ -1906,10 +1906,10 @@ def outside_rows():
                "-v", f"{MARK}:/run/moathut/netns:ro,z", IMAGE,
                "bash", "--rcfile", "/etc/profile.d/moathut.sh", "-ic",
                'printf "%s\\n" "$PS1"'], check=False, timeout=120)
-    row("outside: a container run by hand from the box's image and files "
-        "warns that the box is not protected, and its prompt says "
+    row("outside: a container run by hand from the hut's image and files "
+        "warns that the hut is not protected, and its prompt says "
         "UNPROTECTED",
-        f"box {BOX} is not protected by the moat" in got.stderr
+        f"hut {BOX} is not protected by the moat" in got.stderr
         and f"\u2b22 {BOX} UNPROTECTED" in got.stdout,
         f"rc={got.returncode} stderr {got.stderr.strip()[-200:]!r}; PS1 "
         f"{got.stdout.strip()!r}")
@@ -1919,7 +1919,7 @@ def outside_rows():
     left = exists("pod")
     started = run(["podman", "pod", "start", BOX], check=False, timeout=60)
     running = infra_pid()
-    row("outside: a pod the box left, started by podman with the "
+    row("outside: a pod the hut left, started by podman with the "
         "namespace's unit stopped, does not start: nothing of it runs",
         left and started.returncode != 0 and running is None
         and not exists("container"),
@@ -1950,8 +1950,8 @@ def box_level(config=CONFIG):
 
 
 def label_rows():
-    """No other box runs at the box's level, so what is labelled with it
-    is the box's alone; podman's own levels are drawn from the same
+    """No other hut runs at the hut's level, so what is labelled with it
+    is the hut's alone; podman's own levels are drawn from the same
     categories, two of 1024, and one drawn twice is a 1 in 523776."""
     say("label")
     level = box_level()
@@ -1959,7 +1959,7 @@ def label_rows():
     current = current.strip("\0\n ")
     own = {p.name: label_of(p) for p in
            (BOX_HOME, CONFIG / "bundle.pem", CONFIG / "prompt.sh", MARK)}
-    row("label: the workload runs at the box's level, and its home, "
+    row("label: the workload runs at the hut's level, and its home, "
         "bundle, prompt and mark are labelled at it",
         bool(level) and current == f"system_u:system_r:container_t:{level}"
         and all(v == f"system_u:object_r:container_file_t:{level}"
@@ -1978,12 +1978,12 @@ def label_rows():
                   check=False, timeout=120)
         reads.append(got)
     other, same = reads
-    row("label: a container at podman's own level is refused the box's "
-        "home, which one at the box's level reads",
+    row("label: a container at podman's own level is refused the hut's "
+        "home, which one at the hut's level reads",
         other.returncode != 0 and "Permission denied" in other.stderr
         and same.returncode == 0 and ".bashrc" in same.stdout.split(),
         f"podman's level rc={other.returncode} "
-        f"{other.stderr.strip()[-160:]!r}; the box's rc={same.returncode} "
+        f"{other.stderr.strip()[-160:]!r}; the hut's rc={same.returncode} "
         f"{same.stderr.strip()[-160:]!r}")
 
 
@@ -1998,7 +1998,7 @@ def like_rows(tag):
     policy = (TWIN_CONFIG / "policy.json").exists() and (
         (TWIN_CONFIG / "policy.json").read_bytes()
         == (CONFIG / "policy.json").read_bytes())
-    row("like: create --like gives the box's policy, as edited, its image "
+    row("like: create --like gives the hut's policy, as edited, its image "
         "and its mounts",
         made.returncode == 0 and policy and all(same.values()),
         f"rc={made.returncode} {made.stderr.strip()[-200:]}; policy "
@@ -2022,11 +2022,11 @@ def like_rows(tag):
     wrote = box("enter", BOX, "--", "sh", "-c", f'echo {tag} > "{shared}"',
                 timeout=300)
     got = box("enter", TWIN, "--", "cat", str(shared), timeout=300)
-    row("like: what the box, entered as well, writes in their shared "
+    row("like: what the hut, entered as well, writes in their shared "
         "mount, it reads",
         wrote.returncode == 0 and got.returncode == 0
         and got.stdout.strip() == tag,
-        f"box rc={wrote.returncode} {wrote.stderr.strip()[-160:]}; twin "
+        f"hut rc={wrote.returncode} {wrote.stderr.strip()[-160:]}; twin "
         f"rc={got.returncode} {got.stdout.strip()!r} "
         f"{got.stderr.strip()[-160:]}")
     box("stop", BOX)
@@ -2047,12 +2047,12 @@ def like_rows(tag):
 def rm_rows(tag):
     say("rm")
     refused = box("credential", "rm", CREDENTIAL)
-    row("rm: credential rm is refused while the box names it",
+    row("rm: credential rm is refused while the hut names it",
         refused.returncode != 0 and "named by" in refused.stderr
         and SEALED.exists() and DESCRIBED.exists(),
         f"rc={refused.returncode} {refused.stderr.strip()[-160:]}")
     remove_drop_ins()
-    # A box nothing reached has no record.
+    # A hut nothing reached has no record.
     recorded = RECORD.exists()
     removed = box("rm", BOX)
     left = [p.name for p in UNIT_FILES if p.exists()]
@@ -2066,7 +2066,7 @@ def rm_rows(tag):
         f"rc={removed.returncode}; files left {left}; {loads}; pod "
         f"{exists('pod')}, container {exists('container')}; socket "
         f"directory {BROKER_SOCKET.parent.exists()}")
-    row("rm: the box's home and its record stay",
+    row("rm: the hut's home and its record stay",
         (BOX_HOME / KEPT).exists() and LOGS.is_dir()
         and RECORD.exists() == recorded,
         f"{KEPT} in the home: {(BOX_HOME / KEPT).exists()}; record: "
@@ -2075,7 +2075,7 @@ def rm_rows(tag):
     run(["systemctl", "--user", "start", "default.target"], check=False,
         timeout=180)
     now = states()
-    row("rm: a box made without --autostart, default.target does not "
+    row("rm: a hut made without --autostart, default.target does not "
         "start",
         made.returncode == 0 and set(now.values()) == {"inactive"},
         f"units {now}")
@@ -2167,7 +2167,7 @@ def probe(args, tag, secret):
 # --- material, leftovers, teardown -------------------------------------------
 
 def clear_leftovers():
-    """The rig's own box, by name, as a run with --keep or one cut short
+    """The rig's own hut, by name, as a run with --keep or one cut short
     left it."""
     remove_drop_ins()
     for name, config in ((BOX, CONFIG), (TWIN, TWIN_CONFIG)):
@@ -2176,7 +2176,7 @@ def clear_leftovers():
     run(["systemctl", "--user", "stop", BROKER_SERVICE], check=False)
     run(["podman", "pod", "rm", "-f", "-i", BOX], check=False)
     run(["podman", "rm", "-f", "-i", BOX], check=False)
-    # The box's root writes in its home, as a uid the user is not.
+    # The hut's root writes in its home, as a uid the user is not.
     run(["podman", "unshare", "rm", "-rf", "--", str(CONFIG), str(STATE),
          str(LOGS), str(SHARE), str(PROJECT), str(READONLY),
          str(TWIN_CONFIG), str(TWIN_LOGS), str(TWIN_SHARE)], check=False)
@@ -2255,7 +2255,7 @@ def teardown(keep):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--keep", action="store_true",
-                    help="leave the box and its drop-ins for inspection")
+                    help="leave the hut and its drop-ins for inspection")
     ap.add_argument("--without-rules", action="store_true",
                     help="give the namespace's unit an nft that loads "
                          "nothing; the rows that need the rules must go "
@@ -2283,7 +2283,7 @@ def main():
                          "the record's row that the next line is in a new "
                          "record must go red")
     ap.add_argument("--without-autostart", action="store_true",
-                    help="make the box without --autostart; the create "
+                    help="make the hut without --autostart; the create "
                          "row's ls and the autostart rows must go red")
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
@@ -2318,12 +2318,12 @@ def main():
     if args.without_rules:
         expected.append(
             "--without-rules: first, premise's rules, enter and every row "
-            "through it on the rig's box, held's nft row, dns, silent, "
+            "through it on the rig's hut, held's nft row, dns, silent, "
             "quic, ssh, listed, unlisted, root, the broker's requests, "
             "rotate, the loop's that make a request or read one back, the "
             "record's rotation, the killed inspector's and enter's, "
             "restart, stop's enter, autostart's, and outside's that enter "
-            "serves the box, with its ls, are expected red")
+            "serves the hut, with its ls, are expected red")
     if args.without_held_netns:
         expected.append(
             "--without-held-netns: held's refusals, premise's held "

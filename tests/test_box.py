@@ -105,7 +105,7 @@ class TestNamesAndPaths(unittest.TestCase):
         self.assertEqual(box.namespace, Path("/run/user/7/moathut-netns/a"))
 
     def test_the_credentials_are_beside_the_boxes_and_protected(self):
-        """Among them, a box named `credentials` would be their
+        """Among them, a hut named `credentials` would be their
         directory."""
         dirs = user_dirs({"HOME": "/h"})
         root = credentials_root(dirs)
@@ -231,7 +231,7 @@ class TestUnits(unittest.TestCase):
 
     def test_the_pod_starts_the_rotation_which_stops_with_it(self):
         """The timer starts its service by their shared name, and that
-        runs `unit rotate` on this box, as the command line takes it."""
+        runs `unit rotate` on this hut, as the command line takes it."""
         timer = self.units["moathut-agent-rotate.timer"]
         service = self.units["moathut-agent-rotate.service"]
         self.assertIn(self.box.rotate_timer, _keys(self.pod, "Wants"))
@@ -299,7 +299,7 @@ class TestUnits(unittest.TestCase):
 
     def test_the_namespace_is_held_under_podman_unshare_and_notifies(self):
         """The holder is podman's child, so it sends READY=1 and is not
-        the main process until it says so; `unit netns` on this box, as
+        the main process until it says so; `unit netns` on this hut, as
         the command line takes it."""
         self.assertEqual(_keys(self.netns, "Type"), ["notify"])
         self.assertEqual(_keys(self.netns, "NotifyAccess"), ["all"])
@@ -396,11 +396,11 @@ class TestUnits(unittest.TestCase):
 
     def test_a_shell_in_another_namespace_is_warned_once(self):
         """The mark names the namespace the rules went into; a container
-        started by hand from the box's files is in another. The profile
+        started by hand from the hut's files is in another. The profile
         and the home's .bashrc both read the prompt."""
         said, ps1 = self._interactive("net:[1]", times=2)
         self.assertEqual(said.count(
-            "moathut: box agent is not protected by the moat."), 1)
+            "moathut: hut agent is not protected by the moat."), 1)
         self.assertIn("moathut stop agent", said)
         self.assertIn("\u2b22 agent UNPROTECTED", ps1)
         self.assertEqual(ps1.count("\u2b22"), 1)
@@ -607,7 +607,7 @@ class TestCredentials(unittest.TestCase):
 
 
 class TestBrokerUnits(unittest.TestCase):
-    """A box whose policy names credentials has a broker, which the
+    """A hut whose policy names credentials has a broker, which the
     inspector waits for and dials, and whose credentials are the ones
     systemd loads for it."""
 
@@ -1006,10 +1006,10 @@ class FakeHost:
         self.listeners = listeners
         self.listener_state = listener_state
         # With the dirs, a reload of an inspector writes the digest of its
-        # box's policy to its status file, as the inspector does.
+        # hut's policy to its status file, as the inspector does.
         self.dirs = dirs
         self.reloads = reloads
-        # Whether `podman pod exists` finds the box's pod, and what its
+        # Whether `podman pod exists` finds the hut's pod, and what its
         # unit's state is.
         self.pod = pod
         self.pod_state = pod_state
@@ -1051,7 +1051,7 @@ class FakeHost:
                         inspect_policy_digest(box.policy.read_text())}))
         elif "moat-mint-ca" in line:
             ca = Path(argv[argv.index("--state-dir") + 1]) / "ca.pem"
-            ca.write_text("BOX CA\n")
+            ca.write_text("HUT CA\n")
             out = f"{ca}\n"
         elif argv[:3] == ["podman", "run", "--rm"]:
             out = TRUST + "\n"
@@ -1133,7 +1133,7 @@ class TestCommands(unittest.TestCase):
 
     def test_a_box_can_run_under_debug_or_a_profile_of_its_own(self):
         """Its own is copied in, and what becomes of the file after is
-        nothing to the box; `ls` says which a box has but the default."""
+        nothing to the hut; `ls` says which a hut has but the default."""
         box, _ = self._create(profile="debug")
         self.assertEqual(box.seccomp.read_text(), seccomp.render("debug"))
         mine = self._own_profile()
@@ -1184,7 +1184,7 @@ class TestCommands(unittest.TestCase):
 
     def test_enter_writes_a_stopped_boxs_profile_as_this_moathut_would(
             self):
-        """A profile from another moathut is not the one a box starts
+        """A profile from another moathut is not the one a hut starts
         under; one of its own is kept."""
         box, _ = self._create()
         box.seccomp.write_text("{}\n")
@@ -1205,7 +1205,7 @@ class TestCommands(unittest.TestCase):
         doc = json.loads(box.settings.read_text())
         box.settings.write_text(json.dumps({**doc, "seccomp": "lax"}))
         with self.assertRaisesRegex(commands.BoxError,
-                                    "box agent: no seccomp profile 'lax'"):
+                                    "hut agent: no seccomp profile 'lax'"):
             commands.enter("agent", ["id"], root=False, dirs=self.dirs,
                            cwd=self.home, environ=self.env, isatty=False,
                            runner=FakeHost(self.home),
@@ -1235,7 +1235,7 @@ class TestCommands(unittest.TestCase):
         self.assertFalse(box.config.exists())
 
     def test_each_box_runs_at_a_level_no_other_box_has(self):
-        """A box like another is given its own."""
+        """A hut like another is given its own."""
         picks = iter([[5, 3], [3, 5], [9, 7]])
         with mock.patch.object(commands, "_sample",
                                lambda population, k: next(picks)):
@@ -1281,7 +1281,7 @@ class TestCommands(unittest.TestCase):
         self.assertFalse(Settings.from_json(json.dumps(doc)).autostart)
 
     def test_the_ca_is_minted_with_the_user_site_off(self):
-        """The mint runs as the user, like every program a box starts;
+        """The mint runs as the user, like every program a hut starts;
         units.interpreter says why the flag."""
         _, host = self._create()
         (mint,) = [a for a in host.calls if "moat-mint-ca" in " ".join(a)]
@@ -1313,7 +1313,7 @@ class TestCommands(unittest.TestCase):
         self.assertFalse(box.broker_file.exists())
         self.assertEqual(box.policy.read_text(), self.policy.read_text())
         self.assertEqual(box.policy.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(box.bundle.read_text(), "BOX CA\nSYSTEM CAS\n")
+        self.assertEqual(box.bundle.read_text(), "HUT CA\nSYSTEM CAS\n")
         self.assertTrue(box.home.is_dir())
         self.assertTrue((box.home / "projects" / "p").is_dir())
         settings = Settings.from_json(box.settings.read_text())
@@ -1332,7 +1332,7 @@ class TestCommands(unittest.TestCase):
 
     def test_a_login_shell_in_a_new_home_has_its_local_bin_on_path(self):
         """enter starts a login shell, which reads .bash_profile and not
-        .bashrc; an installer run in the box puts its tools in
+        .bashrc; an installer run in the hut puts its tools in
         ~/.local/bin."""
         box, _ = self._create()
         env = {"HOME": str(box.home), "PATH": "/usr/bin:/bin"}
@@ -1443,9 +1443,9 @@ class TestCommands(unittest.TestCase):
         gone.mkdir()
         self._create(mounts=["projects/gone"])
         gone.rmdir()
-        cases = {"--policy FILE or --like BOX": dict(like=None),
-                 "no box nosuch": dict(like="nosuch"),
-                 "box agent's mount .*gone: not a directory": dict(
+        cases = {"--policy FILE or --like HUT": dict(like=None),
+                 "no hut nosuch": dict(like="nosuch"),
+                 "hut agent's mount .*gone: not a directory": dict(
                      like="agent")}
         for words, kwargs in cases.items():
             with self.subTest(words), \
@@ -1495,7 +1495,7 @@ class TestCommands(unittest.TestCase):
     def test_every_source_the_workload_mounts_is_there_once_written(self):
         """podman will not start the workload with a source missing: the
         mark is made empty with the units, before any rules step, kept
-        when they are written again, and made for a box from before it
+        when they are written again, and made for a hut from before it
         when its units are."""
         box, _ = self._create(mounts=["projects/p"])
         sources = [v.split(":")[0]
@@ -1538,7 +1538,7 @@ class TestCommands(unittest.TestCase):
     def test_the_namespace_is_made_and_handed_to_a_holder(self):
         """The rules and the mark before the fork, and ready after it,
         naming the holder the unit's main process; the mark written in
-        place, since the box mounts the file; what a killed holder left
+        place, since the hut mounts the file; what a killed holder left
         let go first. This process lets go of nothing: the holder has
         it."""
         box, _ = self._create()
@@ -1652,7 +1652,7 @@ with mock.patch.object(cli, "unit_netns", held):
             cli.run_command(parse(["ls"]), tool=(), environ=self.env,
                             cwd=self.home, isatty=False)
         said = err.getvalue()
-        self.assertIn("box agent is not protected by the moat", said)
+        self.assertIn("hut agent is not protected by the moat", said)
         self.assertIn("moathut stop agent", said)
         self.assertNotIn("other", said)
 
@@ -1717,14 +1717,14 @@ with mock.patch.object(cli, "unit_netns", held):
         (box.home / "notes").write_text("mine")
         commands.rm("agent", home=False, dirs=self.dirs,
                     runner=FakeHost(self.home))
-        with self.assertRaisesRegex(commands.BoxError, "no box agent"):
+        with self.assertRaisesRegex(commands.BoxError, "no hut agent"):
             commands.rm("agent", home=False, dirs=self.dirs,
                         runner=FakeHost(self.home))
         self.assertTrue(box.home.exists())
         commands.rm("agent", home=True, dirs=self.dirs,
                     runner=FakeHost(self.home))
         self.assertFalse(box.share.exists())
-        with self.assertRaisesRegex(commands.BoxError, "no box agent"):
+        with self.assertRaisesRegex(commands.BoxError, "no hut agent"):
             commands.rm("agent", home=True, dirs=self.dirs,
                         runner=FakeHost(self.home))
 
@@ -1807,7 +1807,7 @@ with mock.patch.object(cli, "unit_netns", held):
         self.assertFalse(Box("agent", self.dirs).config.exists())
 
     def test_a_credential_added_again_is_replaced_in_each_box(self):
-        """Its secret, and what is given; the placeholder stays. The box's
+        """Its secret, and what is given; the placeholder stays. The hut's
         broker is restarted, and the workload's unit written again."""
         self._add()
         box, _ = self._create(policy=self._brokered())
@@ -1841,7 +1841,7 @@ with mock.patch.object(cli, "unit_netns", held):
         self._create(policy=self._brokered())
         before = described(self.dirs, "k").read_text()
         with self.assertRaisesRegex(commands.BoxError,
-                                    "box agent: .*for api.y only"):
+                                    "hut agent: .*for api.y only"):
             self._add(hosts=["api.y"])
         self.assertEqual(described(self.dirs, "k").read_text(), before)
 
@@ -1874,7 +1874,7 @@ with mock.patch.object(cli, "unit_netns", held):
                 self.assertEqual(bool(said), not works)
 
     def test_stop_and_rm_stop_the_namespace_and_the_broker(self):
-        """And the pod, which a box whose units have no namespace's unit
+        """And the pod, which a hut whose units have no namespace's unit
         yet is stopped by."""
         self._add()
         box, _ = self._create(policy=self._brokered())
@@ -1900,11 +1900,11 @@ with mock.patch.object(cli, "unit_netns", held):
                       host.calls)
 
     def test_a_running_pods_files_wait_for_its_next_enter(self):
-        """A box whose files this moathut would write otherwise: while
+        """A hut whose files this moathut would write otherwise: while
         its pod runs, a rewrite of its units keeps the pod's, its
         namespace's, the override and the prompt; stopped, enter writes
         every one, and the manager reloads them, before it starts the
-        box. One this moathut wrote is not written again, nor one whose
+        hut. One this moathut wrote is not written again, nor one whose
         pod runs."""
         box, _ = self._create()
         old = {box.pod_file: "[Pod]\nNetwork=pasta\n",
@@ -2008,13 +2008,13 @@ with mock.patch.object(cli, "unit_netns", held):
         self.assertEqual(added.call_args.args, ("k", "sk-new"))
         said = "".join(c.args[0] for c in out.write.call_args_list)
         self.assertIn("credential k sealed", said)
-        self.assertIn("box b: its broker holds it; the new variable", said)
+        self.assertIn("hut b: its broker holds it; the new variable", said)
 
     def test_the_command_line_reports_a_refusal_and_exits_1(self):
         with mock.patch("sys.stderr") as err:
             code = main(["moathut", "stop", "nosuch"], environ=self.env)
         self.assertEqual(code, 1)
-        self.assertIn("no box nosuch",
+        self.assertIn("no hut nosuch",
                       "".join(c.args[0] for c in err.write.call_args_list))
 
     def _restarts(self, host):
@@ -2138,7 +2138,7 @@ with mock.patch.object(cli, "unit_netns", held):
 
     def test_a_policy_that_does_not_load_changes_nothing(self):
         """Refused at the command, and not by an inspector that will not
-        start; the box keeps its listeners, and nothing is left beside
+        start; the hut keeps its listeners, and nothing is left beside
         the policy."""
         box, _ = self._create()
         before = box.policy.read_text()
@@ -2285,7 +2285,7 @@ with mock.patch.object(cli, "unit_netns", held):
                  'its inspector restarted, since "tls" changed, and its '
                  'responder reloaded'),
                 (commands.Applied(False),
-                 "it applies from the box's next start")):
+                 "it applies from the hut's next start")):
             with mock.patch.object(cli, "allow", return_value=applied), \
                     mock.patch("sys.stdout") as out:
                 cli.run_command(args, tool=(), environ=self.env,

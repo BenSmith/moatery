@@ -1,7 +1,7 @@
 # bash completion for moathut, installed as
 # /usr/share/bash-completion/completions/moathut
 
-# Where moathut keeps boxes and credentials: XDG_CONFIG_HOME when it is
+# Where moathut keeps huts and credentials: XDG_CONFIG_HOME when it is
 # absolute, as paths.user_dirs reads it, else ~/.config.
 _moathut_config() {
     if [[ $XDG_CONFIG_HOME == /* ]]; then
@@ -45,7 +45,7 @@ _moathut() {
     _init_completion -s || return
 
     # The words so far that are not options or their values. After `--`
-    # come the box's command and its words, which are not moathut's.
+    # come the hut's command and its words, which are not moathut's.
     local i pos=()
     for ((i = 1; i < cword; i++)); do
         case ${words[i]} in

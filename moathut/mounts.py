@@ -1,4 +1,4 @@
-"""A box's mounts: `SRC[:DST][:ro]` from the command line, and what may
+"""A hut's mounts: `SRC[:DST][:ro]` from the command line, and what may
 not be mounted."""
 
 import os
@@ -9,7 +9,7 @@ from .paths import protected
 
 
 class MountRefused(ValueError):
-    """A mount the box may not have, with the reason."""
+    """A mount the hut may not have, with the reason."""
 
 
 class Mount(NamedTuple):
@@ -50,8 +50,8 @@ def _overlaps(a, b):
 
 
 def refuse(mount, dirs, covered):
-    """Raise MountRefused for a mount the box may not have. `covered` are
-    the paths inside that a mount must not hide: the box's home, its
+    """Raise MountRefused for a mount the hut may not have. `covered` are
+    the paths inside that a mount must not hide: the hut's home, its
     trust store and its prompt."""
     source = mount.source
     if not source.is_dir():

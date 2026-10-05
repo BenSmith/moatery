@@ -3,7 +3,7 @@
 moathut: long-lived, inspected containers for command-line
 workloads (docs/MOATHUT.md).
 
-Each box is a network namespace held in the user's own user namespace,
+Each hut is a network namespace held in the user's own user namespace,
 the moatery rules loaded into it at every start, a quadlet pod joining
 it, the inspector's and the responder's listeners bound in it, and a
 workload started after them, with a home of its own; and, if its policy
@@ -13,7 +13,7 @@ into this command (`moathut unit ...`) for what they cannot say
 themselves.
 
 Usage:
-  moathut create NAME (--policy FILE | --like BOX) [--image IMAGE]
+  moathut create NAME (--policy FILE | --like HUT) [--image IMAGE]
                      [--mount SRC[:DST][:ro]]... [--seccomp PROFILE]
                      [--autostart] [--dry-run]
   moathut enter NAME [--root] [-- COMMAND...]

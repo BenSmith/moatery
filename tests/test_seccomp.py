@@ -41,11 +41,11 @@ MASK64 = (1 << 64) - 1
 CLONE_THREAD = 0x10000
 SIGCHLD = 17
 
-# What podman's default allows outright that the box's refuses, or allows
+# What podman's default allows outright that the hut's refuses, or allows
 # only on a condition.
 NARROWED = {"clone", "clone3", "keyctl", "setns", "socketcall", "unshare",
             *seccomp.MOUNTS, *DEBUG} - {"open_tree_attr"}
-# What the box's allows that podman's does not name.
+# What the hut's allows that podman's does not name.
 WIDENED = {"futex_requeue", "futex_wait", "futex_waitv", "futex_wake"}
 
 
@@ -241,7 +241,7 @@ class TestWhatTheProfilesRefuse(unittest.TestCase):
                     family)
 
     def test_the_audit_socket_fails_as_on_a_kernel_without_audit(self):
-        """EINVAL, which sudo takes as no audit; the box holds no
+        """EINVAL, which sudo takes as no audit; the hut holds no
         CAP_AUDIT_WRITE to use it."""
         self.assertNotIn("AUDIT_WRITE", CAPABILITIES)
         self.assertEqual(
@@ -266,7 +266,7 @@ class TestTheDistanceFromPodmansDefault(unittest.TestCase):
         self.strict = profile("strict")
 
     def test_it_allows_outright_what_podman_does_but_what_it_narrows(self):
-        """And what podman allows with a capability the box holds."""
+        """And what podman allows with a capability the hut holds."""
         podman = _unconditional(self.podman)
         ours = _unconditional(self.strict)
         held = {f"CAP_{c}" for c in CAPABILITIES}
@@ -278,7 +278,7 @@ class TestTheDistanceFromPodmansDefault(unittest.TestCase):
 
     def test_the_capability_gates_are_podmans_resolved_for_the_box(self):
         """podman allows a gated call with a capability the container
-        holds; the box holds CAPABILITIES."""
+        holds; the hut holds CAPABILITIES."""
         held = {f"CAP_{c}" for c in CAPABILITIES}
         gated = {}
         for entry in self.podman["syscalls"]:

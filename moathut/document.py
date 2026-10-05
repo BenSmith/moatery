@@ -1,4 +1,4 @@
-"""The box's copy of the policy document, and what `allow` writes into it.
+"""The hut's copy of the policy document, and what `allow` writes into it.
 
 `allow` only widens. A host `hosts` admits is left alone, since an entry
 for it would restrict it to the entry; a host entries govern gets

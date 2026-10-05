@@ -1,4 +1,4 @@
-"""moathut ptyxis: a box's Ptyxis profile, written and removed in
+"""moathut ptyxis: a hut's Ptyxis profile, written and removed in
 GSettings, against a fake gsettings and, where Ptyxis's schema is
 installed, the real one."""
 
@@ -144,7 +144,7 @@ class TestTheCommands(unittest.TestCase):
                                         runner=runner)
 
     def test_add_needs_the_box(self):
-        with self.assertRaisesRegex(commands.BoxError, "no box gone"):
+        with self.assertRaisesRegex(commands.BoxError, "no hut gone"):
             commands.ptyxis_add("gone", dirs=self.dirs,
                                 runner=FakeGSettings())
 
@@ -187,7 +187,7 @@ class TestTheCommandLine(unittest.TestCase):
         said = self._run(["rm", "work"], rm=mock.Mock(return_value=[]),
                          ptyxis_remove=remove)
         remove.assert_called_once_with("work")
-        self.assertIn("box work's Ptyxis profile removed", said)
+        self.assertIn("hut work's Ptyxis profile removed", said)
 
     def test_ptyxis_writes_it_and_remove_says_when_there_is_none(self):
         add = mock.Mock()

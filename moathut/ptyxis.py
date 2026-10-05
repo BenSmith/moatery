@@ -1,14 +1,14 @@
-"""A Ptyxis profile that opens a box the moathut way.
+"""A Ptyxis profile that opens a hut the moathut way.
 
 Ptyxis opens a container from its menu with `podman exec --privileged`,
 whose bounding set is every capability. A profile whose command,
-run on the host, is `moathut enter NAME` opens the box as moathut does;
+run on the host, is `moathut enter NAME` opens the hut as moathut does;
 with preserve-container never, a new tab from it runs the same command,
-whatever the box has printed.
+whatever the hut has printed.
 
 Ptyxis keeps profiles in GSettings, each at /org/gnome/Ptyxis/Profiles/
 UUID/ and listed in profile-uuids. Its default is the listed profile
-default-profile-uuid names, else the first listed, so a box's profile
+default-profile-uuid names, else the first listed, so a hut's profile
 is added only beside a default of Ptyxis's own.
 """
 
@@ -20,7 +20,7 @@ SCHEMA = "org.gnome.Ptyxis"
 PROFILE_SCHEMA = "org.gnome.Ptyxis.Profile"
 PROFILES = "/org/gnome/Ptyxis/Profiles/"
 
-# A box's profile has an id of its own, the same at every run, so the
+# A hut's profile has an id of its own, the same at every run, so the
 # profile is found again without being recorded.
 _NAMESPACE = uuid.UUID("6f1b5a8e-4f61-4d6b-9c43-2a1d3e7b9f05")
 
@@ -35,7 +35,7 @@ def profile_path(name):
 
 
 def command(settings, name):
-    """moathut as the box's units run it, which works from a checkout
+    """moathut as the hut's units run it, which works from a checkout
     too."""
     env = (["env", f"PYTHONPATH={settings.pythonpath}"]
            if settings.pythonpath else [])

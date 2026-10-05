@@ -1,4 +1,4 @@
-"""A box's units as text: its network namespace's, the inspector's,
+"""A hut's units as text: its network namespace's, the inspector's,
 the responder's and, if its policy names a credential, the broker's
 for the user's manager; the pod and the workload for quadlet.
 
@@ -30,10 +30,10 @@ from .mounts import Mount
 from .netns import DNS, PID
 from .paths import NETNS_DIR, sealed
 
-# podman's default set, the most root in a box holds; none is
+# podman's default set, the most root in a hut holds; none is
 # CAP_NET_ADMIN. The unit drops every other capability, so a
 # containers.conf cannot widen it, and adds none: podman gives what a
-# unit adds to the box's user as well, and the user holds none.
+# unit adds to the hut's user as well, and the user holds none.
 CAPABILITIES = ("CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL",
                 "NET_BIND_SERVICE", "SETFCAP", "SETGID", "SETPCAP",
                 "SETUID", "SYS_CHROOT")
@@ -52,15 +52,15 @@ ALL_CAPABILITIES = (
 DROPPED = tuple(c for c in ALL_CAPABILITIES if c not in CAPABILITIES)
 
 # Each replaces a client's trust store, so the bundle carries the
-# system's CAs as well as the box's.
+# system's CAs as well as the hut's.
 CA_VARIABLES = ("SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
                 "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO", "PIP_CERT")
 
-# Where the box's prompt is mounted: Fedora's /etc/bashrc reads it, and
+# Where the hut's prompt is mounted: Fedora's /etc/bashrc reads it, and
 # the home's .bashrc that create writes reads it after.
 PROMPT_PATH = "/etc/profile.d/moathut.sh"
 
-# Where the box reads the namespace its rules were loaded into.
+# Where the hut reads the namespace its rules were loaded into.
 MARK_PATH = "/run/moathut/netns"
 
 
@@ -77,10 +77,10 @@ class Settings(NamedTuple):
     libexec: str
     pythonpath: str | None
     autostart: bool = False
-    # A profile seccomp renders, or None for the box's own, copied in.
+    # A profile seccomp renders, or None for the hut's own, copied in.
     seccomp: str | None = "strict"
     # The SELinux level its pod and workload run at, and its own files
-    # are labelled with: two categories no other box's has. None, podman
+    # are labelled with: two categories no other hut's has. None, podman
     # picks one at each start.
     level: str | None = None
 
@@ -141,7 +141,7 @@ def _environment(settings):
 def interpreter(settings):
     """The programs run as the user, whose own site-packages come ahead
     of the installed package on the path, and a directory in the user's
-    home can be a box's mount. `-s` leaves the user's site off."""
+    home can be a hut's mount. `-s` leaves the user's site off."""
     return [settings.python, "-s"]
 
 
@@ -155,15 +155,15 @@ def _tool(settings, *args):
 
 def netns_unit(box, settings):
     return f"""\
-# moatery box {box.name}: its network namespace, made in the user
-# namespace `podman unshare` is root in, of which the box's is a child,
+# moatery hut {box.name}: its network namespace, made in the user
+# namespace `podman unshare` is root in, of which the hut's is a child,
 # and held while this runs. pasta connects it and the rules go in before
 # the pod joins it. Type=notify: started once they are in, when the
 # process that holds it is named the main one. Stopped, it lets the
 # namespace go, and pasta with it.
 
 [Unit]
-Description=moatery box {box.name}: network namespace and rules
+Description=moatery hut {box.name}: network namespace and rules
 
 [Service]
 Type=notify
@@ -175,12 +175,12 @@ NotifyAccess=all
 
 def pod_unit(box, settings):
     return f"""\
-# moatery box {box.name}: the pod, in the network namespace the box's
+# moatery hut {box.name}: the pod, in the network namespace the hut's
 # netns unit holds, which the pod's user namespace does not own. The
 # listeners and the workload start after it.
 
 [Unit]
-Description=moatery box {box.name}: pod
+Description=moatery hut {box.name}: pod
 BindsTo={box.netns_service}
 After={box.netns_service}
 Wants={box.inspect_service} {box.resolve_service} {box.rotate_timer}
@@ -208,7 +208,7 @@ def _pod_level(settings):
 
 def containers_conf(box):
     return f"""\
-# moatery box {box.name}: read last by podman for the pod. Its infra
+# moatery hut {box.name}: read last by podman for the pod. Its infra
 # container joins a network namespace its user namespace does not own,
 # where podman's default net sysctls cannot be set.
 [containers]
@@ -217,8 +217,8 @@ default_sysctls = []
 
 
 def container_unit(box, settings, broker):
-    # The box's own files are labelled with its level, which no other
-    # box's runs at; a mount is the user's, which boxes may share.
+    # The hut's own files are labelled with its level, which no other
+    # hut's runs at; a mount is the user's, which huts may share.
     volumes = [f"{box.home}:{settings.home_path}:Z",
                f"{box.bundle}:{settings.trust_path}:ro,Z",
                f"{box.prompt}:{PROMPT_PATH}:ro,Z",
@@ -241,11 +241,11 @@ def container_unit(box, settings, broker):
     # also the home: podman writes the user's passwd entry with the working
     # directory as its home.
     return f"""\
-# moatery box {box.name}: the workload. A new container from the image at
+# moatery hut {box.name}: the workload. A new container from the image at
 # every start; its home and its mounts are what persist.
 
 [Unit]
-Description=moatery box {box.name}
+Description=moatery hut {box.name}
 Wants={box.inspect_service} {box.resolve_service}
 After={box.inspect_service} {box.resolve_service}
 
@@ -281,12 +281,12 @@ def _listener_unit(box, settings, what, argv, broker=None):
     after = [box.pod_service] + ([box.broker_service] if broker else [])
     wants = f"Wants={box.broker_service}\n" if broker else ""
     return f"""\
-# moatery box {box.name}: the {what}, its listeners bound in the pod's
+# moatery hut {box.name}: the {what}, its listeners bound in the pod's
 # namespace. Type=notify: started once they are bound. A reload reads
 # the policy again and cuts no connection.
 
 [Unit]
-Description=moatery box {box.name}: {what}
+Description=moatery hut {box.name}: {what}
 BindsTo={box.pod_service}
 {wants}After={' '.join(after)}
 
@@ -355,12 +355,12 @@ def broker_unit(box, settings, broker):
         for c in broker.credentials)
     runtime = box.runtime.relative_to(box.dirs.runtime)
     return f"""\
-# moatery box {box.name}: the broker, holding the credentials the box's
+# moatery hut {box.name}: the broker, holding the credentials the hut's
 # policy names. Its socket is in the user's runtime directory, which the
-# box has no path to. Type=notify: started once it is listening.
+# hut has no path to. Type=notify: started once it is listening.
 
 [Unit]
-Description=moatery box {box.name}: broker
+Description=moatery hut {box.name}: broker
 
 [Service]
 Type=notify
@@ -374,11 +374,11 @@ Restart=on-failure
 
 def rotate_unit(box, settings):
     return f"""\
-# moatery box {box.name}: its record moved aside once it is past its
+# moatery hut {box.name}: its record moved aside once it is past its
 # size, and the inspector told to reopen it. Started by its timer.
 
 [Unit]
-Description=moatery box {box.name}: rotate the record
+Description=moatery hut {box.name}: rotate the record
 
 [Service]
 Type=oneshot
@@ -389,10 +389,10 @@ Type=oneshot
 
 def rotate_timer(box):
     return f"""\
-# moatery box {box.name}: the record's rotation, while the pod runs.
+# moatery hut {box.name}: the record's rotation, while the pod runs.
 
 [Unit]
-Description=moatery box {box.name}: rotate the record
+Description=moatery hut {box.name}: rotate the record
 PartOf={box.pod_service}
 
 [Timer]
@@ -402,17 +402,17 @@ OnUnitActiveSec=10min
 
 
 def prompt(box):
-    """Read by every shell in the box. An interactive one in another
+    """Read by every shell in the hut. An interactive one in another
     namespace than the rules were loaded into, as a container started
-    from the box's files by hand is, says the moat does not cover it.
-    Then bash's prompt, the box's name first: magenta, red as root,
+    from the hut's files by hand is, says the moat does not cover it.
+    Then bash's prompt, the hut's name first: magenta, red as root,
     white on red when not covered. Fedora's /etc/bashrc and the home's
     .bashrc both read it, and the second changes nothing."""
     name = box.name
     warn = r"printf '\033[1;31m%s\033[0m\n  %s\n  %s\n  %s\n  %s\n'"
     return f"""\
-# moatery box {name}: a warning in a shell the moat does not cover, and
-# the box's name before bash's prompt.
+# moatery hut {name}: a warning in a shell the moat does not cover, and
+# the hut's name before bash's prompt.
 _moathut_unprotected=
 case $- in
 *i*)
@@ -423,7 +423,7 @@ case $- in
         then
             _moathut_unprotected=1
             {warn} \\
-                'moathut: box {name} is not protected by the moat.' \\
+                'moathut: hut {name} is not protected by the moat.' \\
                 'It was started outside moathut, so its network has none' \\
                 "of the moat's rules: what runs in it reaches the network" \\
                 'uninspected. On the host, run moathut stop {name}' \\
@@ -449,7 +449,7 @@ unset _moathut_unprotected
 
 
 def render(box, settings, broker):
-    """Unit file path to text, for every unit the box has: the broker's
+    """Unit file path to text, for every unit the hut has: the broker's
     only if it has a broker."""
     units = {box.netns_file: netns_unit(box, settings),
              box.pod_file: pod_unit(box, settings),

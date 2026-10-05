@@ -15,7 +15,7 @@ The responder writes a status file of its own. The drop chain in the
 workload's namespace counts the packets it drops. Where each one lives
 depends on how the programs were placed: `examples/README.md` gives the
 paths for the user units, and [MOATHUT.md](MOATHUT.md), "Files", gives them for
-a box.
+a hut.
 
 ## The journal
 
@@ -123,7 +123,7 @@ Past 512 MiB the inspector writes nothing more, counts the lines it
 loses as `record_failures`, and warns once. Refusals stop at three
 quarters of that, so a flood of them leaves room for the requests let
 through. SIGHUP reopens the file at its next write, which is how a
-rotation lands: `examples/logrotate/` for the user units, and a box
+rotation lands: `examples/logrotate/` for the user units, and a hut
 rotates its own record at 32 MiB.
 
 ## The status file
@@ -187,5 +187,5 @@ jq '{suspects, notes, drop_reasons}' status.json
 jq '{unlisted, https, unlisted_names}' resolve-status.json
 ```
 
-For a box, `moathut log NAME` follows its record, and
+For a hut, `moathut log NAME` follows its record, and
 `moathut log NAME --refused` sums what its policy still refuses.

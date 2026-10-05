@@ -1,10 +1,10 @@
 # Using moathut
 
-A box is a long-lived container for an agent or a toolchain you run
+A hut is a long-lived container for an agent or a toolchain you run
 from a terminal. Everything it sends out over HTTPS or HTTP passes
 through an inspector that checks it against a policy you write. Other
-traffic is dropped. The box can hold a placeholder in place of an API
-key, and the real key is added on the way out, so the box never sees
+traffic is dropped. The hut can hold a placeholder in place of an API
+key, and the real key is added on the way out, so the hut never sees
 it.
 
 This guide is the how-to. [MOATHUT.md](MOATHUT.md) is the reference: what each
@@ -19,7 +19,7 @@ You need, on the host:
 - systemd 256 or later;
 - the moatery RPM, which carries `moathut` and the programs it
   runs, and with bash-completion installed, tab completion of its
-  commands and box names.
+  commands and hut names.
 
 To run it from a checkout of this repository instead, point it at the
 checkout's programs:
@@ -29,15 +29,15 @@ export PYTHONPATH=~/src/moatery MOATERY_LIBEXEC=~/src/moatery/libexec
 alias moathut='python3 ~/src/moatery/bin/moathut'
 ```
 
-A box's units remember these paths when it is created, so they keep
+A hut's units remember these paths when it is created, so they keep
 working in a shell that doesn't have them set.
 
-For a box to keep running after you log out, turn on lingering once:
+For a hut to keep running after you log out, turn on lingering once:
 `sudo loginctl enable-linger $USER`.
 
-## Your first box
+## Your first hut
 
-**1. Write a policy.** It lists the hosts the box may reach, as JSON.
+**1. Write a policy.** It lists the hosts the hut may reach, as JSON.
 This one allows Python packages and GitHub:
 
 ```json
@@ -48,36 +48,36 @@ This one allows Python packages and GitHub:
 ```
 
 Save it anywhere, say `~/policy.json`. `create` takes a copy, so later
-edits to this file don't reach the box. [POLICY.md](POLICY.md) explains
+edits to this file don't reach the hut. [POLICY.md](POLICY.md) explains
 every key; the ones you need most are shown in this guide.
 
-**2. Create the box.**
+**2. Create the hut.**
 
 ```
 moathut create work --policy ~/policy.json --mount ~/src/project
 ```
 
-Box names use lowercase letters, digits and `-`. `create` pulls the
-image if it has to, mints the box's certificate authority and writes
+Hut names use lowercase letters, digits and `-`. `create` pulls the
+image if it has to, mints the hut's certificate authority and writes
 its units. Nothing starts yet.
 
 The default image is Fedora's toolbox image (`fedora-toolbox:44`),
 which has git, Python, an ssh client and manual pages. Use `--image` to
 choose another.
 
-`--autostart` starts the box whenever you log in, and, with lingering
-on, when the host boots. Without it, a box starts at its first `enter`.
+`--autostart` starts the hut whenever you log in, and, with lingering
+on, when the host boots. Without it, a hut starts at its first `enter`.
 
 `--dry-run` prints the files `create` would write, and writes nothing.
 
-`--like` makes a box like one you already have: the same policy, image
+`--like` makes a hut like one you already have: the same policy, image
 and mounts, and a new home. The two share the mounts.
 
 ```
 moathut create work2 --like work
 ```
 
-`--mount` shares a host directory with the box. Repeat it for more
+`--mount` shares a host directory with the hut. Repeat it for more
 directories. `SRC:DST` puts it at a different path inside, and a
 trailing `:ro` makes it read-only. Your home directory itself can't be
 mounted, but a directory inside it can.
@@ -88,10 +88,10 @@ mounted, but a directory inside it can.
 moathut enter work
 ```
 
-The first `enter` starts the box, which takes a few seconds, and opens
+The first `enter` starts the hut, which takes a few seconds, and opens
 a login shell as you. After that, `enter` opens another shell in the
-running box. If you run it from inside a mounted directory, the shell
-starts in that directory; otherwise it starts in the box's home.
+running hut. If you run it from inside a mounted directory, the shell
+starts in that directory; otherwise it starts in the hut's home.
 
 To run one command instead of a shell, put it after `--`:
 
@@ -99,33 +99,33 @@ To run one command instead of a shell, put it after `--`:
 moathut enter work -- git clone https://github.com/example/repo
 ```
 
-`--root` enters as root. `sudo` also works inside the box, with no
-password. Root in a box is filtered the same way you are.
+`--root` enters as root. `sudo` also works inside the hut, with no
+password. Root in a hut is filtered the same way you are.
 
-In bash, the prompt starts with `⬢ work`, so you can tell which box a
+In bash, the prompt starts with `⬢ work`, so you can tell which hut a
 terminal is in: magenta for you, red for root. If the ⬢ shows as a
-box, your terminal's font lacks it; Fedora's
+hut, your terminal's font lacks it; Fedora's
 `google-noto-sans-symbols-2-fonts` has it, and a terminal started after
-it is installed falls back to it. The box keeps your host's time zone.
+it is installed falls back to it. The hut keeps your host's time zone.
 
-## What the box keeps
+## What the hut keeps
 
 Every start is a fresh container from the image. What survives a stop:
 
-- **The box's home.** It has its own home directory, separate from
+- **The hut's home.** It has its own home directory, separate from
   yours, so anything installed under it (`pip install --user`, tools in
-  `~/.local`) is kept, and `~/.local/bin` is on the box's `PATH`. SELinux keeps every other box and container out
+  `~/.local`) is kept, and `~/.local/bin` is on the hut's `PATH`. SELinux keeps every other hut and container out
   of it; you can still reach it from the host.
-- **Your mounts.** These are your own directories. Any box can mount
-  the same directory, so two boxes can work on one project.
+- **Your mounts.** These are your own directories. Any hut can mount
+  the same directory, so two huts can work on one project.
 
 What doesn't survive: anything else written to the container, such as a
-`dnf install`. If a box needs a tool every time, build an image that
-has it and pass it with `--image`. Installing packages in a box is also
+`dnf install`. If a hut needs a tool every time, build an image that
+has it and pass it with `--image`. Installing packages in a hut is also
 awkward for a second reason: mirrors spread across many hosts, and each
 has to be allowed.
 
-The trust settings are already done for you. A bundle of the box's
+The trust settings are already done for you. A bundle of the hut's
 certificate authority and your host's root certificates replaces the
 image's system bundle, and `SSL_CERT_FILE`,
 `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO` and
@@ -137,13 +137,13 @@ inspector without any setup.
 The commands will look familiar, and the default image is the one
 toolbx uses, but the aim is the opposite. toolbx and distrobox make a
 container part of your desktop: your home, the host's network, its
-devices, its D-Bus and its root filesystem are all inside. A box is
+devices, its D-Bus and its root filesystem are all inside. A hut is
 kept apart from your desktop, and what it sends out is checked.
 
 | toolbx / distrobox | moathut |
 |---|---|
 | `toolbox create` / `distrobox create` | `moathut create NAME --policy FILE` |
-| `distrobox create --clone` | `moathut create NAME --like BOX` (not its home) |
+| `distrobox create --clone` | `moathut create NAME --like HUT` (not its home) |
 | `toolbox enter` / `distrobox enter` | `moathut enter NAME` |
 | `toolbox run CMD` / `distrobox enter -- CMD` | `moathut enter NAME -- CMD` |
 | `toolbox list` / `distrobox list` | `moathut ls` |
@@ -152,22 +152,22 @@ kept apart from your desktop, and what it sends out is checked.
 
 What you will notice first:
 
-- **Your home isn't there.** The box has a home of its own, at the same
+- **Your home isn't there.** The hut has a home of its own, at the same
   path as yours, so your dotfiles, ssh keys and tokens are out of its
   reach. Mount the project directories you work in with `--mount`, and
-  copy in any configuration the box should have, at
+  copy in any configuration the hut should have, at
   `~/.local/share/moatery/box/NAME/home/` on the host.
 - **`dnf install` doesn't last.** Every start is a fresh container, so
   build the tools into an image (below), or install them under the
   home.
-- **The network isn't the host's.** The box reaches only the hosts its
+- **The network isn't the host's.** The hut reaches only the hosts its
   policy lists, over HTTPS and HTTP. Nothing on your host or your LAN
   answers it unless the policy lists it, and a server started in the
-  box can't be reached from outside it. Use HTTPS git remotes.
+  hut can't be reached from outside it. Use HTTPS git remotes.
 - **No display, audio, GPU or devices,** and none of `/run/host`,
   `distrobox-export`, `distrobox-host-exec` or `flatpak-spawn --host`.
-  These would let the box reach the host.
-- **sudo works,** but root in a box has no more network access than
+  These would let the hut reach the host.
+- **sudo works,** but root in a hut has no more network access than
   you do, and can't change the rules.
 - **Enter it with moathut,** not with a terminal's container menu. See
   "When the moat doesn't cover you", below.
@@ -183,18 +183,18 @@ podman build -t localhost/work .
 moathut create work --policy ~/policy.json --image localhost/work
 ```
 
-The build runs on the host, so it doesn't need the box's policy.
+The build runs on the host, so it doesn't need the hut's policy.
 
 ## Debuggers, nested containers and sandboxes
 
-A box also limits which kernel calls run in it. Nothing in it can make
+A hut also limits which kernel calls run in it. Nothing in it can make
 a namespace or mount a filesystem, so podman, buildah, bubblewrap
 (Flatpak, Claude Code's sandbox) and Chromium's sandbox don't work in a
-box, and `unshare` fails with "Operation not permitted". Debuggers are
+hut, and `unshare` fails with "Operation not permitted". Debuggers are
 refused too: gdb says "During startup program exited with code 127",
 and strace "Operation not permitted".
 
-For a box you debug in, allow them:
+For a hut you debug in, allow them:
 
 ```
 moathut create dbg --like work --seccomp debug
@@ -203,53 +203,53 @@ moathut create dbg --like work --seccomp debug
 `debug` allows gdb, strace and profilers, and still no namespace. For
 anything else, pass a seccomp profile of your own, which is copied in;
 `--seccomp /usr/share/containers/seccomp.json` is podman's default,
-which allows the namespaces nested containers need. A box made `--like`
-another gets its profile. `moathut ls` names a box's profile if it isn't
+which allows the namespaces nested containers need. A hut made `--like`
+another gets its profile. `moathut ls` names a hut's profile if it isn't
 the default.
 [MOATHUT.md](MOATHUT.md), "Seccomp", lists what is refused.
 
 ## When the moat doesn't cover you
 
-The box's network belongs to moathut, not to the box, so nothing in
-the box can change its rules: not root, and not a shell opened with
+The hut's network belongs to moathut, not to the hut, so nothing in
+the hut can change its rules: not root, and not a shell opened with
 `podman exec --privileged`, as Ptyxis opens every container's tabs. A
-box restarted with `podman pod restart` keeps its network and its rules,
-and a box moathut stopped can't be started by podman at all.
+hut restarted with `podman pod restart` keeps its network and its rules,
+and a hut moathut stopped can't be started by podman at all.
 
-**Ptyxis.** It lists your boxes in its container menu, and a tab
+**Ptyxis.** It lists your huts in its container menu, and a tab
 opened from there is a privileged shell. The shell is you, but `sudo`
-in it gets every capability inside the box, where `sudo` in a moathut
+in it gets every capability inside the hut, where `sudo` in a moathut
 shell gets fewer. It still can't change the rules, but prefer `moathut
 enter work`. Text printed in a tab can also make Ptyxis open the next
-new tab this way, and a program in the box can print it.
+new tab this way, and a program in the hut can print it.
 
-To open the box from Ptyxis the moathut way, give it a profile:
+To open the hut from Ptyxis the moathut way, give it a profile:
 
 ```
 moathut ptyxis work
 ```
 
 This adds a profile, `moathut work`, to Ptyxis. Its tabs run `moathut
-enter work`, which starts the box if it is stopped, and a new tab from
-one of them enters the box again, whatever the box has printed.
+enter work`, which starts the hut if it is stopped, and a new tab from
+one of them enters the hut again, whatever the hut has printed.
 `moathut ptyxis work --remove` removes it, and so does `moathut rm
 work`. Open Ptyxis once before the first, so it has a default profile
 of its own; a Ptyxis from Flatpak isn't reached.
 
-**A container you run yourself** from the box's image isn't the box:
+**A container you run yourself** from the hut's image isn't the hut:
 podman gives it a network of its own, with none of the rules. If it
-mounts the box's files, its shells print
+mounts the hut's files, its shells print
 
 ```
-moathut: box work is not protected by the moat.
+moathut: hut work is not protected by the moat.
 ```
 
 and its prompt reads `⬢ work UNPROTECTED`. Close it, and use `moathut
 enter work`.
 
-**Rules removed from the host.** You are root over the box's network
+**Rules removed from the host.** You are root over the hut's network
 from the host (`podman unshare`), so you can remove its rules. `moathut
-ls` then marks the box `unprotected`, and `enter` refuses it. Run
+ls` then marks the hut `unprotected`, and `enter` refuses it. Run
 `moathut stop work`, then `moathut enter work`.
 
 Only interactive shells warn: a command run with `podman exec work CMD`
@@ -259,10 +259,10 @@ gets no warning.
 
 A host that isn't allowed gets a `403 Forbidden` from the inspector.
 Other ports (ssh, and UDP other than DNS, such as QUIC) are dropped;
-DNS goes to the box's own responder. Git over ssh won't work from a
-box; use HTTPS remotes.
+DNS goes to the hut's own responder. Git over ssh won't work from a
+hut; use HTTPS remotes.
 
-**See what happened.** `log` follows the box's record, one line per
+**See what happened.** `log` follows the hut's record, one line per
 request or refused connection:
 
 ```
@@ -283,7 +283,7 @@ before it are kept beside it.
 
 **See what is still refused.** `log --refused` sums up, by host and
 reason, what the record holds that the current policy would still
-refuse. It also lists the names the box looked up that no list admits:
+refuse. It also lists the names the hut looked up that no list admits:
 
 ```
 moathut log work --refused
@@ -298,7 +298,7 @@ to allow one: moathut allow work HOST [--method M]... [--path P]...
 ```
 
 Some names in that last list are just lookups a tool made and didn't
-need. Allow the hosts you want the box to use, not every name listed.
+need. Allow the hosts you want the hut to use, not every name listed.
 
 **Allow a host.**
 
@@ -324,12 +324,12 @@ ever adds. It takes a host name; to allow a pattern such as
 moathut policy work
 ```
 
-This opens the box's policy in `$VISUAL`, `$EDITOR` or `vi`. When you
+This opens the hut's policy in `$VISUAL`, `$EDITOR` or `vi`. When you
 save and quit, the document is checked before it replaces the old one.
 If it has a mistake, you're told what's wrong and offered the editor
 again. Nothing changes until a document loads.
 
-Either command applies the change to a running box straight away, and
+Either command applies the change to a running hut straight away, and
 prints what it did:
 
 - `its inspector and responder reloaded` is the usual case. The new
@@ -338,12 +338,12 @@ prints what it did:
 - `its inspector restarted, since ...`: some changes need a restart,
   such as adding the first credential, removing the last one, or
   changing `tls`. Connections open at that moment are cut.
-- `it applies from the box's next start`: the box wasn't running.
+- `it applies from the hut's next start`: the hut wasn't running.
 
 ## API keys
 
-A box can use an API key without ever holding it. You seal the key on
-the host once. The box gets a placeholder in an environment variable,
+A hut can use an API key without ever holding it. You seal the key on
+the host once. The hut gets a placeholder in an environment variable,
 and the real key replaces it on the way out, only on requests to the
 hosts you name.
 
@@ -363,7 +363,7 @@ hosts. By default the key goes in an `x-api-key` header. For a provider
 that wants `Authorization: Bearer KEY`, add
 `--auth-header Authorization --auth-format 'Bearer {secret}'`.
 
-**2. Name it in the box's policy.** Use `moathut policy work` and
+**2. Name it in the hut's policy.** Use `moathut policy work` and
 add an entry:
 
 ```json
@@ -376,15 +376,15 @@ add an entry:
 }
 ```
 
-Always give a brokered entry `paths`, listing the endpoints the box
-actually calls. Without them, the box could call any endpoint with the
+Always give a brokered entry `paths`, listing the endpoints the hut
+actually calls. Without them, the hut could call any endpoint with the
 real key attached, including one that echoes the request's headers
 back, which would hand it the key.
 
-The first credential a box names gives it a broker, the process that
+The first credential a hut names gives it a broker, the process that
 holds the keys, so this edit restarts the inspector. The variable
 (`ANTHROPIC_API_KEY` here) is set when the workload starts, so stop the
-box and enter it again:
+hut and enter it again:
 
 ```
 moathut stop work
@@ -396,30 +396,30 @@ it works as if it held the real key.
 
 **Replace a key** by running `credential add` again with the same ID.
 Only the new secret is required. Hosts, variable, header and format
-stay as they were unless you give them again. The broker of each box
+stay as they were unless you give them again. The broker of each hut
 using the key restarts with the new one; neither the inspector nor the
 workload does. A request made during that moment is refused, not sent
 without a key.
 
 **List and remove.** `moathut credential ls` shows each credential
-with its variable, its hosts, and the boxes whose policy names it.
+with its variable, its hosts, and the huts whose policy names it.
 `moathut credential rm ID` removes one, and is refused while any
-box's policy still names it.
+hut's policy still names it.
 
-A key is sealed once and can serve many boxes. Each box has its own
-broker, so two boxes can use different keys for the same provider.
+A key is sealed once and can serve many huts. Each hut has its own
+broker, so two huts can use different keys for the same provider.
 
 ## Stopping and removing
 
 ```
-moathut ls              # each box, whether it is running, its image,
+moathut ls              # each hut, whether it is running, its image,
                         # and unprotected if its rules are gone
 moathut stop work       # stop it; enter starts it again
 moathut rm work         # remove it; keeps its home and its record
 moathut rm work --home  # remove its home too
 ```
 
-`rm` prints the paths it kept. A box created again with the same name
+`rm` prints the paths it kept. A hut created again with the same name
 finds its old home and record. `moathut rm work --home` after a plain
 `rm` removes the home it kept.
 
@@ -428,20 +428,20 @@ finds its old home and record. `moathut rm work --home` after a plain
 **A command fails.** The command prints what went wrong, and usually
 the `journalctl --user -u ...` line to run for the details.
 
-**`box work did not start`** means one of the box's units failed. Run
+**`hut work did not start`** means one of the hut's units failed. Run
 the journalctl command it prints. A common cause is the image lacking
-something the box needs.
+something the hut needs.
 
-**`box work's namespace has no moatery rules`** means the rules were
-removed from the box's network, from the host. Its traffic would not be
+**`hut work's namespace has no moatery rules`** means the rules were
+removed from the hut's network, from the host. Its traffic would not be
 inspected, so `enter` refuses it. Run `moathut stop work`, then enter
 it again ("When the moat doesn't cover you", above).
 
-**After upgrading moatery,** a box that was running keeps the setup it
+**After upgrading moatery,** a hut that was running keeps the setup it
 started with until you run `moathut stop work`, then `moathut enter
 work`.
 
-**`box work's inspector did not start`** (or responder, or broker):
+**`hut work's inspector did not start`** (or responder, or broker):
 `enter` still enters, but warns you. Without the inspector, connections
 are refused; without the responder, names don't resolve; without the
 broker, requests needing a key are refused, never sent without it.
@@ -460,15 +460,15 @@ which checks the name only and nothing inside the connection.
 
 **`dnf upgrade` fails in `ca-certificates`,** with `p11-kit: couldn't
 complete writing file: .../tls-ca-bundle.pem: Unknown error 16`. The
-box's certificate bundle is mounted where that package rebuilds its
+hut's certificate bundle is mounted where that package rebuilds its
 own, so its rebuild can't replace it. The other packages are installed,
-and the box's trust is unchanged. Leave that package out:
+and the hut's trust is unchanged. Leave that package out:
 
 ```
 sudo dnf upgrade -y --exclude=ca-certificates
 ```
 
-Or pull a newer image on the host, which lasts beyond the box's next
+Or pull a newer image on the host, which lasts beyond the hut's next
 stop: `podman pull` it, then `moathut stop work` and `moathut enter
 work`.
 
@@ -479,7 +479,7 @@ affected.
 
 ## Where things are
 
-For a box named `work`:
+For a hut named `work`:
 
 | what | where |
 |---|---|

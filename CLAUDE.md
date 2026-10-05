@@ -9,7 +9,7 @@ copy. Read `README.md`, then `docs/DESIGN.md` (placing moatery beside a
 rootless container, as a pod sidecar and for a VM), `docs/POLICY.md`
 (the policy document) and `docs/INTERFACE.md` (the names workloadctl
 imports and the status file paths it reads). `moathut` lays the netns
-placement out as long-lived boxes: `docs/MOATHUT-GUIDE.md` is its guide,
+placement out as long-lived huts: `docs/MOATHUT-GUIDE.md` is its guide,
 `docs/MOATHUT.md` its reference. `examples/` holds the host placement's
 user units and a logrotate configuration, the netns placement as a
 quadlet pod, and a bootc image; the RPM installs them with the docs, and
@@ -149,7 +149,7 @@ python3 tests/manual/netns_rig.py           # same; listeners in the netns
 python3 tests/manual/sidecar_rig.py         # same; builds container/ first
 python3 tests/manual/vm_rig.py              # same; a VM in the container (/dev/kvm)
 python3 tests/manual/vm_placement_rig.py --placement netns  # or sidecar
-python3 tests/manual/box_rig.py             # same; a box, through moathut
+python3 tests/manual/box_rig.py             # same; a hut, through moathut
 ```
 
 Every push and pull request runs `just lint` and `just coverage`

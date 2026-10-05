@@ -1,5 +1,5 @@
-"""A box's record: a line as a person reads it, the record followed as
-it is written, the refusals the box's policy still makes, and its
+"""A hut's record: a line as a person reads it, the record followed as
+it is written, the refusals the hut's policy still makes, and its
 rotation."""
 
 import gzip

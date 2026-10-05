@@ -6,8 +6,8 @@ being inspected and never holds the key it appears to be using.
 
 A *moatery* makes moats: one around each workload, and nothing crosses
 it unseen. The inspector watches what goes out over it, and the broker
-hands across the credential the workload never sees. `moathut` is the
-hut inside: a long-lived box for command-line work, moated.
+hands across the credential the workload never sees. `moathut` makes the
+huts inside: long-lived containers for command-line work, moated.
 
 ---
 
@@ -46,7 +46,7 @@ And **moathut** puts them all together for command-line work:
 `moathut create NAME --policy FILE` makes a long-lived rootless
 container with its own home, inspector and responder, and a broker
 once its policy names a credential; `moathut enter NAME` runs a
-shell or a command in it. A lot like toolbx or distrobox, but a box
+shell or a command in it. A lot like toolbx or distrobox, but a hut
 publishes no ports, so nothing can connect to it as a server, and what
 it sends out is inspected, with commands to watch it and change what
 is allowed.

@@ -1,9 +1,9 @@
-"""The box's network namespace: made and held in the user namespace
+"""The hut's network namespace: made and held in the user namespace
 `podman unshare` is root in, connected by pasta, the rules loaded into
 it, the pod's infra process in it, and the check that they are there.
 
 The pod's own user namespace (keep-id) is a child of that one, and does
-not own the network namespace: root in the box, even with every
+not own the network namespace: root in the hut, even with every
 capability `podman exec --privileged` gives, cannot change it, so what
 is loaded stays loaded. The rules are the netns placement's (DESIGN.md).
 """
@@ -39,7 +39,7 @@ TABLES = (("inet", "moatery"), ("netdev", "moatery"))
 # Where a unit's command line takes the pod's infra pid.
 PID = "{pid}"
 
-# The address the box's resolv.conf names, which pasta forwards; the
+# The address the hut's resolv.conf names, which pasta forwards; the
 # rules send port 53 to the responder whatever the address.
 DNS = "169.254.1.1"
 
@@ -55,7 +55,7 @@ _NETNS = re.compile(r"net:\[[0-9]+\]")
 
 
 class NetnsError(Exception):
-    """The namespace, or what is in it, is not as a box needs it."""
+    """The namespace, or what is in it, is not as a hut needs it."""
 
 
 def pod_pid(pod, runner=run):

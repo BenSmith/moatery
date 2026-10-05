@@ -25,7 +25,7 @@ include =
 source =
     moatery
     */site-packages/moatery
-box =
+moathut =
     moathut
     */site-packages/moathut
 
