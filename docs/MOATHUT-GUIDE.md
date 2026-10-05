@@ -215,9 +215,10 @@ box restarted with `podman pod restart` keeps its network and its rules,
 and a box moathut stopped can't be started by podman at all.
 
 **Ptyxis.** It lists your boxes in its container menu, and a tab
-opened from there is a privileged shell. It can't change the rules, but
-it has every capability inside the box, so prefer `moathut enter
-work`. Text printed in a tab can also make Ptyxis open
+opened from there is a privileged shell. The shell is you, but `sudo`
+in it gets every capability inside the box, where `sudo` in a moathut
+shell gets fewer. It still can't change the rules, but prefer `moathut
+enter work`. Text printed in a tab can also make Ptyxis open
 the next new tab this way, and a program in the box can print it. A
 Ptyxis profile whose custom command is `moathut enter work`, with
 "Preserve Container" set to never, opens the box the moathut way every

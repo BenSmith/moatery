@@ -435,12 +435,15 @@ restart NAME`): the pod joins the namespace the namespace's unit holds.
 A pod started while that unit is stopped does not start, since the
 namespace's file is gone; and a stopped box leaves no pod or container
 to start: quadlet removes them. A shell opened with `podman exec
---privileged`, as Ptyxis opens every container's tab, holds every
-capability in the box's user namespace, which does not own the network
-namespace, so it cannot change the rules. It keeps the box's seccomp
-profile and SELinux label, which podman's exec does not change, so it
-makes no namespace and mounts nothing, but it is still a shell with
-every capability in the box, and Ptyxis lists
+--privileged`, as Ptyxis opens every container's tab, runs as the box's
+user with no capability in effect, but its bounding set is every
+capability (`000001ffffffffff`, where a moathut shell's is
+`00000000800405fb`), so root in it, by sudo, holds every capability in
+the box's user namespace. That namespace does not own the network
+namespace, so even that root cannot change the rules. It keeps the
+box's seccomp profile and SELinux label, which podman's exec does not
+change, so it makes no namespace and mounts nothing, but it is still a
+shell whose sudo has every capability in the box, and Ptyxis lists
 boxes in its container menu and opens a new tab in the container a
 tab's text last named (OSC 777 or 666), which a workload can print;
 [MOATHUT-GUIDE.md](MOATHUT-GUIDE.md) says how to open boxes from Ptyxis without
