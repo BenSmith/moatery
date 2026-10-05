@@ -1,4 +1,4 @@
 [[customizations.user]]
 name = "USER"
-key = "ssh-ed25519 KEY"
+key = "KEY"
 groups = ["wheel"]

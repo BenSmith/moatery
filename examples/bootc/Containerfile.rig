@@ -1,5 +1,5 @@
-# The rigs' layer over the image above: ip for the rigs, and sudo
-# without a password for wheel. For a test VM only.
+# The rigs' layer over the image above: sudo without a password for
+# wheel, and ip and sudo where the base lacks them. For a test VM only.
 #
 #   podman build -t moatery-bootc:rig --build-arg IMAGE=moatery-bootc \
 #       -f examples/bootc/Containerfile.rig examples/bootc
