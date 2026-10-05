@@ -480,8 +480,8 @@ What stays open, and is warned about:
 - A box's mounts are labelled for every container to read, so boxes
   can share them, and so can any container the user runs. Podman draws
   an ordinary container's level from the same pairs of categories as a
-  box's, without knowing a stopped box's: one drawn twice is one in
-  523776.
+  box's, without knowing a stopped box's: the chance of one drawn twice
+  is one in 523776.
 - A container run by hand from the box's image is not the box: podman
   gives it a network of its own, without the rules. An interactive shell
   in one that mounts the box's prompt and mark warns; one that mounts
