@@ -112,7 +112,7 @@ Examples and images:
 Python 3.14, standard library only; OpenSSL 3.5 (`openssl` on `PATH`, for
 the CA and the per-host certificates); systemd 256 or later for
 `LoadCredentialEncrypted=` in a user unit; podman with pasta for the
-container placements.
+container placements, 5.3 or later for moathut.
 
 ## Building and testing
 
@@ -134,8 +134,8 @@ coverage` on every push and pull request.
 
 ## Status
 
-Version 0.6.0. Each placement, and moathut, has a rig that runs it
-end to end on a real host: `tests/manual/host_rig.py`, `netns_rig.py`,
+Each placement, and moathut, has a rig that runs it end to end on a
+real host: `tests/manual/host_rig.py`, `netns_rig.py`,
 `sidecar_rig.py`, `vm_rig.py`, `vm_placement_rig.py` and `box_rig.py`
 ([tests/manual/README.md](tests/manual/README.md)).
 

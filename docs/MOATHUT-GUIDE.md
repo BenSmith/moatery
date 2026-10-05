@@ -125,8 +125,9 @@ has it and pass it with `--image`. Installing packages in a box is also
 awkward for a second reason: mirrors spread across many hosts, and each
 has to be allowed.
 
-The trust settings are already done for you. The box's certificate
-authority replaces the image's system bundle, and `SSL_CERT_FILE`,
+The trust settings are already done for you. A bundle of the box's
+certificate authority and your host's root certificates replaces the
+image's system bundle, and `SSL_CERT_FILE`,
 `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO` and
 `PIP_CERT` point at it, so curl, git, pip, Python and Node trust the
 inspector without any setup.
@@ -202,8 +203,9 @@ moathut create dbg --like work --seccomp debug
 `debug` allows gdb, strace and profilers, and still no namespace. For
 anything else, pass a seccomp profile of your own, which is copied in;
 `--seccomp /usr/share/containers/seccomp.json` is podman's default,
-which allows the namespaces nested containers need. A box made `--like` another gets its
-profile. `moathut ls` names a box's profile if it isn't the default.
+which allows the namespaces nested containers need. A box made `--like`
+another gets its profile. `moathut ls` names a box's profile if it isn't
+the default.
 [MOATHUT.md](MOATHUT.md), "Seccomp", lists what is refused.
 
 ## When the moat doesn't cover you
@@ -218,8 +220,8 @@ and a box moathut stopped can't be started by podman at all.
 opened from there is a privileged shell. The shell is you, but `sudo`
 in it gets every capability inside the box, where `sudo` in a moathut
 shell gets fewer. It still can't change the rules, but prefer `moathut
-enter work`. Text printed in a tab can also make Ptyxis open
-the next new tab this way, and a program in the box can print it.
+enter work`. Text printed in a tab can also make Ptyxis open the next
+new tab this way, and a program in the box can print it.
 
 To open the box from Ptyxis the moathut way, give it a profile:
 
@@ -257,8 +259,8 @@ gets no warning.
 
 A host that isn't allowed gets a `403 Forbidden` from the inspector.
 Other ports (ssh, and UDP other than DNS, such as QUIC) are dropped;
-DNS goes to the box's own responder.
-Git over ssh won't work from a box; use HTTPS remotes.
+DNS goes to the box's own responder. Git over ssh won't work from a
+box; use HTTPS remotes.
 
 **See what happened.** `log` follows the box's record, one line per
 request or refused connection:
@@ -276,8 +278,8 @@ It starts from the last twenty lines and keeps following. Press Ctrl-C
 to stop. A line ending `suspect` is a refusal no ordinary client
 causes, such as something other than TLS on the HTTPS port; it needs no
 change to the policy, but is worth a look. [LOGGING.md](LOGGING.md)
-lists every reason. The record is rotated at 32 MiB, and the four before it are
-kept beside it.
+lists every reason. The record is rotated at 32 MiB, and the four
+before it are kept beside it.
 
 **See what is still refused.** `log --refused` sums up, by host and
 reason, what the record holds that the current policy would still
@@ -488,5 +490,5 @@ For a box named `work`:
 | its units | `systemctl --user status 'moathut-work*'` |
 
 Edit the policy with `moathut policy`, not in place: the command
-checks it first and applies it. [MOATHUT.md](MOATHUT.md), "Files", lists the
-rest.
+checks it first and applies it. [MOATHUT.md](MOATHUT.md), "Files",
+lists the rest.

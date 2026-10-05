@@ -21,7 +21,6 @@ provider's key would be; and it shares with the host only the
 directories `create` was told to mount. Every other port is dropped,
 so git over ssh cannot leave a box, and git over https can.
 
-
 ## Commands
 
 ```
@@ -47,22 +46,23 @@ moathut ls
 daemon-reload`. Nothing starts. The image defaults to
 `registry.fedoraproject.org/fedora-toolbox:44`, Fedora's own, which has
 the git, Python, ssh client and manual pages `fedora:44` leaves out.
-With `--autostart` the workload's unit is wanted by `default.target`,
-so the user's manager starts the box when it starts: at login, or at
-boot for a lingering user. It starts the same chain `enter` does, and
-`ls` marks the box `autostart`. A box stopped with `stop` starts again
-at the next login. With `--dry-run` it prints each file it would write,
-its path first, and writes none and mints nothing; it still refuses
-what `create` would refuse, and pulls the image to find its trust
-store.
-With `--seccomp` it names the workload's seccomp profile (Seccomp,
-below): `strict`, the default, `debug`, or a file, copied in.
-With `--like BOX` it starts from another box's policy, as edited
-since, its image, its mounts and its seccomp profile: `--policy`,
-`--image` and `--seccomp` replace its, and a `--mount` joins its,
-replacing one at the same target. The new box gets a home and an
-SELinux level of its own, and is not autostarted without `--autostart`. A mount whose source has
-gone since is refused, naming the box it came from.
+
+- `--autostart`: the workload's unit is wanted by `default.target`, so
+  the user's manager starts the box when it starts: at login, or at boot
+  for a lingering user. It starts the same chain `enter` does, and `ls`
+  marks the box `autostart`. A box stopped with `stop` starts again at
+  the next login.
+- `--dry-run`: it prints each file it would write, its path first, and
+  writes none and mints nothing. It still refuses what `create` would
+  refuse, and pulls the image to find its trust store.
+- `--seccomp`: the workload's seccomp profile ("Seccomp", below):
+  `strict`, the default, `debug`, or a file, copied in.
+- `--like BOX`: it starts from another box's policy, as edited since,
+  its image, its mounts and its seccomp profile. `--policy`, `--image`
+  and `--seccomp` replace its, and a `--mount` joins its, replacing one
+  at the same target. The new box gets a home and an SELinux level of
+  its own, and is not autostarted without `--autostart`. A mount whose
+  source has gone since is refused, naming the box it came from.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
 order, the namespace's unit, which loads the rules, the pod, the broker
@@ -80,14 +80,17 @@ and the box's home otherwise.
 
 **stop** stops the namespace's unit, and the broker's; everything bound
 to it stops too, and the namespace goes.
+
 **ls** lists each box, whether its workload is active, its image, its
 seccomp profile if not `strict` (`seccomp:debug`, or `seccomp:own` for a
 file), `autostart` if it has it, and `unprotected` if its pod runs in a
 namespace without the rules, with a warning on stderr.
+
 **rm** stops the box and removes its units and what podman made from
 them; its home and its record stay unless `--home`. With `--home`, a
 box already removed has the home it left removed. It removes the box's
 Ptyxis profile too.
+
 **ptyxis** writes a Ptyxis profile, `moathut NAME`, whose tabs run
 `moathut enter NAME` on the host (`default-container` `session`) and
 whose new tabs do the same whatever the box has printed
@@ -107,10 +110,11 @@ host the workload reaches has to be listed.
 - **log** follows the box's record, one line per request or refused
   connection, from its last twenty, and on into the next file when it is
   rotated. With `--refused` it prints instead the lines, in the record
-  and the rotated ones it keeps, whose decision is `drop`, counted by host and reason, with the method and path of a
-  request the entries refused; and the responder's `unlisted_names`, the
-  names the workload asked for that no list admits. Both leave out what
-  the policy now lets through.
+  and the rotated ones it keeps, whose decision is `drop`, counted by
+  host and reason, with the method and path of a request the entries
+  refused; and the responder's `unlisted_names`, the names the workload
+  asked for that no list admits. Both leave out what the policy now lets
+  through.
 - **allow** only widens. A host no list names goes into `hosts`, or,
   with `--method` or `--path`, into an entry of its own. A host `hosts`
   admits is left alone: an entry for it would confine it to the entry. A
@@ -172,7 +176,10 @@ The units of every box whose policy names it are written again and a
 running broker is restarted, which a request in the gap finds refused.
 A changed variable reaches a running workload at its next start. A
 replacement a box could no longer hold is refused, and nothing changes.
-**credential rm** refuses while a box's policy names the credential.
+
+**credential ls** lists each credential: its ID, its variable, its
+hosts, and the boxes whose policy names it. **credential rm** refuses
+while a box's policy names the credential.
 
 A credential's hosts are the most it is sent to. Each box has its own
 broker, holding the credentials its policy names, for those of their
@@ -207,9 +214,9 @@ For box NAME, credential ID:
 | credential | `~/.config/moatery/credentials/ID.{cred,json}` |
 
 The container is named NAME, and so is its pod, so `podman` commands
-take the box's name; `create` refuses a
-name podman already uses. The credentials are beside the boxes, not
-among them, where they would be a box's directory.
+take the box's name; `create` refuses a name podman already uses. The
+credentials are beside the boxes, not among them, where they would be a
+box's directory.
 
 ## The units
 
@@ -392,8 +399,8 @@ to it.
 
 Nothing is passed to podman that the tool does not write itself: no
 network but the namespace the tool holds, and no capability, device,
-`--privileged` or hosts flag. The
-workload's unit drops every capability outside podman's default set,
+`--privileged` or hosts flag. The workload's unit drops every
+capability outside podman's default set,
 which has no `NET_ADMIN`, so a `containers.conf` cannot widen root's in
 the box. It adds none, and names the box's user: podman gives the user
 the capabilities a unit adds, and root's when the unit names no user.
@@ -484,11 +491,11 @@ What stays open, and is warned about:
 
 `moathut` is a host layout, the thing DESIGN.md says moatery is not.
 Its code is its own package, `moathut`, beside `moatery`. It may
-import `moatery` (the policy loader); the programs never import it,
-which `tests/test_closure.py` holds. The moatery RPM
-carries it, `/usr/bin/moathut` and the package beside `moatery` in
-site-packages; there is no separate package. `tests/test_closure.py`
-holds the RPM's spec to installing both packages and every program.
+import `moatery` (the policy loader); the programs never import it.
+The moatery RPM carries it, `/usr/bin/moathut` and the package beside
+`moatery` in site-packages; there is no separate package.
+`tests/test_closure.py` holds both: the imports, and the RPM's spec
+installing both packages and every program.
 Its bash completion, `completions/moathut.bash`, is installed where
 bash-completion loads it; it completes commands, options, box names
 from `~/.config/moatery/box` and credential names, and

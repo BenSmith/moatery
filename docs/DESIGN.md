@@ -58,7 +58,9 @@ bounding set lacks, by `sudo`, a setuid binary or file capabilities.
 A namespace the workload makes for itself (`unshare -rn`) is its own
 and has no route out but through the container's, whose rules it
 meets. A container given `CAP_NET_ADMIN` (`--cap-add net_admin`,
-`--privileged`) can delete the rules, and is out of scope.
+`--privileged`) can delete the rules where its own user namespace owns
+the network namespace, and is out of scope; moathut makes the namespace
+in the user's, where even that cannot ([MOATHUT.md](MOATHUT.md)).
 
 A uid cannot be the selector without root. Every socket the user opens
 — pasta's, the inspector's, the broker's, the user's editor's — has
@@ -206,11 +208,11 @@ which is set aside for benchmarking and never routed. It is not the
 namespace's `127.0.0.1`, although the listeners are bound there: a VM's
 guest takes that address for its own and never sends it out, and a
 container workload's dial to another port would reach whatever listens
-on its own loopback instead of the drop. A layout with root that gives
-each workload an address of its own in that range starts above
-`198.18.0.255`. That is enough
-for the redirect, and it is correct, because the inspector dials the
-name it authorised and never the address the workload was given. The
+on its own loopback instead of the drop. That is enough for the
+redirect, and it is correct, because the inspector dials the name it
+authorised and never the address the workload was given. (A layout with
+root that gives each workload an address of its own in that range
+starts above `198.18.0.255`.) The
 responder has no upstream socket: no connect, no resolver call, which
 `tests/test_resolve.py` checks by parsing every file it is made of. A
 query has nowhere to go. The empty answer to HTTPS and SVCB queries
@@ -448,7 +450,7 @@ inspector still dials its upstreams from the host's namespace.
 user namespace the user owns. Joining a network namespace needs
 `CAP_SYS_ADMIN` over it and in the joiner's own user namespace, which
 the user holds only inside the one it owns. `moat-netns-listen --pid
-PID — COMMAND` forks a child that joins both, by a pidfd of the
+PID -- COMMAND` forks a child that joins both, by a pidfd of the
 container's process, binds `127.0.0.1:8443` and `:8080` there, sends the
 two listeners back over a socket pair and exits. The launcher itself
 never joins: it puts the listeners on fds 3 and 4, sets `LISTEN_PID`
@@ -791,7 +793,7 @@ workloadctl lays moatery out this way. It creates a user per workload,
 writes system units, and runs the inspector as the workload's user and
 the broker under `DynamicUser=`, whose uid systemd draws from a range
 disjoint from the workloads', so the credential is decrypted only where
-that uid can read it. Its records of the decisions are its ADRs 007 
+that uid can read it. Its records of the decisions are its ADRs 007
 to 009.
 
 The programs are the same here as in every placement: the same flags,
@@ -801,9 +803,9 @@ workloadctl is one.
 ## What moatery does not do
 
 The programs allocate no uid, write no units, load no rules, install
-nothing in the workload. They mint the CA
-only when told to (`moat-mint-ca`, or the sidecar's first start).
-Those are host management: they depend on how a host is laid out, and
+nothing in the workload, and mint the CA only when told to
+(`moat-mint-ca`, or the sidecar's first start). Those are host
+management: they depend on how a host is laid out, and
 whoever lays it out does them. `tests/test_closure.py` holds the
 programs to importing nothing that knows what a workload is.
 

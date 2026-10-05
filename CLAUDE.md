@@ -8,9 +8,12 @@ now requires the moatery RPM and runs its programs; there is no second
 copy. Read `README.md`, then `docs/DESIGN.md` (placing moatery beside a
 rootless container, as a pod sidecar and for a VM), `docs/POLICY.md`
 (the policy document) and `docs/INTERFACE.md` (the names workloadctl
-imports and the status file paths it reads). `examples/` holds the host
-placement's user units and a logrotate configuration, installed to
-`/usr/libexec/moatery/` and run end to end on the proving host.
+imports and the status file paths it reads). `moathut` lays the netns
+placement out as long-lived boxes: `docs/MOATHUT-GUIDE.md` is its guide,
+`docs/MOATHUT.md` its reference. `examples/` holds the host placement's
+user units and a logrotate configuration, the netns placement as a
+quadlet pod, and a bootc image; the RPM installs them with the docs, and
+each is run end to end on the proving host.
 
 ## Where the code came from
 
