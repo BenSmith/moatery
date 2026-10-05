@@ -116,11 +116,11 @@ container placements, 5.3 or later for moathut.
 
 ## Building and testing
 
-`just rpm` builds the RPM from the checkout into `rpmbuild/RPMS/`; it
-takes `just`, `rpm-build` and `python3-rpm-macros`. The RPM puts the
-programs in `/usr/libexec/moatery/`, `moathut` in `/usr/bin/`, and
-the `moatery` and `moathut` packages in site-packages. `just
-rpm-image` builds and tests it in a container, into
+`just rpm` builds the RPM from the checkout's tracked files into
+`rpmbuild/RPMS/`; it takes `just`, `git`, `rpm-build` and
+`python3-rpm-macros`. The RPM puts the programs in
+`/usr/libexec/moatery/`, `moathut` in `/usr/bin/`, and the `moatery`
+and `moathut` packages in site-packages. `just rpm-image` builds and tests it in a container, into
 `localhost/moatery-rpm:VERSION`, an image holding `/moatery.rpm` alone,
 for another image's build to copy; a tag `vVERSION` on the forge pushes
 it, signed, to the local registry (`.forgejo/workflows/rpm-image.yml`).

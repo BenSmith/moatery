@@ -1,11 +1,14 @@
 %global source_date_epoch_from_changelog 0
 
 Name:           moatery
-Version:        %(cat %{_sourcedir}/VERSION)
-Release:        %{?buildserial:1.%{buildserial}}%{!?buildserial:1}
+# VERSION's, which a unit test holds it to.
+Version:        0.7.1
+Release:        1%{?buildserial:.%{buildserial}}%{?dist}
 Summary:        Egress inspector and credential broker for sandboxed workloads
 
 License:        MIT
+URL:            https://github.com/BenSmith/moatery
+Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 BuildArch:      noarch
 
 BuildRequires:  python3 >= 3.14
@@ -37,35 +40,30 @@ moathut runs long-lived, inspected containers for command-line
 work, each a quadlet pod with the programs in its namespace.
 
 %prep
-# Built from a checkout: _sourcedir is the repository root.
+%autosetup
 
 %install
 # The package where Python looks, so the programs and anything else may
 # import it; the programs in their own directory.
 for pkg in moatery moathut; do
     install -dm 0755 %{buildroot}%{python3_sitelib}/$pkg
-    for f in %{_sourcedir}/$pkg/*.py; do
+    for f in $pkg/*.py; do
         install -pm 0644 "$f" %{buildroot}%{python3_sitelib}/$pkg/
     done
 done
-install -pm 0644 %{_sourcedir}/VERSION \
-    %{buildroot}%{python3_sitelib}/moathut/VERSION
-install -Dpm 0755 %{_sourcedir}/bin/moathut \
-    %{buildroot}%{_bindir}/moathut
-install -Dpm 0644 %{_sourcedir}/completions/moathut.bash \
+install -pm 0644 VERSION %{buildroot}%{python3_sitelib}/moathut/VERSION
+install -Dpm 0755 bin/moathut %{buildroot}%{_bindir}/moathut
+install -Dpm 0644 completions/moathut.bash \
     %{buildroot}%{_datadir}/bash-completion/completions/moathut
 install -dm 0755 %{buildroot}%{_libexecdir}/moatery
 for f in moat-broker moat-inspect moat-mint-ca \
         moat-netns-listen moat-resolve; do
-    install -pm 0755 %{_sourcedir}/libexec/$f \
-        %{buildroot}%{_libexecdir}/moatery/
+    install -pm 0755 libexec/$f %{buildroot}%{_libexecdir}/moatery/
 done
 
 install -dm 0755 %{buildroot}%{_docdir}/moatery
-cp -pr %{_sourcedir}/README.md %{_sourcedir}/docs %{_sourcedir}/examples \
-    %{buildroot}%{_docdir}/moatery/
-install -Dpm 0644 %{_sourcedir}/LICENSE \
-    %{buildroot}%{_datadir}/licenses/moatery/LICENSE
+cp -pr README.md docs examples %{buildroot}%{_docdir}/moatery/
+install -Dpm 0644 LICENSE %{buildroot}%{_datadir}/licenses/moatery/LICENSE
 
 %check
 # Every program imports its closure from the installed package.

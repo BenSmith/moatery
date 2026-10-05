@@ -309,9 +309,17 @@ class TestTheRpmCarriesEverything(unittest.TestCase):
         root = Path(REPO_ROOT)
         self.assertEqual((root / "moathut" / "VERSION").resolve(),
                          (root / "VERSION").resolve())
-        self.assertIn("install -pm 0644 %{_sourcedir}/VERSION \\\n"
-                      "    %{buildroot}%{python3_sitelib}/moathut/VERSION",
+        self.assertIn("install -pm 0644 VERSION "
+                      "%{buildroot}%{python3_sitelib}/moathut/VERSION",
                       SPEC.read_text())
+
+    def test_the_spec_is_versioned_as_the_release(self):
+        """The spec's Version is written out, so a source RPM can be made
+        without the checkout; it is VERSION's, and the RPM's %check
+        holds the installed VERSION to it."""
+        version = re.search(r"^Version:\s+(\S+)$", SPEC.read_text(), re.M)
+        self.assertEqual(version[1],
+                         (Path(REPO_ROOT) / "VERSION").read_text().strip())
 
 
     def test_every_program_leaves_the_user_site_off(self):

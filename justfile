@@ -34,16 +34,21 @@ coverage-clean:
 lint:
     ruff check
 
-# the RPM, into rpmbuild/RPMS; rpmbuild reads this checkout directly
+# the RPM, into rpmbuild/RPMS, from the tracked files as they stand
+# (uncommitted changes too), archived as Copr's source is
 rpm:
     #!/usr/bin/env bash
     set -euo pipefail
     serial="$(date +%Y%m%d%H%M%S)"
-    mkdir -p rpmbuild/{BUILD,RPMS,SRPMS,SPECS}
+    version="$(cat VERSION)"
+    mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SRPMS,SPECS}
+    # A commit of the working tree, made and left unreferenced; HEAD when
+    # there is nothing uncommitted.
+    tree="$(git stash create)"
+    git archive --prefix="moatery-${version}/" \
+        -o "rpmbuild/SOURCES/moatery-${version}.tar.gz" "${tree:-HEAD}"
     rpmbuild -bb \
         --define "_topdir $(pwd)/rpmbuild" \
-        --define "_sourcedir $(pwd)" \
-        --define "_builddir $(pwd)/rpmbuild/BUILD" \
         --define "buildserial ${serial}" \
         rpm/moatery.spec
     find rpmbuild/RPMS -name "moatery-*${serial}*.rpm"

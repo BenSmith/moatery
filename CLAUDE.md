@@ -93,9 +93,10 @@ workloadctl's spec has `Requires: moatery >= X.Y.Z`, and its
 verified against this repo's signing key. A flag, a name or a status key
 workloadctl comes to use is therefore a release here first:
 
-- Bump `VERSION`, and push the tag `vX.Y.Z`. Only a tag push publishes
-  the signed RPM image (`.forgejo/workflows/rpm-image.yml`); a manual
-  run of that workflow builds and tests, and pushes nothing.
+- Bump `VERSION` and the spec's `Version` (a test holds them equal),
+  and push the tag `vX.Y.Z`. Only a tag push publishes the signed RPM
+  image (`.forgejo/workflows/rpm-image.yml`); a manual run of that
+  workflow builds and tests, and pushes nothing.
 - Then, in the hypervisor repo, raise the spec's floor and the image pin
   together.
 - `docs/INTERFACE.md` changes when workloadctl's imports or status reads

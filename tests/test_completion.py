@@ -180,7 +180,7 @@ class TestTheRpmInstallsIt(unittest.TestCase):
     def test_it_is_installed_and_listed(self):
         spec = SPEC.read_text()
         path = "%{_datadir}/bash-completion/completions/moathut"
-        self.assertIn(f"%{{_sourcedir}}/completions/{COMPLETION.name} \\\n"
+        self.assertIn(f"completions/{COMPLETION.name} \\\n"
                       f"    %{{buildroot}}{path}", spec)
         self.assertIn(path, spec.split("\n%files\n", 1)[1].splitlines())
 
