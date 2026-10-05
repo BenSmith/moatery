@@ -357,9 +357,9 @@ units differ from the example's in these ways:
   `credential add`, leave the namespace's, the pod's, the override and
   the prompt as they are: after a reload, the manager stops a running
   unit that has gained a `BindsTo=` on one that is not running. `enter`
-  writes every file when it starts a stopped hut, so a hut an earlier
-  moathut made is brought up to date by its next `enter` after a
-  `stop`; one started at login is not.
+  writes every file when it starts a stopped hut, so its next `enter`
+  after a `stop` brings every unit up to date; a hut started at login
+  is not.
 
 What starts what: `enter` starts `moathut-NAME.service`, which
 `Wants=` and is `After=` the inspector and the responder; they are

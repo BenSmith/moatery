@@ -128,7 +128,6 @@ def load_policy(path):
     internal_expected = _names(doc, "internal_expected", path)
     splice = _names(doc, "splice", path)
     _refuse_http2(doc, path)
-    _refuse_renamed_internal(doc, path)
     entries = doc.get("policy")
     if entries is None:
         entries = []
@@ -213,24 +212,6 @@ def _refuse_http2(doc, path):
             f"alone. A host whose client speaks only h2 (gRPC) goes in "
             f"'splice', where its h2 runs end to end and the host is checked "
             f"by name alone")
-
-
-def _refuse_renamed_internal(doc, path):
-    """Refuse the old name of the private-address list rather than read it
-    as empty.
-
-    The list was `internal`; it is `internal_expected`, so the key says what
-    the entries are rather than reading as a list that admits. A writer
-    still sending a non-empty `internal` is told, not silently ignored:
-    ignored, every private-address refusal files as a host that is down and
-    the counter that names it never moves. An empty one says nothing and is
-    accepted, as a writer that always emits the key sends.
-    """
-    if _names(doc, "internal", path):
-        raise ValueError(
-            f"{path}: 'internal' is now 'internal_expected'; rename the key. "
-            f"It names the hosts the operator has given a private address, "
-            f"and admits nothing")
 
 
 def _refuse_inert_entries(path, tls, entries, splice):

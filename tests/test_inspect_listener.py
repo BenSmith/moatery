@@ -1061,23 +1061,6 @@ class TestPolicyRefusals(unittest.TestCase):
                 with self.subTest(key=key, bad=bad):
                     self._refused({"tls": "inspect", key: bad}, repr(key))
 
-    def test_the_old_internal_key_is_refused_by_name(self):
-        """`internal` named the private-address list; it is
-        `internal_expected`. Silently read as empty, every
-        private-address refusal files as a host that is down and the
-        counter that names it never moves. The refusal says which key to
-        write instead."""
-        self._refused(
-            {"tls": "inspect", "internal": ["nas.example"]},
-            "internal", "internal_expected")
-
-    def test_an_empty_old_internal_key_is_accepted(self):
-        """A writer that always emits the key sends `[]`, which says
-        nothing and is not worth failing a start over."""
-        self.assertEqual(
-            self._load({"tls": "inspect", "internal": []})
-            .internal_expected, ())
-
     def test_an_absent_or_null_list_is_empty(self):
         policy = self._load({"hosts": None, "policy": None})
         self.assertEqual((policy.hosts, policy.policy), ((), ()))

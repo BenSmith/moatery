@@ -237,9 +237,8 @@ is refused rather than one half being ignored:
 
 Also refused: a key of the wrong type (a list that is not a list, a name
 that is empty or not a string, an entry with no `host`, `methods` or
-`paths` given as a string), an `http2` list that names a host (see
-[HTTP/2](#http2)), and an `internal` list that names one, which the
-error says to rename `internal_expected`.
+`paths` given as a string), and an `http2` list that names a host (see
+[HTTP/2](#http2)).
 
 A `credential` that is not a non-empty string is ignored rather than
 refused; that request then goes to the origin unbrokered, and its record
