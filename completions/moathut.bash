@@ -80,7 +80,8 @@ _moathut() {
     local command=${pos[0]} n=$((${#pos[@]} - 1)) options="" names=""
     case $command in
         "")
-            names="create enter log allow policy stop rm ls credential" ;;
+            names="create enter log allow policy stop rm ls credential
+                ptyxis" ;;
         create)
             options="--policy --image --mount --autostart --seccomp --like
                 --dry-run" ;;
@@ -97,6 +98,9 @@ _moathut() {
             ((n == 0)) && names=$(_moathut_boxes) ;;
         rm)
             options="--home"
+            ((n == 0)) && names=$(_moathut_boxes) ;;
+        ptyxis)
+            options="--remove"
             ((n == 0)) && names=$(_moathut_boxes) ;;
         credential)
             case ${pos[1]} in

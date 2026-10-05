@@ -8,13 +8,15 @@ import sys
 
 from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, BoxError, allow,
                        create, credential_add, credential_ls, credential_rm,
-                       edit_policy, enter, log, ls, refused, rm, stop,
-                       unit_exec, unit_netns, unit_rotate, unit_sudoers)
+                       edit_policy, enter, log, ls, ptyxis_add,
+                       ptyxis_remove, refused, rm, stop, unit_exec,
+                       unit_netns, unit_rotate, unit_sudoers)
 from .netns import NetnsError
 from .paths import user_dirs
 from .process import CommandFailed
 
-PUBLIC = "{create,enter,log,allow,policy,stop,rm,ls,credential}"
+PUBLIC = ("{create,enter,log,allow,policy,stop,rm,ls,credential,"
+          "ptyxis}")
 
 
 def build_parser():
@@ -80,6 +82,11 @@ def build_parser():
                    help="remove its home too, or the home a box removed "
                         "without --home left")
     sub.add_parser("ls", help="list the boxes")
+    p = sub.add_parser("ptyxis", help="a Ptyxis profile that opens the box "
+                                      "with moathut enter")
+    p.add_argument("name")
+    p.add_argument("--remove", action="store_true",
+                   help="remove it instead")
     credential = sub.add_parser(
         "credential", help="seal a provider's key for the boxes' brokers"
     ).add_subparsers(dest="credential_command", required=True)
@@ -232,6 +239,16 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
             print(f"kept {path}")
         if not args.home:
             print(f"moathut rm --home {args.name} removes the home")
+        if ptyxis_remove(args.name):
+            print(f"box {args.name}'s Ptyxis profile removed")
+    elif args.command == "ptyxis" and args.remove:
+        if not ptyxis_remove(args.name):
+            raise BoxError(f"box {args.name} has no Ptyxis profile")
+        print(f"box {args.name}'s Ptyxis profile removed")
+    elif args.command == "ptyxis":
+        ptyxis_add(args.name, dirs=dirs)
+        print(f"Ptyxis profile 'moathut {args.name}' written; new tabs "
+              "from it enter the box")
     elif args.command == "ls":
         rows = ls(dirs=dirs)
         for row in rows:

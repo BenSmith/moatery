@@ -20,7 +20,7 @@ from moatery.inspect_document import (INSPECT_DIGEST_KEY,
 from moatery.inspect_policy import load_policy
 from moatery.sd_notify import notify_ready
 
-from . import credentials, document, record, seccomp
+from . import credentials, document, ptyxis, record, seccomp
 from .credentials import CredentialError, brokering, describe
 from .document import AllowRefused
 from .mounts import MountRefused, parse_mount, refuse
@@ -519,6 +519,65 @@ def rm(name, *, home, dirs, runner=run):
         raise BoxError(f"box {name} is removed but its home is not: "
                        f"podman unshare rm -rf {box.share}")
     return [str(box.logs)] + ([] if home else [str(box.home)])
+
+
+def _gsettings(runner, *args, check=True):
+    return runner(["gsettings", *args], check=check)
+
+
+def _has_ptyxis(runner):
+    """Whether Ptyxis's schema is installed, where gsettings reads."""
+    try:
+        return _gsettings(runner, "list-keys", ptyxis.SCHEMA,
+                          check=False).returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+def _ptyxis_get(runner, key):
+    return ptyxis.parse_strings(
+        _gsettings(runner, "get", ptyxis.SCHEMA, key).stdout)
+
+
+def ptyxis_add(name, *, dirs, runner=run):
+    """Write the box's Ptyxis profile, or write it again."""
+    _, settings = _existing(name, dirs)
+    if not _has_ptyxis(runner):
+        raise BoxError("Ptyxis's settings are not installed here: no "
+                       "gsettings, or no Ptyxis (a Ptyxis from Flatpak "
+                       "keeps its own)")
+    own = ptyxis.profile_uuid(name)
+    listed = _ptyxis_get(runner, "profile-uuids")
+    default = _ptyxis_get(runner, "default-profile-uuid")
+    if not default or default[0] not in listed or default[0] == own:
+        raise BoxError("Ptyxis has no default profile of its own, so the "
+                       "box's would become it: open Ptyxis once, then "
+                       "run this again")
+    path = ptyxis.profile_path(name)
+    for key, value in ptyxis.keys(settings, name):
+        _gsettings(runner, "set", f"{ptyxis.PROFILE_SCHEMA}:{path}", key,
+                   value)
+    if own not in listed:
+        _gsettings(runner, "set", ptyxis.SCHEMA, "profile-uuids",
+                   ptyxis.strings([*listed, own]))
+
+
+def ptyxis_remove(name, *, runner=run):
+    """Remove the box's Ptyxis profile; whether it had one."""
+    _box(name, None)
+    if not _has_ptyxis(runner):
+        return False
+    own = ptyxis.profile_uuid(name)
+    listed = _ptyxis_get(runner, "profile-uuids")
+    if own not in listed:
+        return False
+    _gsettings(runner, "set", ptyxis.SCHEMA, "profile-uuids",
+               ptyxis.strings([u for u in listed if u != own]))
+    if _ptyxis_get(runner, "default-profile-uuid") == [own]:
+        _gsettings(runner, "reset", ptyxis.SCHEMA, "default-profile-uuid")
+    _gsettings(runner, "reset-recursively",
+               f"{ptyxis.PROFILE_SCHEMA}:{ptyxis.profile_path(name)}")
+    return True
 
 
 def _unprotected(box, runner):

@@ -38,6 +38,7 @@ moathut credential ls
 moathut credential rm ID
 moathut stop NAME
 moathut rm NAME [--home]
+moathut ptyxis NAME [--remove]
 moathut ls
 ```
 
@@ -85,7 +86,18 @@ file), `autostart` if it has it, and `unprotected` if its pod runs in a
 namespace without the rules, with a warning on stderr.
 **rm** stops the box and removes its units and what podman made from
 them; its home and its record stay unless `--home`. With `--home`, a
-box already removed has the home it left removed.
+box already removed has the home it left removed. It removes the box's
+Ptyxis profile too.
+**ptyxis** writes a Ptyxis profile, `moathut NAME`, whose tabs run
+`moathut enter NAME` on the host (`default-container` `session`) and
+whose new tabs do the same whatever the box has printed
+(`preserve-container` `never`). It sets the profile's keys with
+`gsettings` at `/org/gnome/Ptyxis/Profiles/UUID/`, the UUID one derived
+from the box's name, and adds it to `profile-uuids`. Ptyxis's default is
+the listed profile `default-profile-uuid` names, else the first listed,
+so it refuses unless Ptyxis has a default of its own. `--remove`
+removes the profile; a Ptyxis from Flatpak, whose settings are its own,
+is not reached.
 
 ## The policy loop
 
@@ -451,8 +463,7 @@ change, so it makes no namespace and mounts nothing, but it is still a
 shell whose sudo has every capability in the box, and Ptyxis lists
 boxes in its container menu and opens a new tab in the container a
 tab's text last named (OSC 777 or 666), which a workload can print;
-[MOATHUT-GUIDE.md](MOATHUT-GUIDE.md) says how to open boxes from Ptyxis without
-it.
+`moathut ptyxis NAME` writes a profile that opens the box without it.
 
 What stays open, and is warned about:
 

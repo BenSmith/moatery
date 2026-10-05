@@ -219,10 +219,20 @@ opened from there is a privileged shell. The shell is you, but `sudo`
 in it gets every capability inside the box, where `sudo` in a moathut
 shell gets fewer. It still can't change the rules, but prefer `moathut
 enter work`. Text printed in a tab can also make Ptyxis open
-the next new tab this way, and a program in the box can print it. A
-Ptyxis profile whose custom command is `moathut enter work`, with
-"Preserve Container" set to never, opens the box the moathut way every
-time.
+the next new tab this way, and a program in the box can print it.
+
+To open the box from Ptyxis the moathut way, give it a profile:
+
+```
+moathut ptyxis work
+```
+
+This adds a profile, `moathut work`, to Ptyxis. Its tabs run `moathut
+enter work`, which starts the box if it is stopped, and a new tab from
+one of them enters the box again, whatever the box has printed.
+`moathut ptyxis work --remove` removes it, and so does `moathut rm
+work`. Open Ptyxis once before the first, so it has a default profile
+of its own; a Ptyxis from Flatpak isn't reached.
 
 **A container you run yourself** from the box's image isn't the box:
 podman gives it a network of its own, with none of the rules. If it

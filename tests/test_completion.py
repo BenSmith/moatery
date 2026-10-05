@@ -123,6 +123,7 @@ class TestTheCompletion(unittest.TestCase):
         boxes = {"work", "play"}
         for line in ("moathut enter ", "moathut log ", "moathut allow ",
                      "moathut policy ", "moathut stop ", "moathut rm ",
+                     "moathut ptyxis ", "moathut ptyxis --remove ",
                      "moathut create x --like ",
                      "moathut create x --like=",
                      "moathut create x --like=w",
