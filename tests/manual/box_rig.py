@@ -324,7 +324,7 @@ WRITTEN_WITH = (CONFIG / "prompt.sh", CONFIG / "containers.conf",
                 CONFIG / "seccomp.json")
 LAID_OUT = (CONFIG / "policy.json", CONFIG / "bundle.pem", *WRITTEN_WITH,
             ca_cert_path(STATE), LOGS, BOX_HOME, BOX_HOME / ".bashrc",
-            *UNIT_FILES)
+            BOX_HOME / ".bash_profile", *UNIT_FILES)
 MARK = STATE / "netns"
 STATUS = STATE / "status.json"
 RESOLVE_STATUS = STATE / "resolve-status.json"

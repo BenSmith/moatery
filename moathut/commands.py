@@ -136,10 +136,20 @@ def _broker(policy, dirs, load=None):
     return broker
 
 
-# Read by a shell in a home with no .bashrc of its own: the image's,
-# then the box's prompt, which bash would otherwise not read.
+# Written into a home that lacks them, as Fedora's /etc/skel has them:
+# the login shell enter starts reads .bash_profile, which reads .bashrc,
+# which puts ~/.local/bin on PATH, where an installer run in the box puts
+# its tools, and reads the box's prompt, which bash would otherwise not.
+_BASH_PROFILE = """\
+[ -f ~/.bashrc ] && . ~/.bashrc
+"""
 _BASHRC = f"""\
 [ -f /etc/bashrc ] && . /etc/bashrc
+case ":$PATH:" in
+*":$HOME/.local/bin:"*) ;;
+*) PATH="$HOME/.local/bin:$HOME/bin:$PATH" ;;
+esac
+export PATH
 [ -f {PROMPT_PATH} ] && . {PROMPT_PATH}
 """
 
@@ -313,9 +323,10 @@ def _lay_out(box, settings, broker, policy_path, host_bundle, environ,
         if target.is_relative_to(settings.home_path):
             (box.home / target.relative_to(settings.home_path)).mkdir(
                 parents=True, exist_ok=True)
-    bashrc = box.home / ".bashrc"
-    if not bashrc.exists():
-        bashrc.write_text(_BASHRC)
+    for name, text in ((".bashrc", _BASHRC),
+                       (".bash_profile", _BASH_PROFILE)):
+        if not (box.home / name).exists():
+            (box.home / name).write_text(text)
     box.policy.write_bytes(Path(policy_path).read_bytes())
     box.policy.chmod(0o600)
     minted = runner([*interpreter(settings),

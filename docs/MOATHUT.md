@@ -333,10 +333,13 @@ units differ from the example's in these ways:
 - The prompt is mounted read-only at `/etc/profile.d/moathut.sh`, and
   puts `⬢ NAME` before bash's prompt, magenta, or red as root. Fedora's
   `/etc/bashrc` reads it, so root's shell has it from the image's
-  `/root/.bashrc`; `create` gives a home with no `.bashrc` one that reads
-  `/etc/bashrc` and then the prompt, which an image whose `bashrc` does
-  not read `/etc/profile.d` needs. A `.bashrc` the home has is kept. It
-  is written with the units. A mount may not cover it.
+  `/root/.bashrc`. `create` gives a home without them a `.bash_profile`
+  that reads `.bashrc`, and a `.bashrc` that reads `/etc/bashrc`, puts
+  `~/.local/bin` and `~/bin` on `PATH`, and reads the prompt, which an
+  image whose `bashrc` does not read `/etc/profile.d` needs; `enter`'s
+  shell is a login shell, which reads only the first. Files the home has
+  are kept. The prompt is written with the units. A mount may not cover
+  it.
 - The prompt also warns, in an interactive shell only, when the shell is
   in another namespace than the rules were loaded into, as one in a
   container run by hand from the box's image and files is. Its prompt

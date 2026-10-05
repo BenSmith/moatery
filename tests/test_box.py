@@ -1326,16 +1326,32 @@ class TestCommands(unittest.TestCase):
         box, _ = self._create()
         self.assertEqual(box.prompt.read_text(), prompt(box))
         lines = (box.home / ".bashrc").read_text().splitlines()
-        self.assertEqual(lines, [
-            "[ -f /etc/bashrc ] && . /etc/bashrc",
-            f"[ -f {PROMPT_PATH} ] && . {PROMPT_PATH}"])
+        self.assertEqual(lines[0], "[ -f /etc/bashrc ] && . /etc/bashrc")
+        self.assertEqual(lines[-1],
+                         f"[ -f {PROMPT_PATH} ] && . {PROMPT_PATH}")
 
-    def test_a_bashrc_the_home_has_is_kept(self):
+    def test_a_login_shell_in_a_new_home_has_its_local_bin_on_path(self):
+        """enter starts a login shell, which reads .bash_profile and not
+        .bashrc; an installer run in the box puts its tools in
+        ~/.local/bin."""
+        box, _ = self._create()
+        env = {"HOME": str(box.home), "PATH": "/usr/bin:/bin"}
+        for _ in range(2):
+            out = subprocess.run(["bash", "-l", "-c", "echo $PATH"],
+                                 env=env, capture_output=True, text=True,
+                                 cwd=box.home, timeout=30).stdout.strip()
+            self.assertEqual(out.split(":").count(
+                f"{box.home}/.local/bin"), 1, out)
+            env["PATH"] = out
+
+    def test_the_shell_files_the_home_has_are_kept(self):
         kept = Box("agent", self.dirs).home
         kept.mkdir(parents=True)
-        (kept / ".bashrc").write_text("mine\n")
+        for name in (".bashrc", ".bash_profile"):
+            (kept / name).write_text("mine\n")
         self._create()
-        self.assertEqual((kept / ".bashrc").read_text(), "mine\n")
+        for name in (".bashrc", ".bash_profile"):
+            self.assertEqual((kept / name).read_text(), "mine\n")
 
     def test_a_box_from_before_the_prompt_gains_it_when_written_again(self):
         """Its workload's unit is written again, so the file it mounts

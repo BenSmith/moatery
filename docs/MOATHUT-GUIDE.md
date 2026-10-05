@@ -114,7 +114,7 @@ Every start is a fresh container from the image. What survives a stop:
 
 - **The box's home.** It has its own home directory, separate from
   yours, so anything installed under it (`pip install --user`, tools in
-  `~/.local`) is kept. SELinux keeps every other box and container out
+  `~/.local`) is kept, and `~/.local/bin` is on the box's `PATH`. SELinux keeps every other box and container out
   of it; you can still reach it from the host.
 - **Your mounts.** These are your own directories. Any box can mount
   the same directory, so two boxes can work on one project.
