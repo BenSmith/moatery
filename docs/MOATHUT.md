@@ -264,6 +264,11 @@ units differ from the example's in these ways:
   `GIT_SSL_CAINFO` and `PIP_CERT` as well. The mount is what root sees
   under sudo, which drops the variables. Each credential's placeholder
   is set in the workload's environment from `credential add`.
+  A package that rebuilds the system bundle cannot replace it: the
+  rebuild renames a new file over the mount point, which fails with
+  `EBUSY`. Upgrading Fedora's `ca-certificates` in a box therefore fails
+  its `%posttrans`, and dnf reports the transaction failed, with the
+  packages installed and the box's bundle unchanged.
 - Each box has a home of its own, a directory on the host that only it
   mounts, at the path the user's home has on the host: keep-id maps the
   user to the same name and uid inside. The user's own home directory

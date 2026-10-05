@@ -446,6 +446,20 @@ Some clients pin a certificate or require HTTP/2 only; those need the
 host in `splice` ([POLICY.md](POLICY.md), "splice" and "HTTP/2"),
 which checks the name only and nothing inside the connection.
 
+**`dnf upgrade` fails in `ca-certificates`,** with `p11-kit: couldn't
+complete writing file: .../tls-ca-bundle.pem: Unknown error 16`. The
+box's certificate bundle is mounted where that package rebuilds its
+own, so its rebuild can't replace it. The other packages are installed,
+and the box's trust is unchanged. Leave that package out:
+
+```
+sudo dnf upgrade -y --exclude=ca-certificates
+```
+
+Or pull a newer image on the host, which lasts beyond the box's next
+stop: `podman pull` it, then `moathut stop work` and `moathut enter
+work`.
+
 **An upload to a brokered host fails with 411.** The broker needs to
 know the request body's length in advance, so a client that streams
 its upload in chunks is refused. Provider SDKs send a length and aren't
