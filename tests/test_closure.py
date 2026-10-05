@@ -35,8 +35,8 @@ MINT_CA = Path(REPO_ROOT) / "libexec" / "moat-mint-ca"
 NETNS_LISTEN = Path(REPO_ROOT) / "libexec" / "moat-netns-listen"
 RESOLVER = Path(REPO_ROOT) / "libexec" / "moat-resolve"
 SIDECAR = Path(REPO_ROOT) / "container" / "moat-sidecar"
-BOX_LIB = Path(REPO_ROOT) / "moathut"
-BOX = Path(REPO_ROOT) / "bin" / "moathut"
+HUT_LIB = Path(REPO_ROOT) / "moathut"
+HUT = Path(REPO_ROOT) / "bin" / "moathut"
 SPEC = Path(REPO_ROOT) / "rpm" / "moatery.spec"
 
 BROKER_FLAGS = frozenset({
@@ -205,47 +205,47 @@ class TestThePackageIsTheClosure(unittest.TestCase):
         self.assertEqual(sorted(shared), ["peer_identity"])
 
 
-def _box_imports(path):
+def _hut_imports(path):
     """(moathut modules, moatery modules, other top-level names) one
     file of the hut's imports."""
-    box, lib, other = set(), set(), set()
+    hut, lib, other = set(), set(), set()
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if node.level == 1 and not module:
-                box |= {alias.name for alias in node.names}
+                hut |= {alias.name for alias in node.names}
             elif node.level == 1:
-                box.add(module.split(".")[0])
+                hut.add(module.split(".")[0])
             elif module.startswith("moathut."):
-                box.add(module.split(".")[1])
+                hut.add(module.split(".")[1])
             elif module.startswith("moatery."):
                 lib.add(module.split(".")[1])
             else:
                 other.add(module.split(".")[0])
         elif isinstance(node, ast.Import):
             other |= {alias.name.split(".")[0] for alias in node.names}
-    return box, lib, other
+    return hut, lib, other
 
 
-class TestTheBoxStandsBeside(unittest.TestCase):
+class TestTheHutStandsBeside(unittest.TestCase):
     """moathut is a host layout over the programs. It may import the
     package; nothing in the package or the programs imports it."""
 
     def _closure(self):
-        mods = {p.stem: p for p in BOX_LIB.glob("*.py")
+        mods = {p.stem: p for p in HUT_LIB.glob("*.py")
                 if p.stem != "__init__"}
         seen, lib, other = set(), set(), set()
-        todo = [BOX]
+        todo = [HUT]
         while todo:
-            box, used, rest = _box_imports(todo.pop())
+            hut, used, rest = _hut_imports(todo.pop())
             lib |= used
             other |= rest
-            for name in box - seen:
+            for name in hut - seen:
                 seen.add(name)
                 todo.append(mods[name])
         return mods, seen, lib, other
 
-    def test_every_box_module_is_reachable_from_moathut(self):
+    def test_every_hut_module_is_reachable_from_moathut(self):
         mods, seen, _, _ = self._closure()
         self.assertEqual(sorted(set(mods) - seen), [])
 
@@ -419,7 +419,7 @@ class TestNoProgramWritesBytecode(unittest.TestCase):
 
     def test_every_program_turns_bytecode_off_first(self):
         for path in (BROKER, INSPECTOR, MINT_CA, NETNS_LISTEN, RESOLVER,
-                     SIDECAR, BOX):
+                     SIDECAR, HUT):
             with self.subTest(program=path.name):
                 tree = ast.parse(path.read_text())
                 first = self._first_lib_import(tree)

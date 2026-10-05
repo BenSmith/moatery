@@ -25,7 +25,7 @@ from pathlib import Path
 from unittest import mock
 
 from moatery.egress_plane import CLEARTEXT, TLS
-from moathut.units import ANSWER as BOX_ANSWER
+from moathut.units import ANSWER as HUT_ANSWER
 from tests import REPO_ROOT, load_script, script_env, suppress_fork_warning
 
 FAKE_INSPECT = pwd.struct_passwd(("inspect", "x", 200, 200, "", "/", ""))
@@ -110,7 +110,7 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
         args = resolver.parse_args(mod.resolver_argv("wl")[1:])
         self.assertEqual(args.address, mod.ANSWER)
         self.assertFalse(ipaddress.ip_address(args.address).is_loopback)
-        self.assertEqual(args.address, BOX_ANSWER)
+        self.assertEqual(args.address, HUT_ANSWER)
         self.assertIsNone(args.address6)
         self.assertEqual(args.policy, mod.POLICY)
         self.assertTrue(args.status.startswith(mod.STATE + "/"))

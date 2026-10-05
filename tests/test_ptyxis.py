@@ -14,9 +14,9 @@ from unittest import mock
 
 from moathut import cli, commands, ptyxis
 from moathut.cli import parse
-from moathut.paths import Box, user_dirs
+from moathut.paths import Hut, user_dirs
 from moathut.process import run
-from tests.test_box import _settings
+from tests.test_hut import _settings
 
 PTYXIS_OWN = "0123456789abcdef0123456789abcdef"
 OTHER = "fedcba9876543210fedcba9876543210"
@@ -69,7 +69,7 @@ def _missing(argv, **kwargs):
 
 class TestTheProfile(unittest.TestCase):
 
-    def test_its_id_is_ptyxiss_shape_and_the_boxs_own(self):
+    def test_its_id_is_ptyxiss_shape_and_the_huts_own(self):
         own = ptyxis.profile_uuid("work")
         self.assertRegex(own, r"^[0-9a-f]{32}$")
         self.assertEqual(own, ptyxis.profile_uuid("work"))
@@ -109,9 +109,9 @@ class TestTheCommands(unittest.TestCase):
     def setUp(self):
         home = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.dirs = user_dirs({"HOME": str(home)})
-        box = Box("work", self.dirs)
-        box.settings.parent.mkdir(parents=True)
-        box.settings.write_text(_settings(str(home)).to_json())
+        hut = Hut("work", self.dirs)
+        hut.settings.parent.mkdir(parents=True)
+        hut.settings.write_text(_settings(str(home)).to_json())
 
     def test_add_writes_the_profile_and_lists_it_once(self):
         host = FakeGSettings(listed=(PTYXIS_OWN, OTHER))
@@ -123,14 +123,14 @@ class TestTheCommands(unittest.TestCase):
                          dict(ptyxis.keys(_settings(str(self.dirs.home)),
                                           "work")))
 
-    def test_add_refuses_where_the_boxs_would_become_the_default(self):
+    def test_add_refuses_where_the_huts_would_become_the_default(self):
         own = ptyxis.profile_uuid("work")
         for listed, default in (((), ""), ((OTHER,), ""),
                                 ((OTHER,), PTYXIS_OWN),
                                 ((own, OTHER), own)):
             with self.subTest(listed=listed, default=default):
                 host = FakeGSettings(listed=listed, default=default)
-                with self.assertRaisesRegex(commands.BoxError,
+                with self.assertRaisesRegex(commands.HutError,
                                             "no default profile"):
                     commands.ptyxis_add("work", dirs=self.dirs, runner=host)
                 self.assertEqual(host.sets, [])
@@ -138,13 +138,13 @@ class TestTheCommands(unittest.TestCase):
     def test_add_refuses_without_ptyxis_or_gsettings(self):
         for runner in (FakeGSettings(installed=False), _missing):
             with self.subTest(runner=runner):
-                with self.assertRaisesRegex(commands.BoxError,
+                with self.assertRaisesRegex(commands.HutError,
                                             "settings are not installed"):
                     commands.ptyxis_add("work", dirs=self.dirs,
                                         runner=runner)
 
-    def test_add_needs_the_box(self):
-        with self.assertRaisesRegex(commands.BoxError, "no hut gone"):
+    def test_add_needs_the_hut(self):
+        with self.assertRaisesRegex(commands.HutError, "no hut gone"):
             commands.ptyxis_add("gone", dirs=self.dirs,
                                 runner=FakeGSettings())
 
@@ -156,7 +156,7 @@ class TestTheCommands(unittest.TestCase):
         self.assertEqual(host.profile("work"), {})
         self.assertFalse(commands.ptyxis_remove("work", runner=host))
 
-    def test_remove_resets_the_default_when_it_was_the_boxs(self):
+    def test_remove_resets_the_default_when_it_was_the_huts(self):
         host = FakeGSettings()
         commands.ptyxis_add("work", dirs=self.dirs, runner=host)
         own = ptyxis.profile_uuid("work")
@@ -182,7 +182,7 @@ class TestTheCommandLine(unittest.TestCase):
                             cwd="/h", isatty=False)
         return out.getvalue()
 
-    def test_rm_removes_the_boxs_profile(self):
+    def test_rm_removes_the_huts_profile(self):
         remove = mock.Mock(return_value=True)
         said = self._run(["rm", "work"], rm=mock.Mock(return_value=[]),
                          ptyxis_remove=remove)
@@ -193,7 +193,7 @@ class TestTheCommandLine(unittest.TestCase):
         add = mock.Mock()
         self._run(["ptyxis", "work"], ptyxis_add=add)
         self.assertEqual(add.call_args.args, ("work",))
-        with self.assertRaisesRegex(commands.BoxError, "no Ptyxis profile"):
+        with self.assertRaisesRegex(commands.HutError, "no Ptyxis profile"):
             self._run(["ptyxis", "work", "--remove"],
                       ptyxis_remove=mock.Mock(return_value=False))
 
@@ -215,10 +215,10 @@ class TestAgainstPtyxissSchema(unittest.TestCase):
         self.env = dict(os.environ, XDG_CONFIG_HOME=str(home / "config"),
                         GSETTINGS_BACKEND="keyfile")
         self.dirs = user_dirs({"HOME": str(home)})
-        box = Box("work", self.dirs)
-        box.settings.parent.mkdir(parents=True)
+        hut = Hut("work", self.dirs)
+        hut.settings.parent.mkdir(parents=True)
         self.settings = _settings(str(home), pythonpath="/src/it's")
-        box.settings.write_text(self.settings.to_json())
+        hut.settings.write_text(self.settings.to_json())
         self.gsettings("set", ptyxis.SCHEMA, "profile-uuids",
                        ptyxis.strings([PTYXIS_OWN]))
         self.gsettings("set", ptyxis.SCHEMA, "default-profile-uuid",

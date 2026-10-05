@@ -11,12 +11,12 @@ _moathut_config() {
     fi
 }
 
-_moathut_boxes() {
+_moathut_huts() {
     local f root
     root=$(_moathut_config)
-    for f in "$root"/box/*/box.json; do
+    for f in "$root"/hut/*/hut.json; do
         [[ -f $f ]] || continue
-        f=${f%/box.json}
+        f=${f%/hut.json}
         printf '%s\n' "${f##*/}"
     done
 }
@@ -67,7 +67,7 @@ _moathut() {
             COMPREPLY+=($(compgen -W "strict debug" -- "$cur"))
             return ;;
         --like)
-            COMPREPLY=($(compgen -W "$(_moathut_boxes)" -- "$cur"))
+            COMPREPLY=($(compgen -W "$(_moathut_huts)" -- "$cur"))
             return ;;
         --method)
             COMPREPLY=($(compgen -W "GET HEAD POST PUT PATCH DELETE
@@ -87,21 +87,21 @@ _moathut() {
                 --dry-run" ;;
         enter)
             options="--root"
-            ((n == 0)) && names=$(_moathut_boxes) ;;
+            ((n == 0)) && names=$(_moathut_huts) ;;
         log)
             options="--refused"
-            ((n == 0)) && names=$(_moathut_boxes) ;;
+            ((n == 0)) && names=$(_moathut_huts) ;;
         allow)
             options="--method --path"
-            ((n == 0)) && names=$(_moathut_boxes) ;;
+            ((n == 0)) && names=$(_moathut_huts) ;;
         policy | stop)
-            ((n == 0)) && names=$(_moathut_boxes) ;;
+            ((n == 0)) && names=$(_moathut_huts) ;;
         rm)
             options="--home"
-            ((n == 0)) && names=$(_moathut_boxes) ;;
+            ((n == 0)) && names=$(_moathut_huts) ;;
         ptyxis)
             options="--remove"
-            ((n == 0)) && names=$(_moathut_boxes) ;;
+            ((n == 0)) && names=$(_moathut_huts) ;;
         credential)
             case ${pos[1]} in
                 "") names="add ls rm" ;;

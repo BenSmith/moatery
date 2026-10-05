@@ -65,7 +65,7 @@ MARK_PATH = "/run/moathut/netns"
 
 
 class Settings(NamedTuple):
-    """What `create` decided, kept in box.json for the other commands."""
+    """What `create` decided, kept in hut.json for the other commands."""
     image: str
     trust_path: str
     home_path: str
@@ -153,9 +153,9 @@ def _tool(settings, *args):
     return [*settings.tool, "unit", *args]
 
 
-def netns_unit(box, settings):
+def netns_unit(hut, settings):
     return f"""\
-# moatery hut {box.name}: its network namespace, made in the user
+# moatery hut {hut.name}: its network namespace, made in the user
 # namespace `podman unshare` is root in, of which the hut's is a child,
 # and held while this runs. pasta connects it and the rules go in before
 # the pod joins it. Type=notify: started once they are in, when the
@@ -163,38 +163,38 @@ def netns_unit(box, settings):
 # namespace go, and pasta with it.
 
 [Unit]
-Description=moatery hut {box.name}: network namespace and rules
+Description=moatery hut {hut.name}: network namespace and rules
 
 [Service]
 Type=notify
 NotifyAccess=all
 {_environment(settings)}ExecStart={_exec_line(
-    ["podman", "unshare", *_tool(settings, "netns", box.name)])}
+    ["podman", "unshare", *_tool(settings, "netns", hut.name)])}
 """
 
 
-def pod_unit(box, settings):
+def pod_unit(hut, settings):
     return f"""\
-# moatery hut {box.name}: the pod, in the network namespace the hut's
+# moatery hut {hut.name}: the pod, in the network namespace the hut's
 # netns unit holds, which the pod's user namespace does not own. The
 # listeners and the workload start after it.
 
 [Unit]
-Description=moatery hut {box.name}: pod
-BindsTo={box.netns_service}
-After={box.netns_service}
-Wants={box.inspect_service} {box.resolve_service} {box.rotate_timer}
+Description=moatery hut {hut.name}: pod
+BindsTo={hut.netns_service}
+After={hut.netns_service}
+Wants={hut.inspect_service} {hut.resolve_service} {hut.rotate_timer}
 
 [Pod]
-PodName={box.name}
-Network=ns:%t/{NETNS_DIR}/{box.name}
+PodName={hut.name}
+Network=ns:%t/{NETNS_DIR}/{hut.name}
 DNS={DNS}
 UserNS=keep-id
 ExitPolicy=continue
 PodmanArgs=--hosts-file=image --share-parent=false{_pod_level(settings)}
 
 [Service]
-Environment={_quoted(f"CONTAINERS_CONF_OVERRIDE={box.containers_conf}")}
+Environment={_quoted(f"CONTAINERS_CONF_OVERRIDE={hut.containers_conf}")}
 """
 
 
@@ -206,9 +206,9 @@ def _pod_level(settings):
     return f" --security-opt=label=level:{settings.level}"
 
 
-def containers_conf(box):
+def containers_conf(hut):
     return f"""\
-# moatery hut {box.name}: read last by podman for the pod. Its infra
+# moatery hut {hut.name}: read last by podman for the pod. Its infra
 # container joins a network namespace its user namespace does not own,
 # where podman's default net sysctls cannot be set.
 [containers]
@@ -216,13 +216,13 @@ default_sysctls = []
 """
 
 
-def container_unit(box, settings, broker):
+def container_unit(hut, settings, broker):
     # The hut's own files are labelled with its level, which no other
     # hut's runs at; a mount is the user's, which huts may share.
-    volumes = [f"{box.home}:{settings.home_path}:Z",
-               f"{box.bundle}:{settings.trust_path}:ro,Z",
-               f"{box.prompt}:{PROMPT_PATH}:ro,Z",
-               f"{box.netns_mark}:{MARK_PATH}:ro,Z"]
+    volumes = [f"{hut.home}:{settings.home_path}:Z",
+               f"{hut.bundle}:{settings.trust_path}:ro,Z",
+               f"{hut.prompt}:{PROMPT_PATH}:ro,Z",
+               f"{hut.netns_mark}:{MARK_PATH}:ro,Z"]
     for mount in settings.mounts:
         volumes.append(f"{mount.source}:{mount.target}:"
                        + ("ro,z" if mount.readonly else "z"))
@@ -241,17 +241,17 @@ def container_unit(box, settings, broker):
     # also the home: podman writes the user's passwd entry with the working
     # directory as its home.
     return f"""\
-# moatery hut {box.name}: the workload. A new container from the image at
+# moatery hut {hut.name}: the workload. A new container from the image at
 # every start; its home and its mounts are what persist.
 
 [Unit]
-Description=moatery hut {box.name}
-Wants={box.inspect_service} {box.resolve_service}
-After={box.inspect_service} {box.resolve_service}
+Description=moatery hut {hut.name}
+Wants={hut.inspect_service} {hut.resolve_service}
+After={hut.inspect_service} {hut.resolve_service}
 
 [Container]
-ContainerName={box.name}
-Pod={box.unit}.pod
+ContainerName={hut.name}
+Pod={hut.unit}.pod
 Image={_value(settings.image)}
 User={settings.uid}
 Group={settings.gid}
@@ -259,12 +259,12 @@ WorkingDir={_value(settings.home_path)}
 Exec=sleep infinity
 RunInit=true
 Timezone=local
-SeccompProfile={_value(box.seccomp)}
+SeccompProfile={_value(hut.seccomp)}
 {body}
 
 [Service]
 {_environment(settings)}ExecStartPost=-{_exec_line(
-    _tool(settings, "sudoers", box.name))}
+    _tool(settings, "sudoers", hut.name))}
 SuccessExitStatus=143
 """ + (_AUTOSTART if settings.autostart else "")
 
@@ -277,36 +277,36 @@ WantedBy=default.target
 """
 
 
-def _listener_unit(box, settings, what, argv, broker=None):
-    after = [box.pod_service] + ([box.broker_service] if broker else [])
-    wants = f"Wants={box.broker_service}\n" if broker else ""
+def _listener_unit(hut, settings, what, argv, broker=None):
+    after = [hut.pod_service] + ([hut.broker_service] if broker else [])
+    wants = f"Wants={hut.broker_service}\n" if broker else ""
     return f"""\
-# moatery hut {box.name}: the {what}, its listeners bound in the pod's
+# moatery hut {hut.name}: the {what}, its listeners bound in the pod's
 # namespace. Type=notify: started once they are bound. A reload reads
 # the policy again and cuts no connection.
 
 [Unit]
-Description=moatery hut {box.name}: {what}
-BindsTo={box.pod_service}
+Description=moatery hut {hut.name}: {what}
+BindsTo={hut.pod_service}
 {wants}After={' '.join(after)}
 
 [Service]
 Type=notify
 {_environment(settings)}ExecStart={_exec_line(
-    _tool(settings, "exec", box.name, "--", *argv))}
+    _tool(settings, "exec", hut.name, "--", *argv))}
 ExecReload=kill -USR1 $MAINPID
 Restart=on-failure
 """
 
 
-def inspect_argv(box, settings, broker):
+def inspect_argv(hut, settings, broker):
     argv = [*_program(settings, "moat-netns-listen"), "--pid", PID,
             "--", *_program(settings, "moat-inspect"),
-            "--name", box.name, "--policy", str(box.policy),
-            "--state-dir", str(box.state), "--status", str(box.status),
-            "--record", str(box.record), "--netns-pid", PID]
+            "--name", hut.name, "--policy", str(hut.policy),
+            "--state-dir", str(hut.state), "--status", str(hut.status),
+            "--record", str(hut.record), "--netns-pid", PID]
     if broker:
-        argv += ["--broker", f"unix:{box.broker_socket}"]
+        argv += ["--broker", f"unix:{hut.broker_socket}"]
     return argv
 
 
@@ -317,28 +317,28 @@ def inspect_argv(box, settings, broker):
 ANSWER = "198.18.0.1"
 
 
-def resolve_argv(box, settings):
+def resolve_argv(hut, settings):
     return [*_program(settings, "moat-netns-listen"), "--pid", PID,
             "--resolver", "--", *_program(settings, "moat-resolve"),
-            "--name", box.name, "--address", ANSWER,
-            "--policy", str(box.policy),
-            "--status", str(box.resolve_status)]
+            "--name", hut.name, "--address", ANSWER,
+            "--policy", str(hut.policy),
+            "--status", str(hut.resolve_status)]
 
 
-def inspect_unit(box, settings, broker):
-    return _listener_unit(box, settings, "inspector",
-                          inspect_argv(box, settings, broker), broker)
+def inspect_unit(hut, settings, broker):
+    return _listener_unit(hut, settings, "inspector",
+                          inspect_argv(hut, settings, broker), broker)
 
 
-def resolve_unit(box, settings):
-    return _listener_unit(box, settings, "responder",
-                          resolve_argv(box, settings))
+def resolve_unit(hut, settings):
+    return _listener_unit(hut, settings, "responder",
+                          resolve_argv(hut, settings))
 
 
-def broker_argv(box, settings, broker):
+def broker_argv(hut, settings, broker):
     """Its one caller is the inspector, which runs as the user."""
-    argv = [*_program(settings, "moat-broker"), "--name", box.name,
-            "--listen", f"unix:{box.broker_socket}",
+    argv = [*_program(settings, "moat-broker"), "--name", hut.name,
+            "--listen", f"unix:{hut.broker_socket}",
             "--caller-uid", str(settings.uid)]
     for host, credential in broker.hosts:
         argv += ["--host", f"{host}={credential}"]
@@ -349,51 +349,51 @@ def broker_argv(box, settings, broker):
     return argv
 
 
-def broker_unit(box, settings, broker):
+def broker_unit(hut, settings, broker):
     loads = "".join(
-        f"LoadCredentialEncrypted={c.id}:{_value(sealed(box.dirs, c.id))}\n"
+        f"LoadCredentialEncrypted={c.id}:{_value(sealed(hut.dirs, c.id))}\n"
         for c in broker.credentials)
-    runtime = box.runtime.relative_to(box.dirs.runtime)
+    runtime = hut.runtime.relative_to(hut.dirs.runtime)
     return f"""\
-# moatery hut {box.name}: the broker, holding the credentials the hut's
+# moatery hut {hut.name}: the broker, holding the credentials the hut's
 # policy names. Its socket is in the user's runtime directory, which the
 # hut has no path to. Type=notify: started once it is listening.
 
 [Unit]
-Description=moatery hut {box.name}: broker
+Description=moatery hut {hut.name}: broker
 
 [Service]
 Type=notify
 {_environment(settings)}ExecStart={_exec_line(
-    broker_argv(box, settings, broker))}
+    broker_argv(hut, settings, broker))}
 {loads}RuntimeDirectory={_value(runtime)}
 RuntimeDirectoryMode=0700
 Restart=on-failure
 """
 
 
-def rotate_unit(box, settings):
+def rotate_unit(hut, settings):
     return f"""\
-# moatery hut {box.name}: its record moved aside once it is past its
+# moatery hut {hut.name}: its record moved aside once it is past its
 # size, and the inspector told to reopen it. Started by its timer.
 
 [Unit]
-Description=moatery hut {box.name}: rotate the record
+Description=moatery hut {hut.name}: rotate the record
 
 [Service]
 Type=oneshot
 {_environment(settings)}ExecStart={_exec_line(
-    _tool(settings, "rotate", box.name))}
+    _tool(settings, "rotate", hut.name))}
 """
 
 
-def rotate_timer(box):
+def rotate_timer(hut):
     return f"""\
-# moatery hut {box.name}: the record's rotation, while the pod runs.
+# moatery hut {hut.name}: the record's rotation, while the pod runs.
 
 [Unit]
-Description=moatery hut {box.name}: rotate the record
-PartOf={box.pod_service}
+Description=moatery hut {hut.name}: rotate the record
+PartOf={hut.pod_service}
 
 [Timer]
 OnActiveSec=1min
@@ -401,14 +401,14 @@ OnUnitActiveSec=10min
 """
 
 
-def prompt(box):
+def prompt(hut):
     """Read by every shell in the hut. An interactive one in another
     namespace than the rules were loaded into, as a container started
     from the hut's files by hand is, says the moat does not cover it.
     Then bash's prompt, the hut's name first: magenta, red as root,
     white on red when not covered. Fedora's /etc/bashrc and the home's
     .bashrc both read it, and the second changes nothing."""
-    name = box.name
+    name = hut.name
     warn = r"printf '\033[1;31m%s\033[0m\n  %s\n  %s\n  %s\n  %s\n'"
     return f"""\
 # moatery hut {name}: a warning in a shell the moat does not cover, and
@@ -448,16 +448,16 @@ unset _moathut_unprotected
 """
 
 
-def render(box, settings, broker):
+def render(hut, settings, broker):
     """Unit file path to text, for every unit the hut has: the broker's
     only if it has a broker."""
-    units = {box.netns_file: netns_unit(box, settings),
-             box.pod_file: pod_unit(box, settings),
-             box.container_file: container_unit(box, settings, broker),
-             box.inspect_file: inspect_unit(box, settings, broker),
-             box.resolve_file: resolve_unit(box, settings),
-             box.rotate_file: rotate_unit(box, settings),
-             box.rotate_timer_file: rotate_timer(box)}
+    units = {hut.netns_file: netns_unit(hut, settings),
+             hut.pod_file: pod_unit(hut, settings),
+             hut.container_file: container_unit(hut, settings, broker),
+             hut.inspect_file: inspect_unit(hut, settings, broker),
+             hut.resolve_file: resolve_unit(hut, settings),
+             hut.rotate_file: rotate_unit(hut, settings),
+             hut.rotate_timer_file: rotate_timer(hut)}
     if broker:
-        units[box.broker_file] = broker_unit(box, settings, broker)
+        units[hut.broker_file] = broker_unit(hut, settings, broker)
     return units

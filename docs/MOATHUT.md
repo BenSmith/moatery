@@ -196,15 +196,15 @@ For hut NAME, credential ID:
 
 | what | where |
 |---|---|
-| what `create` decided, the level among it | `~/.config/moatery/box/NAME/box.json` |
-| policy | `~/.config/moatery/box/NAME/policy.json` |
-| bundle | `~/.config/moatery/box/NAME/bundle.pem` |
-| prompt | `~/.config/moatery/box/NAME/prompt.sh` |
-| podman's override for the pod | `~/.config/moatery/box/NAME/containers.conf` |
-| seccomp profile | `~/.config/moatery/box/NAME/seccomp.json` |
-| CA, certificates, status files, the namespace's name | `~/.local/state/moatery/box/NAME/` |
-| record | `~/.local/state/log/moatery/box/NAME/requests.log`, and `.1` to `.4.gz` |
-| the hut's home | `~/.local/share/moatery/box/NAME/home/` |
+| what `create` decided, the level among it | `~/.config/moatery/hut/NAME/hut.json` |
+| policy | `~/.config/moatery/hut/NAME/policy.json` |
+| bundle | `~/.config/moatery/hut/NAME/bundle.pem` |
+| prompt | `~/.config/moatery/hut/NAME/prompt.sh` |
+| podman's override for the pod | `~/.config/moatery/hut/NAME/containers.conf` |
+| seccomp profile | `~/.config/moatery/hut/NAME/seccomp.json` |
+| CA, certificates, status files, the namespace's name | `~/.local/state/moatery/hut/NAME/` |
+| record | `~/.local/state/log/moatery/hut/NAME/requests.log`, and `.1` to `.4.gz` |
+| the hut's home | `~/.local/share/moatery/hut/NAME/home/` |
 | namespace | `~/.config/systemd/user/moathut-NAME-netns.service` |
 | the namespace, held | `$XDG_RUNTIME_DIR/moathut-netns/NAME` |
 | pod, workload | `~/.config/containers/systemd/moathut-NAME.{pod,container}` |
@@ -295,7 +295,7 @@ units differ from the example's in these ways:
   podman writes the passwd entry of a user keep-id brings in with the
   working directory as its home, and `HOME` from it.
 - Each hut has an SELinux level of its own, two categories no other hut
-  has, drawn at `create` and kept in `box.json`. Its pod and its
+  has, drawn at `create` and kept in `hut.json`. Its pod and its
   workload run at it (the pod's `--security-opt label=level:`, the
   workload's `SecurityLabelLevel=`): the workload joins the pod's IPC
   namespace, and its `/dev/shm` is labelled at the pod's level. Its
@@ -303,7 +303,7 @@ units differ from the example's in these ways:
   level, which a container at any other is refused: another hut's, or
   one run by hand. A start that finds them labelled at it relabels
   nothing. A mount is `:z`, the label every container reads, so huts
-  can share a project. A hut with no level in `box.json` is given one
+  can share a project. A hut with no level in `hut.json` is given one
   by the next command that reads it, and runs at it from its next
   start.
 - The workload's unit names the hut's user and drops every capability
@@ -501,7 +501,7 @@ The moatery RPM carries it, `/usr/bin/moathut` and the package beside
 installing both packages and every program.
 Its bash completion, `completions/moathut.bash`, is installed where
 bash-completion loads it; it completes commands, options, hut names
-from `~/.config/moatery/box` and credential names, and
+from `~/.config/moatery/hut` and credential names, and
 `tests/test_completion.py` holds it to the parser and those paths.
 
 ## Requirements
@@ -514,7 +514,7 @@ session.
 
 ## Proving it
 
-A rig, `tests/manual/box_rig.py`, on a real host, through the command
+A rig, `tests/manual/hut_rig.py`, on a real host, through the command
 line ([tests/manual/README.md](../tests/manual/README.md)):
 
 - the workload's first request at every start, the hut's first, each

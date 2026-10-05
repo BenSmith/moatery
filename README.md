@@ -136,7 +136,7 @@ coverage` on every push and pull request.
 
 Each placement, and moathut, has a rig that runs it end to end on a
 real host: `tests/manual/host_rig.py`, `netns_rig.py`,
-`sidecar_rig.py`, `vm_rig.py`, `vm_placement_rig.py` and `box_rig.py`
+`sidecar_rig.py`, `vm_rig.py`, `vm_placement_rig.py` and `hut_rig.py`
 ([tests/manual/README.md](tests/manual/README.md)).
 
 ## Licence

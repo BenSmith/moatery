@@ -43,8 +43,8 @@ def valid_name(name):
     return bool(NAME.fullmatch(name))
 
 
-def boxes_root(dirs):
-    return dirs.config / "moatery" / "box"
+def huts_root(dirs):
+    return dirs.config / "moatery" / "hut"
 
 
 def credentials_root(dirs):
@@ -75,7 +75,7 @@ def protected(dirs):
     return paths
 
 
-class Box(NamedTuple):
+class Hut(NamedTuple):
     name: str
     dirs: Dirs
 
@@ -85,11 +85,11 @@ class Box(NamedTuple):
 
     @property
     def config(self):
-        return boxes_root(self.dirs) / self.name
+        return huts_root(self.dirs) / self.name
 
     @property
     def settings(self):
-        return self.config / "box.json"
+        return self.config / "hut.json"
 
     @property
     def policy(self):
@@ -115,7 +115,7 @@ class Box(NamedTuple):
 
     @property
     def state(self):
-        return self.dirs.state / "moatery" / "box" / self.name
+        return self.dirs.state / "moatery" / "hut" / self.name
 
     @property
     def status(self):
@@ -133,7 +133,7 @@ class Box(NamedTuple):
 
     @property
     def logs(self):
-        return self.dirs.state / "log" / "moatery" / "box" / self.name
+        return self.dirs.state / "log" / "moatery" / "hut" / self.name
 
     @property
     def record(self):
@@ -141,7 +141,7 @@ class Box(NamedTuple):
 
     @property
     def share(self):
-        return self.dirs.data / "moatery" / "box" / self.name
+        return self.dirs.data / "moatery" / "hut" / self.name
 
     @property
     def home(self):

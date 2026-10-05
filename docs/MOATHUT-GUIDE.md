@@ -156,7 +156,7 @@ What you will notice first:
   path as yours, so your dotfiles, ssh keys and tokens are out of its
   reach. Mount the project directories you work in with `--mount`, and
   copy in any configuration the hut should have, at
-  `~/.local/share/moatery/box/NAME/home/` on the host.
+  `~/.local/share/moatery/hut/NAME/home/` on the host.
 - **`dnf install` doesn't last.** Every start is a fresh container, so
   build the tools into an image (below), or install them under the
   home.
@@ -483,10 +483,10 @@ For a hut named `work`:
 
 | what | where |
 |---|---|
-| its policy | `~/.config/moatery/box/work/policy.json` |
-| its record | `~/.local/state/log/moatery/box/work/requests.log` |
-| its home | `~/.local/share/moatery/box/work/home/` |
-| its seccomp profile | `~/.config/moatery/box/work/seccomp.json` |
+| its policy | `~/.config/moatery/hut/work/policy.json` |
+| its record | `~/.local/state/log/moatery/hut/work/requests.log` |
+| its home | `~/.local/share/moatery/hut/work/home/` |
+| its seccomp profile | `~/.config/moatery/hut/work/seccomp.json` |
 | its units | `systemctl --user status 'moathut-work*'` |
 
 Edit the policy with `moathut policy`, not in place: the command

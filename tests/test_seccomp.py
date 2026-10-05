@@ -276,7 +276,7 @@ class TestTheDistanceFromPodmansDefault(unittest.TestCase):
         self.assertEqual(podman - ours, NARROWED)
         self.assertEqual(ours - podman - gated, WIDENED)
 
-    def test_the_capability_gates_are_podmans_resolved_for_the_box(self):
+    def test_the_capability_gates_are_podmans_resolved_for_the_hut(self):
         """podman allows a gated call with a capability the container
         holds; the hut holds CAPABILITIES."""
         held = {f"CAP_{c}" for c in CAPABILITIES}

@@ -149,7 +149,7 @@ python3 tests/manual/netns_rig.py           # same; listeners in the netns
 python3 tests/manual/sidecar_rig.py         # same; builds container/ first
 python3 tests/manual/vm_rig.py              # same; a VM in the container (/dev/kvm)
 python3 tests/manual/vm_placement_rig.py --placement netns  # or sidecar
-python3 tests/manual/box_rig.py             # same; a hut, through moathut
+python3 tests/manual/hut_rig.py             # same; a hut, through moathut
 ```
 
 Every push and pull request runs `just lint` and `just coverage`

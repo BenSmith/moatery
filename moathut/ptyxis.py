@@ -27,7 +27,7 @@ _NAMESPACE = uuid.UUID("6f1b5a8e-4f61-4d6b-9c43-2a1d3e7b9f05")
 
 def profile_uuid(name):
     """Ptyxis's own ids are 32 hex digits, as this is."""
-    return uuid.uuid5(_NAMESPACE, f"moathut box {name}").hex
+    return uuid.uuid5(_NAMESPACE, f"moathut hut {name}").hex
 
 
 def profile_path(name):

@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 from moathut import cli
-from moathut.paths import Box, described, user_dirs
+from moathut.paths import Hut, described, user_dirs
 from tests import REPO_ROOT
 
 COMPLETION = Path(REPO_ROOT) / "completions" / "moathut.bash"
@@ -82,10 +82,10 @@ class TestTheCompletion(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return set(result.stdout.split())
 
-    def make_box(self, name, env=None):
-        box = Box(name, user_dirs(env or self.env))
-        box.settings.parent.mkdir(parents=True)
-        box.settings.write_text("{}")
+    def make_hut(self, name, env=None):
+        hut = Hut(name, user_dirs(env or self.env))
+        hut.settings.parent.mkdir(parents=True)
+        hut.settings.write_text("{}")
 
     def make_credential(self, credential):
         path = described(user_dirs(self.env), credential)
@@ -116,11 +116,11 @@ class TestTheCompletion(unittest.TestCase):
             o for parser in _commands().values() for a in parser._actions
             if a.nargs != 0 for o in a.option_strings})
 
-    def test_boxes_are_offered_where_a_box_is_named(self):
-        self.make_box("work")
-        self.make_box("play")
-        (self.home / ".config" / "moatery" / "box" / "half").mkdir()
-        boxes = {"work", "play"}
+    def test_huts_are_offered_where_a_hut_is_named(self):
+        self.make_hut("work")
+        self.make_hut("play")
+        (self.home / ".config" / "moatery" / "hut" / "half").mkdir()
+        huts = {"work", "play"}
         for line in ("moathut enter ", "moathut log ", "moathut allow ",
                      "moathut policy ", "moathut stop ", "moathut rm ",
                      "moathut ptyxis ", "moathut ptyxis --remove ",
@@ -131,11 +131,11 @@ class TestTheCompletion(unittest.TestCase):
                      "moathut enter --root w"):
             with self.subTest(line=line):
                 self.assertEqual(self.complete(line),
-                                 {b for b in boxes
+                                 {b for b in huts
                                   if b.startswith(re.split("[ =]", line)[-1])})
 
     def test_nothing_is_offered_where_moathut_takes_a_new_name(self):
-        self.make_box("work")
+        self.make_hut("work")
         for line in ("moathut create ", "moathut allow work ",
                      "moathut allow --method GET work ",
                      "moathut enter work ", "moathut enter work -- ",
@@ -146,7 +146,7 @@ class TestTheCompletion(unittest.TestCase):
 
     def test_credentials_are_offered_to_rm_and_to_add(self):
         self.make_credential("anthropic")
-        self.make_box("work")
+        self.make_hut("work")
         for line in ("moathut credential rm ", "moathut credential add ",
                      "moathut credential add --env KEY "):
             with self.subTest(line=line):
@@ -157,16 +157,16 @@ class TestTheCompletion(unittest.TestCase):
         self.assertLessEqual({"strict", "debug"},
                              self.complete("moathut create x --seccomp "))
 
-    def test_boxes_are_read_where_moathut_keeps_them(self):
+    def test_huts_are_read_where_moathut_keeps_them(self):
         """XDG_CONFIG_HOME as paths.user_dirs reads it: honoured when
         absolute, ignored when not."""
         elsewhere = self.home / "elsewhere"
         absolute = dict(self.env, XDG_CONFIG_HOME=str(elsewhere))
-        self.make_box("there", absolute)
+        self.make_hut("there", absolute)
         self.assertEqual(self.complete("moathut enter ", absolute),
                          {"there"})
         relative = dict(self.env, XDG_CONFIG_HOME="elsewhere")
-        self.make_box("here", relative)
+        self.make_hut("here", relative)
         self.assertEqual(self.complete("moathut enter ", relative),
                          {"here"})
 

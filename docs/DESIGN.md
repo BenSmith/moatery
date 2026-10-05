@@ -556,7 +556,7 @@ neighbour discovery.
 
 **Proved by** `tests/manual/netns_rig.py`, which runs this recipe;
 [examples/quadlet/](../examples/quadlet/) is it as a quadlet pod, and
-`tests/manual/box_rig.py` proves moathut, which lays it out per hut.
+`tests/manual/hut_rig.py` proves moathut, which lays it out per hut.
 
 ## Sidecar: moatery in the workload's pod
 

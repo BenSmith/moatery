@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""box_rig.py — a moathut hut, made and run through its command line.
+"""hut_rig.py — a moathut hut, made and run through its command line.
 
 docs/MOATHUT.md: `moathut credential add`, `create`, `enter`, `log`,
 `allow`, `policy`, `stop` and `rm`, the hut's units run by the user's
@@ -7,7 +7,7 @@ manager and quadlet, the namespace its netns unit holds, the netns
 placement's rules and listeners in it, and the hut's broker. Run on the
 proving host as an ordinary user, from a checkout:
 
-    python3 tests/manual/box_rig.py [--keep] [--without-rules]
+    python3 tests/manual/hut_rig.py [--keep] [--without-rules]
                                     [--without-held-netns]
                                     [--podman-seccomp]
                                     [--broker-not-ready]
@@ -287,8 +287,8 @@ from moatery.egress_record import (  # noqa
 )
 from moathut.record import ROTATE_BYTES, rotated  # noqa
 
-BOX = "moatery-rig-box"
-UNIT = f"moathut-{BOX}"
+HUT = "moatery-rig-hut"
+UNIT = f"moathut-{HUT}"
 NETNS_SERVICE = f"{UNIT}-netns.service"
 POD_SERVICE = f"{UNIT}-pod.service"
 SERVICE = f"{UNIT}.service"
@@ -304,11 +304,11 @@ LISTENERS = {INSPECT_SERVICE, RESOLVE_SERVICE}
 IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
 
 # docs/MOATHUT.md's table of a hut's files.
-CONFIG = HOME / ".config" / "moatery" / "box" / BOX
-STATE = HOME / ".local" / "state" / "moatery" / "box" / BOX
-LOGS = HOME / ".local" / "state" / "log" / "moatery" / "box" / BOX
-SHARE = HOME / ".local" / "share" / "moatery" / "box" / BOX
-BOX_HOME = SHARE / "home"
+CONFIG = HOME / ".config" / "moatery" / "hut" / HUT
+STATE = HOME / ".local" / "state" / "moatery" / "hut" / HUT
+LOGS = HOME / ".local" / "state" / "log" / "moatery" / "hut" / HUT
+SHARE = HOME / ".local" / "share" / "moatery" / "hut" / HUT
+HUT_HOME = SHARE / "home"
 # A hut made --like the rig's.
 TWIN = "moatery-rig-twin"
 TWIN_CONFIG = CONFIG.parent / TWIN
@@ -323,8 +323,8 @@ UNIT_FILES = (UNITS / NETNS_SERVICE, QUADLET / f"{UNIT}.pod",
 WRITTEN_WITH = (CONFIG / "prompt.sh", CONFIG / "containers.conf",
                 CONFIG / "seccomp.json")
 LAID_OUT = (CONFIG / "policy.json", CONFIG / "bundle.pem", *WRITTEN_WITH,
-            ca_cert_path(STATE), LOGS, BOX_HOME, BOX_HOME / ".bashrc",
-            BOX_HOME / ".bash_profile", *UNIT_FILES)
+            ca_cert_path(STATE), LOGS, HUT_HOME, HUT_HOME / ".bashrc",
+            HUT_HOME / ".bash_profile", *UNIT_FILES)
 MARK = STATE / "netns"
 STATUS = STATE / "status.json"
 RESOLVE_STATUS = STATE / "resolve-status.json"
@@ -336,10 +336,10 @@ SEALED = CREDENTIALS / f"{CREDENTIAL}.cred"
 DESCRIBED = CREDENTIALS / f"{CREDENTIAL}.json"
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR")
                or f"/run/user/{os.getuid()}")
-BROKER_SOCKET = RUNTIME / "moathut" / BOX / "broker.sock"
+BROKER_SOCKET = RUNTIME / "moathut" / HUT / "broker.sock"
 # Where the netns unit holds the hut's namespace: a file on the host,
 # bound in podman's mount namespace.
-NAMESPACE = RUNTIME / "moathut-netns" / BOX
+NAMESPACE = RUNTIME / "moathut-netns" / HUT
 
 DROP_INS = {"inspect": UNITS / f"{INSPECT_SERVICE}.d" / "rig.conf",
             "broker": UNITS / f"{BROKER_SERVICE}.d" / "rig.conf",
@@ -350,15 +350,15 @@ DROP_INS = {"inspect": UNITS / f"{INSPECT_SERVICE}.d" / "rig.conf",
             "rotate": UNITS / f"{ROTATE_SERVICE}.d" / "rig.conf"}
 # An nft ahead of the system's on the holder's PATH: one that fails, and
 # one that loads nothing and says it did.
-NFT_FAILS = RIG / "box-nft-fails"
-NFT_LOADS_NOTHING = RIG / "box-nft-noop"
+NFT_FAILS = RIG / "hut-nft-fails"
+NFT_LOADS_NOTHING = RIG / "hut-nft-noop"
 HOLDER_PATH = "/usr/local/bin:/usr/bin:/usr/sbin"
 FAILING_RULES = f"[Service]\nEnvironment=PATH={NFT_FAILS}:{HOLDER_PATH}\n"
 NO_RULES = f"[Service]\nEnvironment=PATH={NFT_LOADS_NOTHING}:{HOLDER_PATH}\n"
 # With --without-held-netns, the pod makes its own namespace, which its
 # user namespace owns, and this loads the rules into it and names it
 # where the hut reads it, as a pod's own start once did.
-OLD_RULES = RIG / "box-old-rules"
+OLD_RULES = RIG / "hut-old-rules"
 # The pod's unit removes the pod when it stops; emptied, a stop leaves
 # the pod, as a crash of the manager can.
 POD_LEFT = "[Service]\nExecStopPost=\n"
@@ -371,30 +371,30 @@ KEPT = ".moatery-rig-kept"
 WRITTEN = ".moatery-rig-written"
 MARKER = HOME / ".moatery-rig-marker"
 
-POLICY = RIG / "box-policy.json"
-PLAIN_POLICY = RIG / "box-plain-policy.json"
+POLICY = RIG / "hut-policy.json"
+PLAIN_POLICY = RIG / "hut-plain-policy.json"
 # $EDITOR for `moathut policy`: writes a document the loader refuses.
-BAD_EDITOR = RIG / "box-bad-editor"
+BAD_EDITOR = RIG / "hut-bad-editor"
 # And two that write the rig's plain and brokered documents.
-PLAIN_EDITOR = RIG / "box-plain-editor"
-BROKERED_EDITOR = RIG / "box-brokered-editor"
+PLAIN_EDITOR = RIG / "hut-plain-editor"
+BROKERED_EDITOR = RIG / "hut-brokered-editor"
 # And one that writes a refused document the first time and TTY_POLICY
 # the second, counting its runs in TTY_RUNS.
-TTY_EDITOR = RIG / "box-tty-editor"
-TTY_POLICY = RIG / "box-tty-policy.json"
-TTY_RUNS = RIG / "box-tty-runs"
+TTY_EDITOR = RIG / "hut-tty-editor"
+TTY_POLICY = RIG / "hut-tty-policy.json"
+TTY_RUNS = RIG / "hut-tty-runs"
 # A host allowed while a download runs, and one the terminal's edit adds.
 RELOAD_HOST = "moatery-rig-reload.example"
 TTY_HOST = "moatery-rig-tty.example"
 # The stub's /slow/N: N chunks of 64 KiB, 0.1 s apart (stub_provider.py).
 SLOW_CHUNKS = 80
 SLOW_BYTES = b"".join(bytes([i % 256]) * 65536 for i in range(SLOW_CHUNKS))
-FOLLOWED = RIG / "box-log-followed"
-SLOW = RIG / "box-slow"
-PROJECT = RIG / "box-project"
+FOLLOWED = RIG / "hut-log-followed"
+SLOW = RIG / "hut-slow"
+PROJECT = RIG / "hut-project"
 SUBDIR = PROJECT / "sub"
 SHARED = ".moatery-rig-shared"
-READONLY = RIG / "box-ro"
+READONLY = RIG / "hut-ro"
 READONLY_AT = "/srv/moatery-rig-ro"
 STUB_LOG = RIG / "stub.log"
 HOSTS_MARK = "moathut-rig"
@@ -410,7 +410,7 @@ else:
 USER = f"{os.getuid()}:{os.getgid()}"
 
 START_SCRIPT = f"""\
-# written by tests/manual/box_rig.py: the workload's first act at every
+# written by tests/manual/hut_rig.py: the workload's first act at every
 # start, then what `create` runs.
 n=$(cat /proc/sys/kernel/random/uuid)
 c=$(curl -s -o /dev/null -w '%{{http_code}}' --max-time 10 \\
@@ -456,11 +456,11 @@ SSH = "192.0.2.1:22"
 RULES = {"table inet moatery", "table netdev moatery"}
 
 OLD_RULES_SCRIPT = f"""\
-# written by tests/manual/box_rig.py: under podman unshare, the rules
+# written by tests/manual/hut_rig.py: under podman unshare, the rules
 # into the pod's own namespace, and its name where the hut reads it.
 from pathlib import Path
 from moathut.netns import load_rules, netns_id, pod_pid
-held = Path(f"/proc/{{pod_pid('{BOX}')}}/ns/net")
+held = Path(f"/proc/{{pod_pid('{HUT}')}}/ns/net")
 load_rules(held)
 with open("{MARK}", "w") as mark:
     mark.write(netns_id(held) + "\\n")
@@ -525,7 +525,7 @@ SECCOMP_DEBUG = {"ptrace": "ESRCH", "process_vm_readv": "0",
 PODMAN_SECCOMP = "/usr/share/containers/seccomp.json"
 
 SITECUSTOMIZE = """\
-# written by tests/manual/box_rig.py: the broker's interpreter waits
+# written by tests/manual/hut_rig.py: the broker's interpreter waits
 # before it runs, so its start has a window a request can fall in.
 import time
 time.sleep(3)
@@ -534,7 +534,7 @@ time.sleep(3)
 
 # --- the tool and the hut ----------------------------------------------------
 
-def box(*args, cwd=RIG, timeout=180, input=None, env=None):
+def hut(*args, cwd=RIG, timeout=180, input=None, env=None):
     """moathut as the user types it, with `input`, or nothing, on its
     stdin."""
     stdin = {"input": input} if input is not None else {
@@ -544,7 +544,7 @@ def box(*args, cwd=RIG, timeout=180, input=None, env=None):
 
 
 def exec_in(argv, *, user=USER, timeout=30):
-    return run(["podman", "exec", "--user", user, BOX, *argv], check=False,
+    return run(["podman", "exec", "--user", user, HUT, *argv], check=False,
                timeout=timeout)
 
 
@@ -556,7 +556,7 @@ NOT_PROTECTED = "not protected by the moat"
 def interactive(*podman_exec):
     """An interactive bash opened by `podman exec`, as a terminal would:
     (its stderr, its prompt)."""
-    got = run(["podman", "exec", *podman_exec, BOX, *SHELL_PS1],
+    got = run(["podman", "exec", *podman_exec, HUT, *SHELL_PS1],
               check=False, timeout=30)
     return got.stderr, got.stdout.strip()
 
@@ -577,12 +577,12 @@ def states():
 
 
 def exists(kind):
-    return run(["podman", kind, "exists", BOX], check=False).returncode == 0
+    return run(["podman", kind, "exists", HUT], check=False).returncode == 0
 
 
-def listed(name=BOX):
+def listed(name=HUT):
     """The hut's line in `moathut ls`, as words, or None."""
-    for line in box("ls").stdout.splitlines():
+    for line in hut("ls").stdout.splitlines():
         words = line.split()
         if words and words[0] == name:
             return words
@@ -604,7 +604,7 @@ def placeholder():
 def credential_listed():
     """The rig's credential's line in `credential ls`, as words, or
     None."""
-    for line in box("credential", "ls").stdout.splitlines():
+    for line in hut("credential", "ls").stdout.splitlines():
         words = line.split()
         if words and words[0] == CREDENTIAL:
             return words
@@ -624,7 +624,7 @@ def reset_failed():
 def write_drop_in(which, text):
     path = DROP_INS[which]
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("# written by tests/manual/box_rig.py\n" + text)
+    path.write_text("# written by tests/manual/hut_rig.py\n" + text)
     reload()
 
 
@@ -644,7 +644,7 @@ def remove_drop_ins():
 
 
 def infra_pid():
-    infra = run(["podman", "pod", "inspect", BOX, "--format",
+    infra = run(["podman", "pod", "inspect", HUT, "--format",
                  "{{.InfraContainerID}}"], check=False).stdout.strip()
     if not infra:
         return None
@@ -734,7 +734,7 @@ def await_(probe, seconds):
 def starts():
     """The workload's first acts: [nonce, status] per start."""
     try:
-        text = (BOX_HOME / STARTS).read_text()
+        text = (HUT_HOME / STARTS).read_text()
     except FileNotFoundError:
         return []
     return [line.split() for line in text.splitlines() if line.strip()]
@@ -793,7 +793,7 @@ def start_row(label, seen):
 
 def credential_rows(secret):
     say("credential")
-    added = box("credential", "add", CREDENTIAL, "--host", PROVIDER,
+    added = hut("credential", "add", CREDENTIAL, "--host", PROVIDER,
                 "--env", CREDENTIAL_ENV, "--auth-header", "Authorization",
                 "--auth-format", "Bearer {secret}", input=secret + "\n")
     files = [p for p in (SEALED, DESCRIBED) if p.exists()]
@@ -830,13 +830,13 @@ def unlevelled(text):
 
 def create_rows(autostart):
     say("create")
-    words = ("create", BOX, "--policy", str(POLICY),
+    words = ("create", HUT, "--policy", str(POLICY),
              "--mount", str(PROJECT),
              "--mount", f"{READONLY}:{READONLY_AT}:ro",
              *(["--autostart"] if autostart else []))
-    dry = box(*words, "--dry-run", timeout=300)
+    dry = hut(*words, "--dry-run", timeout=300)
     wrote = [str(p) for p in (CONFIG, *UNIT_FILES) if p.exists()]
-    made = box(*words, timeout=300)
+    made = hut(*words, timeout=300)
     expected = set(UNIT_FILES) | set(WRITTEN_WITH)
     printed = dry_files(dry.stdout, expected)
     differ = sorted(str(p) for p, text in printed.items()
@@ -858,7 +858,7 @@ def create_rows(autostart):
     row("create: nothing started, and ls lists the hut inactive on the "
         "default image, started at login",
         not running and not exists("pod")
-        and mine == [BOX, "inactive", IMAGE, "autostart"],
+        and mine == [HUT, "inactive", IMAGE, "autostart"],
         f"not inactive: {running}; pod: {exists('pod')}; ls: {mine}")
     return made.returncode == 0
 
@@ -934,7 +934,7 @@ def fail_rows():
     say("fail (the namespace's rules load fails)")
     write_drop_in("netns", FAILING_RULES)
     before = len(starts())
-    entered = box("enter", BOX, "--", "true")
+    entered = hut("enter", HUT, "--", "true")
     # A workload that started writes its line within its curl's 10 s.
     wrote = await_(lambda: len(starts()) > before, 15)
     row("fail: enter refuses a hut whose rules load fails",
@@ -944,7 +944,7 @@ def fail_rows():
         "no container is left",
         not wrote and not exists("container"),
         f"lines {before} -> {len(starts())}; units {states()}")
-    stopped = box("stop", BOX)
+    stopped = hut("stop", HUT)
     now = states()
     row("fail: stop leaves no unit active, the broker's either",
         stopped.returncode == 0
@@ -955,7 +955,7 @@ def fail_rows():
 def first_rows():
     say("first start")
     before = len(starts())
-    entered = box("enter", BOX, "--", "true")
+    entered = hut("enter", HUT, "--", "true")
     row("enter: starts the hut and runs a command in it",
         entered.returncode == 0,
         f"rc={entered.returncode} {entered.stderr.strip()[-300:]}")
@@ -999,7 +999,7 @@ def premise_rows():
     row("premise: which is the one the netns unit holds",
         infra is not None and infra == holding,
         f"infra {infra!r}; held at {NAMESPACE}: {holding!r}")
-    cgroup = run(["podman", "pod", "inspect", BOX, "--format",
+    cgroup = run(["podman", "pod", "inspect", HUT, "--format",
                   "{{.CgroupPath}}"], check=False)
     row("premise: the pod has no cgroup of its own",
         cgroup.returncode == 0 and not cgroup.stdout.strip(),
@@ -1008,7 +1008,7 @@ def premise_rows():
 
 def enter_rows(tag):
     say("enter")
-    got = box("enter", BOX, "--", "sh", "-c",
+    got = hut("enter", HUT, "--", "sh", "-c",
               'id -u; pwd; echo "$HOME"; '
               'getent passwd "$(id -u)" | cut -d: -f6')
     seen = got.stdout.splitlines()
@@ -1016,19 +1016,19 @@ def enter_rows(tag):
         "HOME and passwd home",
         seen == [str(os.getuid()), INSIDE, INSIDE, INSIDE],
         f"uid, pwd, HOME, passwd home: {seen} {got.stderr.strip()[-200:]}")
-    got = box("enter", BOX, "--", "sh", "-c", "pwd; cat file", cwd=SUBDIR)
+    got = hut("enter", HUT, "--", "sh", "-c", "pwd; cat file", cwd=SUBDIR)
     seen = got.stdout.split()
     row("enter: from inside a mount, in the same directory inside",
         seen == [str(SUBDIR), tag],
         f"pwd, file: {seen} {got.stderr.strip()[-200:]}")
-    got = box("enter", BOX, "--root", "--", "sh", "-c", "id -u; pwd")
+    got = hut("enter", HUT, "--root", "--", "sh", "-c", "id -u; pwd")
     seen = got.stdout.split()
     row("enter: with --root, as uid 0 in /root", seen == ["0", "/root"],
         f"uid, pwd: {seen} {got.stderr.strip()[-200:]}")
-    prompts = [box("enter", BOX, *root, "--", "bash", "-ic",
+    prompts = [hut("enter", HUT, *root, "--", "bash", "-ic",
                    'printf "%s\\n" "$PS1"').stdout.strip()
                for root in ([], ["--root"])]
-    named = [f"\\[\\e[{c}m\\]\u2b22 {BOX}\\[\\e[0m\\] "
+    named = [f"\\[\\e[{c}m\\]\u2b22 {HUT}\\[\\e[0m\\] "
              for c in ("35", "1;31")]
     row("enter: bash's prompt starts with the hut's name, magenta, and "
         "red as root",
@@ -1045,7 +1045,7 @@ def enter_rows(tag):
 def warn_rows():
     say("warn")
     # A shell enter refused to open warns of nothing.
-    entered = [box("enter", BOX, *root, "--", *SHELL_PS1)
+    entered = [hut("enter", HUT, *root, "--", *SHELL_PS1)
                for root in ([], ["--root"])]
     said = [got.stderr for got in entered]
     mark = (STATE / "netns").read_text().strip() \
@@ -1065,7 +1065,7 @@ def warn_rows():
     said, ps1 = interactive("--privileged")
     row("warn: nor does one podman exec --privileged opens, whose prompt "
         "is the hut's own: it cannot change the rules (held's rows)",
-        NOT_PROTECTED not in said and f"\u2b22 {BOX}" in ps1
+        NOT_PROTECTED not in said and f"\u2b22 {HUT}" in ps1
         and "UNPROTECTED" not in ps1,
         f"stderr {said.strip()[-200:]!r}; PS1 {ps1!r}")
 
@@ -1078,12 +1078,12 @@ def held_rows():
     refused = {}
     for words in (["link", "add", "moatery-rig1", "type", "dummy"],
                   ["link", "set", "lo", "down"]):
-        got = run(["podman", "exec", "--privileged", "--user", "0", BOX,
+        got = run(["podman", "exec", "--privileged", "--user", "0", HUT,
                    "ip", *words], check=False, timeout=30)
         refused[" ".join(words[:2])] = (
             got.returncode != 0 and "Operation not permitted" in got.stderr)
         if got.returncode == 0:
-            run(["podman", "exec", "--privileged", "--user", "0", BOX, "ip",
+            run(["podman", "exec", "--privileged", "--user", "0", HUT, "ip",
                  *(["link", "del", "moatery-rig1"] if "add" in words
                    else ["link", "set", "lo", "up"])], check=False)
     row("held: a shell podman exec --privileged opens, as root, is refused "
@@ -1127,7 +1127,7 @@ def held_rows():
         + (f"; {made.stderr.strip()[-160:]}" if made.returncode else ""))
 
 
-def seccomp_probe(*podman_exec, name=BOX):
+def seccomp_probe(*podman_exec, name=HUT):
     """The probe's errnos, run by `podman exec` in the hut `name`."""
     got = run(["podman", "exec", *podman_exec, name, "python3",
                f"{INSIDE}/{SECCOMP_PROBE}"], check=False, timeout=60)
@@ -1145,10 +1145,10 @@ def seccomp_rows():
     """docs/MOATHUT.md's profile, by errno: in a stock container the probe's
     arguments reach the kernel, in the hut the filter answers first."""
     say("seccomp")
-    (BOX_HOME / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)
+    (HUT_HOME / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)
     got = run(["podman", "run", "--rm", "--network", "none", "--userns",
                "keep-id", "--user", USER, "-v",
-               f"{BOX_HOME / SECCOMP_PROBE}:/probe:ro,z", IMAGE, "python3",
+               f"{HUT_HOME / SECCOMP_PROBE}:/probe:ro,z", IMAGE, "python3",
                "/probe"], check=False, timeout=120)
     try:
         stock = json.loads(got.stdout)
@@ -1187,7 +1187,7 @@ def home_rows(tag):
     row("home: a file in the user's own home is not in the hut",
         seen == "absent" and MARKER.exists(),
         f"{MARKER.name} inside: {seen}; on the host: {MARKER.exists()}")
-    on_host = BOX_HOME / WRITTEN
+    on_host = HUT_HOME / WRITTEN
     wrote = on_host.exists() and on_host.read_text().strip() == tag
     row("home: a file written in it is in the hut's home on the host, "
         "not the user's",
@@ -1306,7 +1306,7 @@ def broker_rows(secret):
     say("broker")
     fiction = placeholder()
     env = exec_in(["env"]).stdout
-    got = box("enter", BOX, "--", "printenv", CREDENTIAL_ENV)
+    got = hut("enter", HUT, "--", "printenv", CREDENTIAL_ENV)
     row("broker: the hut holds the placeholder, by exec and by enter, and "
         "never the key",
         fiction is not None
@@ -1342,7 +1342,7 @@ def broker_rows(secret):
         + (f"{rec.get('decision')} {rec.get('reason')!r}" if rec
            else "none"))
     path = f"/again/{os.urandom(8).hex()}"
-    got = box("enter", BOX, "--", *CURL, f"https://{PROVIDER}{path}")
+    got = hut("enter", HUT, "--", *CURL, f"https://{PROVIDER}{path}")
     ok, detail = served(path, got.stdout.strip())
     row("broker: enter starts it again, and a request is served",
         got.returncode == 0 and ok,
@@ -1363,7 +1363,7 @@ def broker_rows(secret):
         was == "activating" and again.returncode != 0,
         f"stopped while {was}; start rc={again.returncode}")
     path = f"/cleared/{os.urandom(8).hex()}"
-    got = box("enter", BOX, "--", *CURL, f"https://{PROVIDER}{path}")
+    got = hut("enter", HUT, "--", *CURL, f"https://{PROVIDER}{path}")
     ok, detail = served(path, got.stdout.strip())
     row("broker: enter starts it anyway, and a request is served",
         got.returncode == 0 and ok,
@@ -1383,13 +1383,13 @@ def rotate_rows():
         f"http={got.stdout.strip()!r} {got.stderr.strip()}")
     before = {u: invocation(u) for u in (SERVICE, INSPECT_SERVICE,
                                          BROKER_SERVICE)}
-    added = box("credential", "add", CREDENTIAL, input=new + "\n")
+    added = hut("credential", "add", CREDENTIAL, input=new + "\n")
     path = f"/rotated/{os.urandom(8).hex()}"
     got = exec_in([*CURL, f"https://{PROVIDER}{path}"])
     ok, detail = served(path, got.stdout.strip())
     row("rotate: credential add with the new key, and the hut's next "
         "request carries it",
-        added.returncode == 0 and f"hut {BOX}:" in added.stdout and ok,
+        added.returncode == 0 and f"hut {HUT}:" in added.stdout and ok,
         f"rc={added.returncode} {added.stdout.strip()!r} "
         f"{added.stderr.strip()[-160:]}; {detail}")
     after = {u: invocation(u) for u in before}
@@ -1400,7 +1400,7 @@ def rotate_rows():
 
 
 def container_started():
-    return run(["podman", "inspect", BOX, "--format",
+    return run(["podman", "inspect", HUT, "--format",
                 "{{.Id}} {{.State.StartedAt}}"], check=False).stdout.strip()
 
 
@@ -1412,7 +1412,7 @@ def loop_invocations():
 
 def refused_lines():
     """`log --refused` as its lines, and its exit status."""
-    got = box("log", BOX, "--refused")
+    got = hut("log", HUT, "--refused")
     return got.returncode, got.stdout.splitlines(), got.stderr.strip()
 
 
@@ -1444,14 +1444,14 @@ def download_rows():
     path = f"/slow/{SLOW_CHUNKS}/{os.urandom(8).hex()}"
     before = loop_invocations()
     download = subprocess.Popen(
-        ["podman", "exec", "--user", USER, BOX, "bash", "-o", "pipefail",
+        ["podman", "exec", "--user", USER, HUT, "bash", "-o", "pipefail",
          "-c", f"curl -sSf --max-time 60 'https://{PROVIDER}{path}' "
                "| sha256sum"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         # The stub logs a request as it answers it, before the body.
         began = await_(lambda: stub_logged(path), 10)
-        allowed = box("allow", BOX, RELOAD_HOST)
+        allowed = hut("allow", HUT, RELOAD_HOST)
         running = download.poll() is None
         out, err = download.communicate(timeout=60)
     finally:
@@ -1521,7 +1521,7 @@ def terminal_rows():
     TTY_POLICY.write_text(json.dumps(doc, indent=2) + "\n")
     TTY_RUNS.unlink(missing_ok=True)
     code, said = at_terminal(
-        [*TOOL, "policy", BOX],
+        [*TOOL, "policy", HUT],
         {**TOOL_ENV, "EDITOR": str(TTY_EDITOR), "VISUAL": ""},
         "y\n", "edit it again? [Y/n]")
     runs = len(TTY_RUNS.read_text().split()) if TTY_RUNS.exists() else 0
@@ -1556,7 +1556,7 @@ def loop_rows():
         f"rc={rc} {err} {lines}")
 
     before, started = loop_invocations(), container_started()
-    allowed = box("allow", BOX, UNLISTED)
+    allowed = hut("allow", HUT, UNLISTED)
     doc = json.loads((CONFIG / "policy.json").read_text())
     row("loop: allow lists the host and says the listeners reloaded",
         allowed.returncode == 0 and UNLISTED in doc.get("hosts", [])
@@ -1594,7 +1594,7 @@ def loop_rows():
     say("loop: a policy that does not load")
     text = (CONFIG / "policy.json").read_text()
     before = loop_invocations()
-    edited = box("policy", BOX, env={"EDITOR": str(BAD_EDITOR),
+    edited = hut("policy", HUT, env={"EDITOR": str(BAD_EDITOR),
                                      "VISUAL": ""})
     row("loop: policy refuses a document the loader refuses, at the "
         "command, and the hut's policy is unchanged",
@@ -1640,7 +1640,7 @@ def loop_rows():
         f"{'the same' if same else 'replaced'}; http="
         f"{got.stdout.strip()!r}; the stub "
         f"{'logged' if stub_logged(path) else 'never saw'} it")
-    entered = box("enter", BOX, "--", "true")
+    entered = hut("enter", HUT, "--", "true")
     ok, detail = provider_served("loop-entered")
     row("loop: enter starts the inspector again, and the provider is served",
         entered.returncode == 0 and ok
@@ -1650,7 +1650,7 @@ def loop_rows():
 
     say("loop: log follows")
     with FOLLOWED.open("w") as out:
-        follower = subprocess.Popen([*TOOL, "log", BOX], stdout=out,
+        follower = subprocess.Popen([*TOOL, "log", HUT], stdout=out,
                                     stderr=subprocess.STDOUT, env=TOOL_ENV,
                                     stdin=subprocess.DEVNULL)
         try:
@@ -1680,7 +1680,7 @@ def loop_rows():
 
     say("loop: policy drops the credential, then names it again")
     started = container_started()
-    edited = box("policy", BOX, env={"EDITOR": str(PLAIN_EDITOR),
+    edited = hut("policy", HUT, env={"EDITOR": str(PLAIN_EDITOR),
                                      "VISUAL": ""})
     broker = show(BROKER_SERVICE, "ActiveState")
     inspect = show(INSPECT_SERVICE, "ExecStart")
@@ -1704,7 +1704,7 @@ def loop_rows():
         f"http={got.stdout.strip()!r}; record: "
         + (f"{rec.get('decision')} {rec.get('status')} "
            f"{rec.get('credential')}" if rec else "none"))
-    edited = box("policy", BOX, env={"EDITOR": str(BROKERED_EDITOR),
+    edited = hut("policy", HUT, env={"EDITOR": str(BROKERED_EDITOR),
                                      "VISUAL": ""})
     ok, detail = provider_served("loop-brokered")
     same = container_started() == started
@@ -1807,7 +1807,7 @@ def restart_rows(count, tag):
 
 def stop_rows():
     say("stop")
-    stopped = box("stop", BOX)
+    stopped = hut("stop", HUT)
     now, mine = states(), listed()
     row("stop: every unit inactive, the timer too, no pod, no container, "
         "the namespace let go, and ls says so",
@@ -1819,7 +1819,7 @@ def stop_rows():
         f"container {exists('container')}; namespace's file "
         f"{NAMESPACE.exists()}; ls: {mine}")
     before = len(starts())
-    entered = box("enter", BOX, "--", "true")
+    entered = hut("enter", HUT, "--", "true")
     seen, mine = await_start(before), listed()
     row("stop: enter starts it again, and ls says so",
         entered.returncode == 0 and mine is not None
@@ -1835,7 +1835,7 @@ def autostart_rows():
     stopped, and it is the manager that starts the hut."""
     say("autostart")
     wanted = show(SERVICE, "WantedBy").split()
-    box("stop", BOX)
+    hut("stop", HUT)
     before = len(starts())
     run(["systemctl", "--user", "start", "default.target"], check=False,
         timeout=180)
@@ -1852,13 +1852,13 @@ def autostart_rows():
 def outside_rows():
     say("outside systemd")
     pid, before, was = infra_pid(), len(starts()), held()
-    run(["podman", "pod", "restart", BOX], check=False, timeout=120)
+    run(["podman", "pod", "restart", HUT], check=False, timeout=120)
     seen = await_start(before)
     if seen:
         say(f"  the workload's first request after it: http={seen[1:2]}")
     now = infra_pid()
     found = tables(now)
-    entered = box("enter", BOX, "--", "true")
+    entered = hut("enter", HUT, "--", "true")
     row("outside: after podman pod restart the pod is in the held "
         "namespace, with the rules, and enter serves it",
         now not in (None, pid) and netns_of(now) == was is not None
@@ -1877,20 +1877,20 @@ def outside_rows():
     # not stand against the user, and ls and enter say what is missing.
     run(["podman", "unshare", "nsenter", f"--net={NAMESPACE}", "nft",
          "delete", "table", "inet", "moatery"], check=False)
-    listing = box("ls")
+    listing = hut("ls")
     mine = listed()
-    entered = box("enter", BOX, "--", "true")
+    entered = hut("enter", HUT, "--", "true")
     row("outside: with a table deleted from the host, ls marks the hut "
         "unprotected and says so, and enter refuses it",
         mine is not None and mine[-1] == "unprotected"
-        and f"hut {BOX} is not protected" in listing.stderr
+        and f"hut {HUT} is not protected" in listing.stderr
         and entered.returncode != 0 and "no moatery rules" in entered.stderr,
         f"ls: {mine}; stderr {listing.stderr.strip()[-160:]!r}; enter "
         f"rc={entered.returncode} {entered.stderr.strip()[-160:]}")
-    box("stop", BOX)
+    hut("stop", HUT)
     # After the stop no workload is left to write a line.
     before = len(starts())
-    entered = box("enter", BOX, "--", "true")
+    entered = hut("enter", HUT, "--", "true")
     seen = await_start(before)
     found, mine = tables(infra_pid()), listed()
     row("outside: stop, then enter, serves it again with the rules, and ls "
@@ -1909,15 +1909,15 @@ def outside_rows():
     row("outside: a container run by hand from the hut's image and files "
         "warns that the hut is not protected, and its prompt says "
         "UNPROTECTED",
-        f"hut {BOX} is not protected by the moat" in got.stderr
-        and f"\u2b22 {BOX} UNPROTECTED" in got.stdout,
+        f"hut {HUT} is not protected by the moat" in got.stderr
+        and f"\u2b22 {HUT} UNPROTECTED" in got.stdout,
         f"rc={got.returncode} stderr {got.stderr.strip()[-200:]!r}; PS1 "
         f"{got.stdout.strip()!r}")
 
     write_drop_in("pod", POD_LEFT)
-    box("stop", BOX)
+    hut("stop", HUT)
     left = exists("pod")
-    started = run(["podman", "pod", "start", BOX], check=False, timeout=60)
+    started = run(["podman", "pod", "start", HUT], check=False, timeout=60)
     running = infra_pid()
     row("outside: a pod the hut left, started by podman with the "
         "namespace's unit stopped, does not start: nothing of it runs",
@@ -1926,7 +1926,7 @@ def outside_rows():
         f"pod left {left}; start rc={started.returncode} "
         f"{(started.stderr or started.stdout).strip()[-200:]}; infra pid "
         f"{running}")
-    run(["podman", "pod", "rm", "-f", "-i", BOX], check=False, timeout=60)
+    run(["podman", "pod", "rm", "-f", "-i", HUT], check=False, timeout=60)
     remove_drop_in("pod")
     reload()
 
@@ -1943,8 +1943,8 @@ def label_of(path):
         return exc.strerror
 
 
-def box_level(config=CONFIG):
-    path = config / "box.json"
+def hut_level(config=CONFIG):
+    path = config / "hut.json"
     return json.loads(path.read_text()).get("level") if path.exists() \
         else None
 
@@ -1954,11 +1954,11 @@ def label_rows():
     is the hut's alone; podman's own levels are drawn from the same
     categories, two of 1024, and one drawn twice is a 1 in 523776."""
     say("label")
-    level = box_level()
+    level = hut_level()
     current = exec_in(["cat", "/proc/self/attr/current"]).stdout
     current = current.strip("\0\n ")
     own = {p.name: label_of(p) for p in
-           (BOX_HOME, CONFIG / "bundle.pem", CONFIG / "prompt.sh", MARK)}
+           (HUT_HOME, CONFIG / "bundle.pem", CONFIG / "prompt.sh", MARK)}
     row("label: the workload runs at the hut's level, and its home, "
         "bundle, prompt and mark are labelled at it",
         bool(level) and current == f"system_u:system_r:container_t:{level}"
@@ -1974,7 +1974,7 @@ def label_rows():
     for opts in ((), ("--security-opt", f"label=level:{level}")):
         got = run(["podman", "run", "--rm", "--network", "none",
                    "--userns", "keep-id", "--user", USER, *opts, "-v",
-                   f"{BOX_HOME}:/d", IMAGE, "ls", "-a", "/d"],
+                   f"{HUT_HOME}:/d", IMAGE, "ls", "-a", "/d"],
                   check=False, timeout=120)
         reads.append(got)
     other, same = reads
@@ -1989,10 +1989,10 @@ def label_rows():
 
 def like_rows(tag):
     say("like")
-    made = box("create", TWIN, "--like", BOX, "--seccomp", "debug",
+    made = hut("create", TWIN, "--like", HUT, "--seccomp", "debug",
                timeout=300)
-    mine, twin = (json.loads((c / "box.json").read_text())
-                  if (c / "box.json").exists() else {}
+    mine, twin = (json.loads((c / "hut.json").read_text())
+                  if (c / "hut.json").exists() else {}
                   for c in (CONFIG, TWIN_CONFIG))
     same = {k: mine.get(k) == twin.get(k) for k in ("image", "mounts")}
     policy = (TWIN_CONFIG / "policy.json").exists() and (
@@ -2004,7 +2004,7 @@ def like_rows(tag):
         f"rc={made.returncode} {made.stderr.strip()[-200:]}; policy "
         f"{policy}; {same}")
     entry = listed(TWIN)
-    levels = (box_level(), box_level(TWIN_CONFIG))
+    levels = (hut_level(), hut_level(TWIN_CONFIG))
     row("like: and neither its autostart, its home nor its level; its "
         "profile is debug, as given",
         entry == [TWIN, "inactive", IMAGE, "seccomp:debug"]
@@ -2012,16 +2012,16 @@ def like_rows(tag):
         and all(levels) and levels[0] != levels[1],
         f"ls: {entry}; {KEPT} in its home: "
         f"{(TWIN_SHARE / 'home' / KEPT).exists()}; levels {levels}")
-    got = box("enter", TWIN, "--", "cat", f"{READONLY_AT}/file",
+    got = hut("enter", TWIN, "--", "cat", f"{READONLY_AT}/file",
               timeout=300)
     row("like: entered, it reads the :ro mount at its DST",
         got.returncode == 0 and got.stdout.strip() == tag,
         f"rc={got.returncode} {got.stdout.strip()!r} "
         f"{got.stderr.strip()[-200:]}")
     shared = PROJECT / SHARED
-    wrote = box("enter", BOX, "--", "sh", "-c", f'echo {tag} > "{shared}"',
+    wrote = hut("enter", HUT, "--", "sh", "-c", f'echo {tag} > "{shared}"',
                 timeout=300)
-    got = box("enter", TWIN, "--", "cat", str(shared), timeout=300)
+    got = hut("enter", TWIN, "--", "cat", str(shared), timeout=300)
     row("like: what the hut, entered as well, writes in their shared "
         "mount, it reads",
         wrote.returncode == 0 and got.returncode == 0
@@ -2029,14 +2029,14 @@ def like_rows(tag):
         f"hut rc={wrote.returncode} {wrote.stderr.strip()[-160:]}; twin "
         f"rc={got.returncode} {got.stdout.strip()!r} "
         f"{got.stderr.strip()[-160:]}")
-    box("stop", BOX)
+    hut("stop", HUT)
     (TWIN_SHARE / "home" / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)
     debug = seccomp_probe("--user", USER, name=TWIN)
     row("like: under debug, ptrace reaches the kernel, and a namespace is "
         "refused still",
         not differing(debug, SECCOMP_DEBUG),
         f"differing: {differing(debug, SECCOMP_DEBUG)}")
-    removed = box("rm", TWIN, "--home")
+    removed = hut("rm", TWIN, "--home")
     row("like: rm --home leaves nothing of it",
         removed.returncode == 0 and not TWIN_CONFIG.exists()
         and not TWIN_SHARE.exists() and listed(TWIN) is None,
@@ -2046,7 +2046,7 @@ def like_rows(tag):
 
 def rm_rows(tag):
     say("rm")
-    refused = box("credential", "rm", CREDENTIAL)
+    refused = hut("credential", "rm", CREDENTIAL)
     row("rm: credential rm is refused while the hut names it",
         refused.returncode != 0 and "named by" in refused.stderr
         and SEALED.exists() and DESCRIBED.exists(),
@@ -2054,7 +2054,7 @@ def rm_rows(tag):
     remove_drop_ins()
     # A hut nothing reached has no record.
     recorded = RECORD.exists()
-    removed = box("rm", BOX)
+    removed = hut("rm", HUT)
     left = [p.name for p in UNIT_FILES if p.exists()]
     loads = {short(s): load_state(s) for s in SERVICES}
     row("rm: no unit, pod or container is left, nor the broker's socket, "
@@ -2067,11 +2067,11 @@ def rm_rows(tag):
         f"{exists('pod')}, container {exists('container')}; socket "
         f"directory {BROKER_SOCKET.parent.exists()}")
     row("rm: the hut's home and its record stay",
-        (BOX_HOME / KEPT).exists() and LOGS.is_dir()
+        (HUT_HOME / KEPT).exists() and LOGS.is_dir()
         and RECORD.exists() == recorded,
-        f"{KEPT} in the home: {(BOX_HOME / KEPT).exists()}; record: "
+        f"{KEPT} in the home: {(HUT_HOME / KEPT).exists()}; record: "
         f"{recorded} -> {RECORD.exists()}; said {removed.stdout.split()}")
-    made = box("create", BOX, "--policy", str(PLAIN_POLICY))
+    made = hut("create", HUT, "--policy", str(PLAIN_POLICY))
     run(["systemctl", "--user", "start", "default.target"], check=False,
         timeout=180)
     now = states()
@@ -2079,20 +2079,20 @@ def rm_rows(tag):
         "start",
         made.returncode == 0 and set(now.values()) == {"inactive"},
         f"units {now}")
-    got = box("enter", BOX, "--", "cat", f"{INSIDE}/{KEPT}")
+    got = hut("enter", HUT, "--", "cat", f"{INSIDE}/{KEPT}")
     broker = (UNITS / BROKER_SERVICE).exists()
     row("rm: create again, with a policy naming no credential, finds the "
         "home and writes no broker",
         made.returncode == 0 and got.stdout.strip() == tag and not broker,
         f"create rc={made.returncode}; enter: {got.stdout.strip()!r} "
         f"{got.stderr.strip()[-200:]}; broker unit {broker}")
-    removed = box("rm", BOX, "--home")
+    removed = hut("rm", HUT, "--home")
     row("rm --home: the home goes too",
         removed.returncode == 0 and not SHARE.exists()
         and not CONFIG.exists(),
         f"rc={removed.returncode}; home {SHARE.exists()}, config "
         f"{CONFIG.exists()}")
-    gone = box("credential", "rm", CREDENTIAL)
+    gone = hut("credential", "rm", CREDENTIAL)
     row("rm: then credential rm removes the credential",
         gone.returncode == 0 and not SEALED.exists()
         and not DESCRIBED.exists() and credential_listed() is None,
@@ -2114,7 +2114,7 @@ def probe(args, tag, secret):
                   + ("Type=simple\n" if args.broker_not_ready else ""))
     if args.broker_not_ready:
         say("  the broker's unit is Type=simple, as asked")
-    (BOX_HOME / START).write_text(START_SCRIPT)
+    (HUT_HOME / START).write_text(START_SCRIPT)
     write_drop_in("workload", (
         f"[Unit]\nRequires={INSPECT_SERVICE} {RESOLVE_SERVICE}\n"
         if args.listeners_required else "")
@@ -2170,12 +2170,12 @@ def clear_leftovers():
     """The rig's own hut, by name, as a run with --keep or one cut short
     left it."""
     remove_drop_ins()
-    for name, config in ((BOX, CONFIG), (TWIN, TWIN_CONFIG)):
-        if (config / "box.json").exists():
-            box("rm", name, "--home")
+    for name, config in ((HUT, CONFIG), (TWIN, TWIN_CONFIG)):
+        if (config / "hut.json").exists():
+            hut("rm", name, "--home")
     run(["systemctl", "--user", "stop", BROKER_SERVICE], check=False)
-    run(["podman", "pod", "rm", "-f", "-i", BOX], check=False)
-    run(["podman", "rm", "-f", "-i", BOX], check=False)
+    run(["podman", "pod", "rm", "-f", "-i", HUT], check=False)
+    run(["podman", "rm", "-f", "-i", HUT], check=False)
     # The hut's root writes in its home, as a uid the user is not.
     run(["podman", "unshare", "rm", "-rf", "--", str(CONFIG), str(STATE),
          str(LOGS), str(SHARE), str(PROJECT), str(READONLY),
@@ -2213,12 +2213,12 @@ def material():
         editor.chmod(0o755)
     SLOW.mkdir(parents=True, exist_ok=True)
     (SLOW / "sitecustomize.py").write_text(SITECUSTOMIZE)
-    for directory, body in ((NFT_FAILS, "echo 'box_rig: nft fails, as "
+    for directory, body in ((NFT_FAILS, "echo 'hut_rig: nft fails, as "
                                         "asked' >&2\nexit 1\n"),
                             (NFT_LOADS_NOTHING, "cat > /dev/null\n")):
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "nft").write_text(
-            "#!/bin/sh\n# written by tests/manual/box_rig.py\n" + body)
+            "#!/bin/sh\n# written by tests/manual/hut_rig.py\n" + body)
         (directory / "nft").chmod(0o755)
     OLD_RULES.write_text(OLD_RULES_SCRIPT)
     tag = os.urandom(4).hex()
@@ -2236,9 +2236,9 @@ def teardown(keep):
     say("teardown")
     if not keep:
         remove_drop_ins()
-        for name, config in ((BOX, CONFIG), (TWIN, TWIN_CONFIG)):
-            if (config / "box.json").exists():
-                box("rm", name, "--home")
+        for name, config in ((HUT, CONFIG), (TWIN, TWIN_CONFIG)):
+            if (config / "hut.json").exists():
+                hut("rm", name, "--home")
         for path in (PROJECT, READONLY, SLOW, TWIN_LOGS, NFT_FAILS,
                      NFT_LOADS_NOTHING):
             shutil.rmtree(path, ignore_errors=True)

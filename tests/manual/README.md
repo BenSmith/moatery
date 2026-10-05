@@ -440,7 +440,7 @@ caller was named. With `198.18.0.1`, never routed, 20/20 in both; the
 redirect is by port, and passt's dial to that address meets it. The
 three now answer `198.18.0.1`, and `--loopback-answer` 14/20 is the old
 answer as a control. Re-run on that change, the same day: vm_rig 30/30,
-netns_rig 30/30, sidecar_rig 36/36, box_rig 103/103.
+netns_rig 30/30, sidecar_rig 36/36, hut_rig 103/103.
 
 Outside the rig, the same day, two more ways to hold a VM:
 
@@ -465,9 +465,9 @@ Outside the rig, the same day, two more ways to hold a VM:
 **Every placement after the rename, 2026-10-04.** At 1d34a22, on the
 proving host: host_rig 33/33, netns_rig 30/30, vm_rig 30/30, this rig
 `--placement netns` 20/20 and `--placement sidecar` 22/22, sidecar_rig
-38/38, box_rig 130/130. No defect.
+38/38, hut_rig 130/130. No defect.
 
-## box_rig.py — a moathut hut, through its command line
+## hut_rig.py — a moathut hut, through its command line
 
 `docs/MOATHUT.md`: `moathut credential add`, `create`, `enter`, `log`,
 `allow`, `policy`, `stop` and `rm`, the hut's units run by the user's
@@ -477,16 +477,16 @@ The tool is the checkout's `bin/moathut`, or with
 `MOATERY_LIBEXEC=/usr/libexec/moatery` the installed one.
 
 ```bash
-python3 tests/manual/box_rig.py                     # every row green
-python3 tests/manual/box_rig.py --without-rules     # must go red
-python3 tests/manual/box_rig.py --without-held-netns  # must go red
-python3 tests/manual/box_rig.py --podman-seccomp    # must go red
-python3 tests/manual/box_rig.py --broker-not-ready  # must go red
-python3 tests/manual/box_rig.py --listeners-required  # must go red
-python3 tests/manual/box_rig.py --without-reload    # must go red
-python3 tests/manual/box_rig.py --without-reopen    # must go red
-python3 tests/manual/box_rig.py --without-autostart  # must go red
-python3 tests/manual/box_rig.py --restarts 10       # more restarts of each
+python3 tests/manual/hut_rig.py                     # every row green
+python3 tests/manual/hut_rig.py --without-rules     # must go red
+python3 tests/manual/hut_rig.py --without-held-netns  # must go red
+python3 tests/manual/hut_rig.py --podman-seccomp    # must go red
+python3 tests/manual/hut_rig.py --broker-not-ready  # must go red
+python3 tests/manual/hut_rig.py --listeners-required  # must go red
+python3 tests/manual/hut_rig.py --without-reload    # must go red
+python3 tests/manual/hut_rig.py --without-reopen    # must go red
+python3 tests/manual/hut_rig.py --without-autostart  # must go red
+python3 tests/manual/hut_rig.py --restarts 10       # more restarts of each
 ```
 
 The fixture is riglib's, and seven drop-ins beside the units `create`

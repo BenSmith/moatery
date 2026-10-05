@@ -6,7 +6,7 @@ import os
 import signal
 import sys
 
-from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, BoxError, allow,
+from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, HutError, allow,
                        create, credential_add, credential_ls, credential_rm,
                        edit_policy, enter, log, ls, ptyxis_add,
                        ptyxis_remove, refused, rm, stop, unit_exec,
@@ -139,12 +139,12 @@ def _secret(credential, stdin):
 
 def run_credential(args, *, dirs, stdin):
     if args.credential_command == "add":
-        boxes, moved = credential_add(
+        huts, moved = credential_add(
             args.id, _secret(args.id, stdin), hosts=args.host, env=args.env,
             auth_header=args.auth_header, auth_format=args.auth_format,
             dirs=dirs)
         print(f"credential {args.id} sealed")
-        for name in boxes:
+        for name in huts:
             print(f"hut {name}: its broker holds it"
                   + ("; the new variable is set from its next start"
                      if moved else ""))
@@ -198,7 +198,7 @@ def _stopped(signum, frame):
 def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
     dirs = user_dirs(environ)
     if args.command == "create":
-        box = create(args.name, args.policy, args.image, args.mount,
+        hut = create(args.name, args.policy, args.image, args.mount,
                      dirs=dirs, tool=tool, python=sys.executable,
                      libexec=environ.get("MOATERY_LIBEXEC")
                      or DEFAULT_LIBEXEC,
@@ -208,10 +208,10 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
                      dry_run=args.dry_run, like=args.like,
                      profile=args.seccomp)
         if args.dry_run:
-            for path, text in box.items():
+            for path, text in hut.items():
                 print(f"# {path}\n{text}")
         else:
-            print(f"hut {box.name} created; moathut enter {box.name}")
+            print(f"hut {hut.name} created; moathut enter {hut.name}")
     elif args.command == "enter":
         enter(args.name, args.argv, root=args.root, dirs=dirs,
               cwd=cwd, environ=environ, isatty=isatty)
@@ -243,7 +243,7 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
             print(f"hut {args.name}'s Ptyxis profile removed")
     elif args.command == "ptyxis" and args.remove:
         if not ptyxis_remove(args.name):
-            raise BoxError(f"hut {args.name} has no Ptyxis profile")
+            raise HutError(f"hut {args.name} has no Ptyxis profile")
         print(f"hut {args.name}'s Ptyxis profile removed")
     elif args.command == "ptyxis":
         ptyxis_add(args.name, dirs=dirs)
@@ -286,6 +286,6 @@ def main(argv=None, environ=os.environ):
     try:
         return run_command(args, tool=tool, environ=environ,
                            cwd=os.getcwd(), isatty=sys.stdin.isatty())
-    except (BoxError, CommandFailed, NetnsError) as exc:
+    except (HutError, CommandFailed, NetnsError) as exc:
         print(f"moathut: {exc}", file=sys.stderr)
         return 1
