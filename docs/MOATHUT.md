@@ -39,6 +39,7 @@ moathut stop NAME
 moathut rm NAME [--home]
 moathut ptyxis NAME [--remove]
 moathut ls
+moathut --version
 ```
 
 **create** writes the hut's files (below), mints its CA with

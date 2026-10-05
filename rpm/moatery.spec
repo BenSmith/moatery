@@ -48,6 +48,8 @@ for pkg in moatery moathut; do
         install -pm 0644 "$f" %{buildroot}%{python3_sitelib}/$pkg/
     done
 done
+install -pm 0644 %{_sourcedir}/VERSION \
+    %{buildroot}%{python3_sitelib}/moathut/VERSION
 install -Dpm 0755 %{_sourcedir}/bin/moathut \
     %{buildroot}%{_bindir}/moathut
 install -Dpm 0644 %{_sourcedir}/completions/moathut.bash \
@@ -74,6 +76,8 @@ for f in moat-broker moat-inspect moat-mint-ca \
 done
 PYTHONPATH=%{buildroot}%{python3_sitelib} \
     %{buildroot}%{_bindir}/moathut --help >/dev/null
+test "$(PYTHONPATH=%{buildroot}%{python3_sitelib} \
+    %{buildroot}%{_bindir}/moathut --version)" = "moathut %{version}"
 
 %files
 %license %{_datadir}/licenses/moatery/LICENSE

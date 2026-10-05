@@ -1745,6 +1745,15 @@ with mock.patch.object(cli, "unit_netns", held):
                 with self.subTest(words), self.assertRaises(SystemExit):
                     parse(words)
 
+    def test_the_version_is_the_release_s(self):
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out), \
+                self.assertRaises(SystemExit) as exited:
+            parse(["--version"])
+        self.assertEqual(exited.exception.code, 0)
+        release = (Path(REPO_ROOT) / "VERSION").read_text().strip()
+        self.assertEqual(out.getvalue(), f"moathut {release}\n")
+
     def _add(self, credential="k", secret="sk-real", host=None, **over):
         values = dict(hosts=["api.x"], env="K", auth_header="Authorization",
                       auth_format="Bearer {secret}")

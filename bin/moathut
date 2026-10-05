@@ -22,11 +22,13 @@ Usage:
   moathut policy NAME
   moathut stop NAME
   moathut rm NAME [--home]
+  moathut ptyxis NAME [--remove]
   moathut ls
   moathut credential add ID [--host HOST]... [--env VARIABLE]
                      [--auth-header FIELD] [--auth-format FORMAT]
   moathut credential ls
   moathut credential rm ID
+  moathut --version
 """
 
 import sys

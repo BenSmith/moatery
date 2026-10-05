@@ -303,6 +303,16 @@ class TestTheRpmCarriesEverything(unittest.TestCase):
                 self.assertIn(f"%{{buildroot}}%{{_bindir}}/{path.name} "
                               f"--help", spec)
 
+    def test_the_version_moathut_reports_is_installed_beside_it(self):
+        """`moathut --version` reads VERSION beside the package: in a
+        checkout a link to the release's, in the RPM a copy of it."""
+        root = Path(REPO_ROOT)
+        self.assertEqual((root / "moathut" / "VERSION").resolve(),
+                         (root / "VERSION").resolve())
+        self.assertIn("install -pm 0644 %{_sourcedir}/VERSION \\\n"
+                      "    %{buildroot}%{python3_sitelib}/moathut/VERSION",
+                      SPEC.read_text())
+
 
     def test_every_program_leaves_the_user_site_off(self):
         """Run as a user, a program would otherwise import from that

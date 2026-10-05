@@ -80,6 +80,7 @@ _moathut() {
     local command=${pos[0]} n=$((${#pos[@]} - 1)) options="" names=""
     case $command in
         "")
+            options="--version"
             names="create enter log allow policy stop rm ls credential
                 ptyxis" ;;
         create)

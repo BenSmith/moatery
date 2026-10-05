@@ -5,6 +5,7 @@ import getpass
 import os
 import signal
 import sys
+from pathlib import Path
 
 from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, HutError, allow,
                        create, credential_add, credential_ls, credential_rm,
@@ -18,12 +19,17 @@ from .process import CommandFailed
 PUBLIC = ("{create,enter,log,allow,policy,stop,rm,ls,credential,"
           "ptyxis}")
 
+# The release's VERSION, which the RPM installs beside the package.
+VERSION = Path(__file__).with_name("VERSION")
+
 
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="moathut",
         description="long-lived, inspected containers for command-line "
                     "workloads")
+    parser.add_argument("--version", action="version",
+                        version=f"%(prog)s {VERSION.read_text().strip()}")
     sub = parser.add_subparsers(dest="command", required=True,
                                 metavar=PUBLIC)
     p = sub.add_parser("create", help="lay out a hut; nothing starts")

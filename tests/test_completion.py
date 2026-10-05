@@ -99,6 +99,10 @@ class TestTheCompletion(unittest.TestCase):
         self.assertEqual(self.complete("moathut credential "),
                          {c.split()[1] for c in _commands() if " " in c})
 
+    def test_the_top_level_offers_its_options(self):
+        self.assertEqual(self.complete("moathut --") - {"--help"},
+                         _options(cli.build_parser()))
+
     def test_each_command_offers_its_options_and_no_other(self):
         for words, parser in _commands().items():
             with self.subTest(command=words):
