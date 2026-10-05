@@ -3,8 +3,10 @@
 Units for a rootless podman container inspected by moatery, its
 inspector, broker and responder running as the user on the host
 ([DESIGN.md](../docs/DESIGN.md), "Host"). They assume the RPM is
-installed (`just rpm`): the programs in `/usr/libexec/moatery/`, the
-`moatery` package where Python finds it.
+installed (`just rpm` builds it): the programs in
+`/usr/libexec/moatery/`, the `moatery` package where Python finds it,
+and these files in `/usr/share/doc/moatery/examples/`. The commands
+below are run from that directory, or from `examples/` in a checkout.
 
 The workload's name in these files is `example`, and the brokered
 provider is `api.example.com` under the credential id `example`.
@@ -70,16 +72,77 @@ cat ~/.local/state/moatery/ca/egress-ca.crt \
 
 (`/etc/ssl/certs/ca-certificates.crt` on Debian-family hosts.)
 
-Then:
+The units:
 
 ```
+mkdir -p ~/.config/systemd/user
+cp systemd/* ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now moat-broker.service moat-inspect.socket \
     moat-resolve.socket
 ```
 
-The container, and the rules that send its traffic to the inspector,
-are steps 4 and 5 of "Host" in [DESIGN.md](../docs/DESIGN.md).
+The inspector and the responder start at the first connection and the
+first query, so until then `systemctl --user status` shows them
+inactive and their sockets listening.
+
+## The container
+
+Steps 4 and 5 of "Host" in [DESIGN.md](../docs/DESIGN.md), for a
+container named `example` running `sleep infinity`. The bundle goes
+over the image's system trust store, so sudo, which drops the
+variables, trusts the CA too; that path is Fedora's, and
+`/etc/ssl/certs/ca-certificates.crt` on Debian-family images.
+
+```
+T=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+podman create --name example \
+    --network pasta:--map-host-loopback=169.254.1.3 --hosts-file image \
+    -v "$HOME/.config/moatery/bundle.pem:$T:ro,Z" \
+    -e SSL_CERT_FILE=$T -e NODE_EXTRA_CA_CERTS=$T -e REQUESTS_CA_BUNDLE=$T \
+    -e EXAMPLE_API_KEY=sk-placeholder \
+    registry.fedoraproject.org/fedora:44 sleep infinity
+podman init example
+DEV=$(ip route show default | awk '{print $5; exit}')
+podman unshare nsenter -t "$(podman inspect -f '{{.State.Pid}}' example)" \
+  -n nft -f - <<NFT
+table inet moatery {
+  chain out {
+    type nat hook output priority -100
+    tcp dport 443 dnat ip to 169.254.1.3:8443
+    tcp dport 80  dnat ip to 169.254.1.3:8080
+    udp dport 53  dnat ip to 169.254.1.3:8053
+    tcp dport 53  dnat ip to 169.254.1.3:8053
+  }
+}
+table netdev moatery {
+  chain egress {
+    type filter hook egress device "$DEV" priority 0; policy drop
+    meta protocol arp accept
+    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert,
+                  nd-router-solicit } accept
+    ip daddr 169.254.1.3 tcp dport { 8443, 8080, 8053 } accept
+    ip daddr 169.254.1.3 udp dport 8053 accept
+    udp dport 443 counter comment "quic"
+    counter comment "dropped"
+  }
+}
+NFT
+podman start example
+```
+
+Then, from the container, an allowed host answers and any other is
+refused by the inspector:
+
+```
+podman exec example curl -sI https://pypi.org/simple/    # 200
+podman exec example curl -sI https://example.com/        # 403
+```
+
+The rules last for this start of the container. A stopped container
+started again has a new namespace without them, and its traffic is not
+inspected: remove it and run these steps again, or use the quadlet
+example ([quadlet/](quadlet/)), which loads them at every start.
 
 ## What it writes
 
@@ -103,6 +166,8 @@ are steps 4 and 5 of "Host" in [DESIGN.md](../docs/DESIGN.md).
   [LOGGING.md](../docs/LOGGING.md) has every line and key.
 
 ## Rotation
+
+The timer and its service were copied with the units above.
 
 ```
 sed "s/USER/$USER/" logrotate/moatery.conf > ~/.config/moatery/logrotate.conf

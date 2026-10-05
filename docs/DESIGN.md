@@ -387,15 +387,15 @@ ListenStream=127.0.0.1:8053
 ExecStart=moat-resolve --name x --address 169.254.1.3 --policy … \
     --status …
 # 4. the container, created but not started
-podman create --network pasta:--map-host-loopback=169.254.1.3 \
-  --hosts-file image \
+podman create --name NAME \
+  --network pasta:--map-host-loopback=169.254.1.3 --hosts-file image \
   -v bundle.pem:/usr/local/share/ca-certificates/egress-ca.crt:ro,Z \
   -e SSL_CERT_FILE=/usr/local/share/ca-certificates/egress-ca.crt \
   -e NODE_EXTRA_CA_CERTS=… -e REQUESTS_CA_BUNDLE=… \
-  -e EXAMPLE_API_KEY=sk-placeholder  IMAGE
+  -e EXAMPLE_API_KEY=sk-placeholder  IMAGE COMMAND
 podman init NAME          # the namespace exists, the workload does not
 # 5. the rules
-DEV=$(ip route show default | awk '{print $5}')
+DEV=$(ip route show default | awk '{print $5; exit}')
 podman unshare nsenter -t "$(podman inspect -f '{{.State.Pid}}' NAME)" \
   -n nft -f - <<NFT
 table inet moatery {
@@ -484,15 +484,15 @@ them all unnamed.
 # 1-2. as on the host: the policy, the credential, the CA, the bundle,
 #      and the broker's user unit
 # 3. the container, created but not started; plain pasta, no map
-podman create --network pasta --hosts-file image \
+podman create --name NAME --network pasta --hosts-file image \
   -v bundle.pem:/usr/local/share/ca-certificates/egress-ca.crt:ro,Z \
   -e SSL_CERT_FILE=/usr/local/share/ca-certificates/egress-ca.crt \
   -e NODE_EXTRA_CA_CERTS=… -e REQUESTS_CA_BUNDLE=… \
-  -e EXAMPLE_API_KEY=sk-placeholder  IMAGE
+  -e EXAMPLE_API_KEY=sk-placeholder  IMAGE COMMAND
 podman init NAME
 PID=$(podman inspect -f '{{.State.Pid}}' NAME)
 # 4. the rules, landing on the namespace's loopback
-DEV=$(ip route show default | awk '{print $5}')
+DEV=$(ip route show default | awk '{print $5; exit}')
 podman unshare nsenter -t "$PID" -n nft -f - <<NFT
 table inet moatery {
   chain out {
@@ -628,7 +628,7 @@ podman run -d --pod POD --name sidecar --restart on-failure \
     --secret KEY,target=CRED,uid=201,gid=200,mode=0400 \
     moat-sidecar --name NAME --caller-uid 1000 \
     --host api.example.com=CRED --placeholder CRED=sk-placeholder
-DEV=$(ip route show default | awk '{print $5}')
+DEV=$(ip route show default | awk '{print $5; exit}')
 podman unshare nsenter -t $(podman inspect -f '{{.State.Pid}}' sidecar) -n \
     nft -f - <<RULES
 table inet moatery {
@@ -663,7 +663,7 @@ RULES
 podman run -d --pod POD --name workload --user 1000:1000 --cap-drop all \
     -v bundle.pem:/usr/local/share/ca-certificates/egress-ca.crt:ro,Z \
     -e SSL_CERT_FILE=/usr/local/share/ca-certificates/egress-ca.crt … \
-    IMAGE
+    IMAGE COMMAND
 ```
 
 The bundle the workload trusts is built from the CA the sidecar minted
