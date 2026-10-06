@@ -89,16 +89,19 @@ forwarded. `moatery/resolve_policy.py` is moatery's; `resolve_wire` and
 ## Releasing for workloadctl
 
 workloadctl's spec has `Requires: moatery >= X.Y.Z`, and its
-`hypervisor.Containerfile` pins `ARG MOATERY_RPM=<registry>/moatery-rpm:X.Y.Z`,
-verified against this repo's signing key. A flag, a name or a status key
-workloadctl comes to use is therefore a release here first:
+`hypervisor.Containerfile` pins `ARG MOATERY_VERSION=X.Y.Z`, fetched from
+this project's Copr repository and verified against the Copr project's
+signing key (the hypervisor repo's `moatery-copr/`). A flag, a name or a
+status key workloadctl comes to use is therefore a release here first:
 
 - Bump `VERSION` and the spec's `Version` (a test holds them equal),
-  and push the tag `vX.Y.Z`. Only a tag push publishes the signed RPM
-  image (`.forgejo/workflows/rpm-image.yml`); a manual run of that
-  workflow builds and tests, and pushes nothing.
-- Then, in the hypervisor repo, raise the spec's floor and the image pin
-  together.
+  push the tag `vX.Y.Z` to the forge and GitHub, and publish a GitHub
+  release for it: the release is what Packit builds into Copr
+  (`.packit.yaml`). The forge's tag push also publishes the signed RPM
+  image (`.forgejo/workflows/rpm-image.yml`), which the hypervisor image
+  does not take.
+- Then, in the hypervisor repo, raise the image pin, and the spec's floor
+  when workloadctl needs the release.
 - `docs/INTERFACE.md` changes when workloadctl's imports or status reads
   do; `tests/test_interface.py` holds it to the code, and workloadctl's
   `tests/test_moatery_seam.py` holds its side: the flags its units hand
