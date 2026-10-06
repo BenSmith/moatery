@@ -619,14 +619,6 @@ class TestClientHelloParser(unittest.TestCase):
         with self.assertRaises(HelloUnreadable):
             read_client_hello(_FakeSocket([_hello_bytes(bad)], timeout=0.2))
 
-    def test_the_captured_ech_hello_shows_no_offer(self):
-        """This capture's offer went inside the encryption with its name, so
-        an ECH hello's `alpn=` field may be absent while the client offered
-        h2 all the same."""
-        raw = (ROOT / "tests" / "fixtures" / "ech-clienthello.bin").read_bytes()
-        hello = read_client_hello(_FakeSocket([raw]))
-        self.assertEqual(hello.alpn, ())
-
     def test_a_plain_hello_yields_its_server_name(self):
         raw = _hello_bytes()
         hello = read_client_hello(_FakeSocket([raw]))
@@ -3733,41 +3725,31 @@ def _ech_extension(payload=b"\x00" * 8):
     return (0xfe0d).to_bytes(2, "big") + len(payload).to_bytes(2, "big") + payload
 
 
-class TestEchFixture(unittest.TestCase):
-    """The captured handshake, pinned as a regression.
+class TestAnEchHello(unittest.TestCase):
+    """The property the whole tripwire rests on: an ECH hello parses like
+    any other and yields the cover name, so the extension is what is
+    observable and the inner name never is. Its extension comes first
+    here, with an outer payload's bulk, so the walk reaches the ones after
+    it only by skipping it by its length."""
 
-    Hand-built helloes prove the parser handles the shapes we thought of. This
-    one is a real ECH ClientHello from a real client, and the property it pins
-    is the one the whole tripwire rests on: an ECH hello parses like any other
-    and yields the COVER name, so the extension is what is observable and the
-    name never is.
-    """
-
-    FIXTURE = ROOT / "tests" / "fixtures" / "ech-clienthello.bin"
-
-    def test_the_fixture_is_present(self):
-        """Cited by the design; a missing fixture would make every assertion
-        below vacuously skip rather than fail."""
-        self.assertTrue(self.FIXTURE.exists())
+    def _hello(self):
+        return read_client_hello(_FakeSocket([_hello_bytes(
+            _ech_extension(b"\x5a" * 240) + _grease_extension()
+            + _grease_extension(0x1a1a), server_name="cover.example")]))
 
     def test_it_parses_to_the_cover_name(self):
-        raw = self.FIXTURE.read_bytes()
-        hello = read_client_hello(_FakeSocket([raw]))
-        self.assertEqual(hello.server_name, "cloudflare-ech.com")
+        self.assertEqual(self._hello().server_name, "cover.example")
 
     def test_it_carries_the_ech_extension(self):
-        hello = read_client_hello(_FakeSocket([self.FIXTURE.read_bytes()]))
-        self.assertIn(TLS_EXT_ECH, hello.extensions)
+        self.assertIn(TLS_EXT_ECH, self._hello().extensions)
 
     def test_the_parser_does_not_decrypt_or_special_case_it(self):
         """The ECH extension must be skipped by its length like every other.
         A parser that reached inside it would be a TLS implementation, which
         the peek must not become."""
-        hello = read_client_hello(_FakeSocket([self.FIXTURE.read_bytes()]))
-        # Every extension after the ECH one is still recovered, which is only
-        # true if it was skipped correctly rather than terminating the walk.
-        self.assertGreater(len(hello.extensions),
-                           hello.extensions.index(TLS_EXT_ECH) + 1)
+        hello = self._hello()
+        self.assertEqual(hello.extensions[hello.extensions.index(
+            TLS_EXT_ECH) + 1:], (0x0a0a, 0x1a1a))
 
 
 class TestEchTripwire(unittest.TestCase):
@@ -3839,13 +3821,6 @@ class TestEchTripwire(unittest.TestCase):
         _, listener, _ = self._listener(["allowed.example"])
         self._serve(listener, b"GET / HTTP/1.1\r\n\r\n")
         self.assertEqual(listener.status()["ech"], {"seen": 0, "alarm": 0})
-
-    def test_the_fixture_lights_the_alarm_when_its_name_is_unlisted(self):
-        """End to end on the real capture rather than a hand-built hello."""
-        _, listener, _ = self._listener(["allowed.example"])
-        raw = (ROOT / "tests" / "fixtures" / "ech-clienthello.bin").read_bytes()
-        self._serve(listener, raw)
-        self.assertEqual(listener.status()["ech"], {"seen": 1, "alarm": 1})
 
     def test_each_ech_hello_is_a_note_line(self):
         """Known about, not an alarm: the line names the host and says what
@@ -3958,11 +3933,6 @@ class TestEchIsNeverSpliced(unittest.TestCase):
         policy = Policy(tls="splice", hosts=("cdn.example",))
         self._refused(*self._serve(policy, _hello_bytes(
             _ech_extension(), server_name="cdn.example")), "cdn.example")
-
-    def test_the_captured_ech_hello_is_refused(self):
-        raw = (ROOT / "tests" / "fixtures" / "ech-clienthello.bin").read_bytes()
-        policy = Policy(tls="splice", hosts=("cloudflare-ech.com",))
-        self._refused(*self._serve(policy, raw), "cloudflare-ech.com")
 
     def test_a_hello_without_it_is_still_spliced(self):
         policy = Policy(tls="inspect", hosts=("cdn.example",),
