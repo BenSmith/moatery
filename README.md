@@ -146,7 +146,8 @@ user, and `.forgejo/workflows/unit.yml` the same on a Forgejo forge.
 Each placement, and moathut, has a rig that runs it end to end on a
 real host: `tests/manual/host_rig.py`, `netns_rig.py`,
 `sidecar_rig.py`, `vm_rig.py`, `vm_placement_rig.py` and `hut_rig.py`
-([tests/manual/README.md](tests/manual/README.md)).
+([tests/manual/README.md](tests/manual/README.md)); what each run found
+is in [tests/manual/FINDINGS.md](tests/manual/FINDINGS.md).
 
 ## Licence
 
