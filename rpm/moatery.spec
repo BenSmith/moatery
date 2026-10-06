@@ -2,7 +2,7 @@
 
 Name:           moatery
 # VERSION's, which a unit test holds it to.
-Version:        0.7.1
+Version:        0.7.2
 Release:        1%{?buildserial:.%{buildserial}}%{?dist}
 Summary:        Egress inspector and credential broker for sandboxed workloads
 
