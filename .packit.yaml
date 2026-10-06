@@ -1,7 +1,7 @@
 # Packit builds the RPM in Copr: each pull request into a project of its
-# own, each GitHub release (not a bare tag) into bensmith/moatery. A
-# release's version is its tag's; the RPM's %check refuses a tag that
-# is not VERSION's.
+# own, each GitHub release (not a bare tag) into
+# benjamin-coder-smith/moatery. A release's version is its tag's; the
+# RPM's %check refuses a tag that is not VERSION's.
 specfile_path: rpm/moatery.spec
 upstream_package_name: moatery
 downstream_package_name: moatery
@@ -18,7 +18,7 @@ jobs:
 
   - job: copr_build
     trigger: release
-    owner: bensmith
+    owner: benjamin-coder-smith
     project: moatery
     targets:
       - fedora-44-x86_64
