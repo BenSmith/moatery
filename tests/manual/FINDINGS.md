@@ -459,3 +459,20 @@ falls back to the directory a killed start leaves only when it may not
 mount one (`setup_credentials_plain_dir`, `src/core/exec-credential.c`,
 the same on systemd's main branch). workloadctl's credentialed units,
 all system units, are not exposed; `examples/systemd`'s broker is.
+
+**The seccomp drift report, 2026-10-06.** On the proving host
+(containers-common 0.67.2-1.fc44): 130/130. The report before the
+seccomp rows read the host's `/usr/share/containers/seccomp.json` and
+named nothing either way: the default allows nothing outright that
+`strict` refuses beyond what it narrows, and `strict` allows nothing the
+default does not beyond futex2's calls. Tried beside the rig against a
+copy with a call added and one removed, it named both.
+
+The first run was 129/130: `loop: Ctrl-C ends log` read `status None`,
+`moathut log` still following ten seconds after the SIGINT. The rig had
+been started as a shell's background job, which starts with SIGINT
+ignored, and an ignored signal is inherited across exec, so neither the
+rig nor the `log` it spawned had Python's handler (`signal.getsignal`
+read 1 under that launch, `default_int_handler` in the foreground). The
+rig now sets a SIGINT handler at its start, which every child gets back
+as the default; the second run, launched the same way, read `status 0`.

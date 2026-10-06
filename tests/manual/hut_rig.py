@@ -2341,6 +2341,11 @@ def main():
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
     args = ap.parse_args()
+    # A shell's background job starts with SIGINT ignored, and an ignored
+    # signal is inherited across exec: `moathut log` would never see the
+    # Ctrl-C the loop's row sends it. A handler here is reset to the
+    # default in every child.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
 
     riglib.preflight(
         ("podman", "nsenter", "openssl", "curl", "ss", "systemctl",
