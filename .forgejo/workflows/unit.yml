@@ -1,11 +1,10 @@
 # The unit gate: ruff (syntax, names, imports, 79 columns), then the
 # suite under coverage of the shipped code, failing under .coveragerc's
-# floor. Runs on every push and pull request. The rpm-image workflow
-# builds and tests the RPM; a tag vVERSION additionally publishes it.
+# floor. Runs on every push and pull request; .github/workflows/unit.yml
+# is the same gate on GitHub.
 #
-# `just coverage` runs the tests, so this job gates both. The native
-# runner carries podman for rpm-image; the python tooling is installed
-# here when the image does not.
+# `just coverage` runs the tests, so this job gates both. The python
+# tooling is installed here when the runner does not carry it.
 
 name: unit
 

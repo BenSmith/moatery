@@ -1,0 +1,44 @@
+# The unit gate on GitHub, as .forgejo/workflows/unit.yml is on the
+# forge: ruff, then the suite under coverage of the shipped code, failing
+# under .coveragerc's floor. In Fedora, for the system python3 and
+# OpenSSL the code is written against, and as a user rather than root,
+# whom the suite's permission checks would not hold.
+#
+# The server_url guard keeps a Forgejo runner from taking this file too.
+
+name: unit
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: unit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-24.04
+    container: registry.fedoraproject.org/fedora:44
+    timeout-minutes: 20
+    steps:
+      - name: Tooling
+        run: >-
+          dnf install -y git just ruff python3-coverage bash-completion
+          openssl util-linux
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: A user to run as
+        run: |
+          useradd -m ci
+          chown -R ci: "$GITHUB_WORKSPACE"
+
+      - name: Lint
+        run: runuser -u ci -- just lint
+
+      - name: Test under coverage
+        run: runuser -u ci -- just coverage
