@@ -79,8 +79,9 @@ python3 tests/manual/vm_placement_rig.py --placement netns  # or sidecar
 python3 tests/manual/hut_rig.py             # same; a hut, through moathut
 ```
 
-`.forgejo/workflows/unit.yml` runs `just lint` and `just coverage` on
-every push and pull request; the RPM image's build runs `just test` too.
+`.github/workflows/unit.yml` (and `.forgejo/workflows/unit.yml` on a
+Forgejo forge) runs `just lint` and `just coverage` on every push and
+pull request; `just rpm-image` runs `just test` too.
 
 `tests/__init__.py` puts the checkout root on `sys.path`; test modules
 import as `tests.<name>`, and `load_script()` imports the extension-less

@@ -114,23 +114,32 @@ the CA and the per-host certificates); systemd 256 or later for
 `LoadCredentialEncrypted=` in a user unit; podman with pasta for the
 container placements, 5.3 or later for moathut.
 
+## Installing
+
+Fedora 44 builds are in Copr, each release built there from its tag:
+
+```bash
+sudo dnf copr enable benjamin-coder-smith/moatery
+sudo dnf install moatery
+```
+
 ## Building and testing
 
 `just rpm` builds the RPM from the checkout's tracked files into
 `rpmbuild/RPMS/`; it takes `just`, `git`, `rpm-build` and
 `python3-rpm-macros`. The RPM puts the programs in
 `/usr/libexec/moatery/`, `moathut` in `/usr/bin/`, and the `moatery`
-and `moathut` packages in site-packages. `just rpm-image` builds and tests it in a container, into
-`localhost/moatery-rpm:VERSION`, an image holding `/moatery.rpm` alone,
-for another image's build to copy; a tag `vVERSION` on the forge pushes
-it, signed, to the local registry (`.forgejo/workflows/rpm-image.yml`).
+and `moathut` packages in site-packages. `just rpm-image` builds and
+tests it in a container, into `localhost/moatery-rpm:VERSION`, an image
+holding `/moatery.rpm` alone, for another image's build to copy.
 
 `just test` runs the unit tests and `just lint` runs ruff. `just
 coverage` runs the suite under coverage of the shipped code alone —
 the `moatery` package and every entrypoint, including the scripts the
 suite executes as subprocesses — and fails below the floor in
-`.coveragerc`. `.forgejo/workflows/unit.yml` runs `just lint` and `just
-coverage` on every push and pull request.
+`.coveragerc`. `.github/workflows/unit.yml` runs `just lint` and `just
+coverage` on every push and pull request, in Fedora as an ordinary
+user, and `.forgejo/workflows/unit.yml` the same on a Forgejo forge.
 
 ## Status
 
