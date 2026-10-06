@@ -43,7 +43,10 @@ rpm:
     version="$(cat VERSION)"
     mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SRPMS,SPECS}
     # A commit of the working tree, made and left unreferenced; HEAD when
-    # there is nothing uncommitted.
+    # there is nothing uncommitted. A copied checkout's index holds the
+    # original's stat data, and `git stash create` fails on that silently
+    # until it is refreshed.
+    git update-index -q --refresh || true
     tree="$(git stash create)"
     git archive --prefix="moatery-${version}/" \
         -o "rpmbuild/SOURCES/moatery-${version}.tar.gz" "${tree:-HEAD}"
