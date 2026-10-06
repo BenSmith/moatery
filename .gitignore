@@ -8,4 +8,4 @@ examples/bootc/moatery.rpm
 .coverage.*
 coverage.xml
 htmlcov/
-.devcontainer/rtk-*.rpm
+.devcontainer/
