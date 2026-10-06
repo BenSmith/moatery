@@ -1,5 +1,6 @@
 .idea/
 .reference/
+.codegraph/
 __pycache__/
 rpmbuild/
 examples/bootc/moatery.rpm
