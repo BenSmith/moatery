@@ -99,7 +99,10 @@ THE ROWS
             hut, the profile refuses the user, and root in a privileged
             exec, a namespace, a mount, ptrace, the keyring and a vsock
             however written, and lets a thread, an unshare of nothing
-            new and an inet and a netlink socket through.
+            new and an inet and a netlink socket through. Before the
+            rows, a report, not a row: the calls the host's podman
+            default and strict allow differently, beyond what strict
+            narrows and widens.
   home      the hut's home is its own: a file in the user's home is absent
             inside, and one written inside is in the hut's home on the
             host and not in the user's. The directories between the home
@@ -286,6 +289,8 @@ from moatery.egress_record import (  # noqa
     DROP_UNREACHABLE,
 )
 from moathut.record import ROTATE_BYTES, rotated  # noqa
+from moathut.seccomp import DEBUG, MOUNTS, profile  # noqa
+from moathut.units import CAPABILITIES  # noqa
 
 HUT = "moatery-rig-hut"
 UNIT = f"moathut-{HUT}"
@@ -523,6 +528,15 @@ SECCOMP_DEBUG = {"ptrace": "ESRCH", "process_vm_readv": "0",
                  "pidfd_getfd": "EBADF", "unshare NEWUSER": "EPERM",
                  "clone3": "ENOSYS"}
 PODMAN_SECCOMP = "/usr/share/containers/seccomp.json"
+# What strict refuses, or allows only on a condition, that the default
+# it was taken from (containers-common 0.67.2's) allows outright, and
+# what it allows that the default does not name: the drift report
+# leaves these out.
+NARROWED = {"clone", "clone3", "keyctl", "setns", "socketcall", "unshare",
+            *MOUNTS, *DEBUG} - {"open_tree_attr"}
+WIDENED = {"futex_requeue", "futex_wait", "futex_waitv", "futex_wake"}
+SECCOMP_ARCH = {"x86_64": "amd64", "aarch64": "arm64"}.get(
+    os.uname().machine, os.uname().machine)
 
 SITECUSTOMIZE = """\
 # written by tests/manual/hut_rig.py: the broker's interpreter waits
@@ -1141,10 +1155,49 @@ def differing(got, want):
     return {k: got.get(k) for k in want if got.get(k) != want[k]}
 
 
+def allowed_outright(doc, held):
+    """The calls doc allows on this machine, to a process holding the
+    capabilities held, whatever their arguments."""
+    names = set()
+    for entry in doc["syscalls"]:
+        inc, exc = entry.get("includes", {}), entry.get("excludes", {})
+        if entry["action"] == "SCMP_ACT_ALLOW" and not entry.get("args") \
+                and (not inc.get("caps") or held & set(inc["caps"])) \
+                and (not inc.get("arches") or SECCOMP_ARCH in inc["arches"]) \
+                and not held & set(exc.get("caps", ())) \
+                and SECCOMP_ARCH not in exc.get("arches", ()):
+            names.update(entry["names"])
+    return names
+
+
+def seccomp_drift():
+    """Where the host's default and strict differ beyond what strict
+    narrows and widens. A report, not a row: it compares two files, and
+    a difference is for a person to weigh, not a defect. Calls allowed
+    on a condition of their arguments are not compared."""
+    try:
+        default = json.loads(Path(PODMAN_SECCOMP).read_text())
+    except (OSError, ValueError) as e:
+        say(f"  drift: no default to compare: {e}")
+        return
+    owner = run(["rpm", "-qf", PODMAN_SECCOMP], check=False)
+    held = {f"CAP_{c}" for c in CAPABILITIES}
+    theirs = allowed_outright(default, held)
+    ours = allowed_outright(profile("strict"), held)
+    say(f"  drift from {PODMAN_SECCOMP} "
+        f"({owner.stdout.strip() if owner.returncode == 0 else 'no package'}"
+        "), beyond what strict narrows and widens:")
+    say("    the default allows, strict refuses: "
+        f"{', '.join(sorted(theirs - ours - NARROWED)) or 'nothing'}")
+    say("    strict allows, the default does not: "
+        f"{', '.join(sorted(ours - theirs - WIDENED)) or 'nothing'}")
+
+
 def seccomp_rows():
     """docs/MOATHUT.md's profile, by errno: in a stock container the probe's
     arguments reach the kernel, in the hut the filter answers first."""
     say("seccomp")
+    seccomp_drift()
     (HUT_HOME / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)
     got = run(["podman", "run", "--rm", "--network", "none", "--userns",
                "keep-id", "--user", USER, "-v",

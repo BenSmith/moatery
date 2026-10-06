@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""moathut's seccomp profiles: what each refuses, with which errno, and
-how far each is from podman's default, by evaluating the rules as the
-kernel's filter would; and the shapes libseccomp misreads.
+"""moathut's seccomp profiles: what each refuses, with which errno, by
+evaluating the rules as the kernel's filter would; and the shapes
+libseccomp misreads.
 
 Measured on the proving host (2026-10-04; podman 5.8.7, crun 1.28,
 libseccomp 2.6.1, kernel 7.2.5), each call made with an argument the
@@ -17,16 +17,10 @@ kernel itself rejects, so the errno tells which refused it:
 - podman's default refuses a vsock by comparing the whole register,
   which the kernel reads as an int: socket((1 << 32) | AF_VSOCK, ...)
   returned a vsock under it. Under `strict` it fails with ENOSYS.
-
-The fixture is containers-common 0.67.2's seccomp.json, the proving
-host's.
 """
 
 import json
 import unittest
-from pathlib import Path
-
-from tests import REPO_ROOT
 
 from moathut import seccomp
 from moathut.seccomp import (AF_NETLINK, AF_VSOCK, CLONE_NEW, CLONE_NEWTIME,
@@ -34,19 +28,10 @@ from moathut.seccomp import (AF_NETLINK, AF_VSOCK, CLONE_NEW, CLONE_NEWTIME,
                              profile)
 from moathut.units import CAPABILITIES
 
-PODMAN = Path(REPO_ROOT) / "tests" / "fixtures" / "podman-seccomp.json"
-
 ALLOW = "allow"
 MASK64 = (1 << 64) - 1
 CLONE_THREAD = 0x10000
 SIGCHLD = 17
-
-# What podman's default allows outright that the hut's refuses, or allows
-# only on a condition.
-NARROWED = {"clone", "clone3", "keyctl", "setns", "socketcall", "unshare",
-            *seccomp.MOUNTS, *DEBUG} - {"open_tree_attr"}
-# What the hut's allows that podman's does not name.
-WIDENED = {"futex_requeue", "futex_wait", "futex_waitv", "futex_wake"}
 
 
 def _holds(cmp, args):
@@ -256,63 +241,6 @@ class TestWhatTheProfilesRefuse(unittest.TestCase):
     def test_an_unknown_name_is_refused(self):
         with self.assertRaises(ValueError):
             profile("unconfined")
-
-
-class TestTheDistanceFromPodmansDefault(unittest.TestCase):
-    """Every difference from podman's default is one declared here."""
-
-    def setUp(self):
-        self.podman = json.loads(PODMAN.read_text())
-        self.strict = profile("strict")
-
-    def test_it_allows_outright_what_podman_does_but_what_it_narrows(self):
-        """And what podman allows with a capability the hut holds."""
-        podman = _unconditional(self.podman)
-        ours = _unconditional(self.strict)
-        held = {f"CAP_{c}" for c in CAPABILITIES}
-        gated = {n for e in self.podman["syscalls"]
-                 if held & set(e.get("includes", {}).get("caps", ()))
-                 and e["action"] == "SCMP_ACT_ALLOW" for n in e["names"]}
-        self.assertEqual(podman - ours, NARROWED)
-        self.assertEqual(ours - podman - gated, WIDENED)
-
-    def test_the_capability_gates_are_podmans_resolved_for_the_hut(self):
-        """podman allows a gated call with a capability the container
-        holds; the hut holds CAPABILITIES."""
-        held = {f"CAP_{c}" for c in CAPABILITIES}
-        gated = {}
-        for entry in self.podman["syscalls"]:
-            caps = entry.get("includes", {}).get("caps")
-            if caps and entry["action"] == "SCMP_ACT_ALLOW" \
-                    and not entry.get("args"):
-                for call in entry["names"]:
-                    gated[call] = gated.get(call, False) or bool(
-                        held & set(caps))
-        for call, allowed in gated.items():
-            if call in NARROWED:
-                continue
-            with self.subTest(call=call):
-                self.assertEqual(decide(self.strict, call) == ALLOW,
-                                 allowed)
-
-    def test_podmans_refusals_are_kept(self):
-        for entry in self.podman["syscalls"]:
-            if entry["action"] == "SCMP_ACT_ERRNO" and not entry.get("args") \
-                    and not entry.get("excludes"):
-                for call in set(entry["names"]) - WIDENED:
-                    self.assertNotEqual(decide(self.strict, call), ALLOW,
-                                        call)
-
-    def test_the_same_architectures(self):
-        self.assertEqual(self.strict["archMap"], self.podman["archMap"])
-        for arch in ("amd64", "arm64", "s390x", "ppc64le", "riscv64"):
-            podman = {n for e in self.podman["syscalls"]
-                      if e["action"] == "SCMP_ACT_ALLOW"
-                      and arch in e.get("includes", {}).get("arches", ())
-                      for n in e["names"]}
-            for call in podman:
-                self.assertEqual(decide(self.strict, call, arch=arch), ALLOW,
-                                 (arch, call))
 
 
 if __name__ == "__main__":

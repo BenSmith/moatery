@@ -417,9 +417,10 @@ crun loads it for every process in the container and every `podman
 exec`, a privileged one too: an exec changes capabilities, not the
 filter.
 
-`strict`, the default, is podman's default profile (containers-common)
-with its capability conditions resolved for the hut's capabilities,
-refusing more:
+`strict`, the default, is moathut's own profile. It was taken from
+podman's default as containers-common 0.67.2 ships it, with its
+capability conditions resolved for the hut's capabilities, and
+refuses more:
 
 | refused | fails with | why |
 |---|---|---|
@@ -429,6 +430,13 @@ refusing more:
 | `ptrace`, `process_vm_readv`, `process_vm_writev`, `pidfd_getfd` | EPERM | `debug` allows them |
 | `keyctl`, `add_key`, `request_key`, `io_uring_*`, `socketcall` | ENOSYS | programs do without a keyring or io_uring a kernel lacks; io_uring's and socketcall's operations are out of the filter's sight |
 | `socket(AF_VSOCK, ...)`, however the family is written | ENOSYS | a vsock reaches the host, or a VM's hypervisor, around the network namespace |
+
+It changes when moathut does, not when podman's default does: a call
+a later default allows is refused in a hut until moathut allows it,
+and one a later default refuses is allowed until moathut refuses it.
+The hut rig (`tests/manual/hut_rig.py`) reports where the host's
+default and `strict` differ beyond the refusals below and futex2's
+calls, which `strict` allows and the default does not.
 
 A call the profile does not name fails with ENOSYS, as one the kernel
 lacks would. Under `strict`, gdb says "During startup program exited

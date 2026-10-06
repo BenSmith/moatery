@@ -1,9 +1,11 @@
 """The seccomp profiles a hut's workload runs under, as podman reads
-them. Each is podman's default, its capability conditions resolved
+them. They are moathut's own, taken from podman's default as
+containers-common 0.67.2 ships it, its capability conditions resolved
 against the hut's, refusing more: making a namespace, in which the hut's
 user would be root, and the mount calls; the keyring, a vsock, and
 io_uring. `strict`, the default, refuses as well the calls that reach
-into another process, which `debug` allows.
+into another process, which `debug` allows. They change when this
+module does, not when podman's default does.
 
 libseccomp reads a rule naming one argument twice as matching anything,
 lets the overlapping rule with fewer conditions win whatever the order,
