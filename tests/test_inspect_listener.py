@@ -583,6 +583,14 @@ def _grease_extension(value=0x0a0a):
     return value.to_bytes(2, "big") + b"\x00\x00"
 
 
+def _with_tail(record, tail):
+    """A one-record hello with `tail` appended to its body, past the
+    extension block, and both lengths grown to cover it."""
+    body = record[9:] + tail
+    handshake = b"\x01" + len(body).to_bytes(3, "big") + body
+    return record[:3] + len(handshake).to_bytes(2, "big") + handshake
+
+
 def _sni_extension(*entries):
     """A server_name extension (RFC 6066) holding `entries`, each a
     (name_type, name) pair, in order."""
@@ -683,6 +691,27 @@ class TestClientHelloParser(unittest.TestCase):
                            + _alpn_extension(b"h2"))
         with self.assertRaisesRegex(HelloUnreadable, "twice"):
             read_client_hello(_FakeSocket([raw]))
+
+    def test_bytes_past_a_lists_end_are_refused(self):
+        """A reader that goes on to the extension's or the hello's end
+        finds a second name here; OpenSSL refuses all three
+        (BAD_EXTENSION, BAD_EXTENSION, LENGTH_MISMATCH, 3.5.9)."""
+        name = b"\x00\x00\x09b.example"
+        lst = b"\x00\x00\x09a.example"
+        sni = len(lst).to_bytes(2, "big") + lst + name
+        sni = b"\x00\x00" + len(sni).to_bytes(2, "big") + sni
+        alpn = b"\x00\x09\x08http/1.1\x02h2"
+        alpn = b"\x00\x10" + len(alpn).to_bytes(2, "big") + alpn
+        tail = _hello_bytes(_sni_extension((0, b"b.example")),
+                            server_name=None)
+        for what, raw in (
+                ("server_name", _hello_bytes(sni, server_name=None)),
+                ("ALPN", _hello_bytes(alpn)),
+                ("ClientHello", _with_tail(_hello_bytes(), tail[-18:]))):
+            with self.subTest(what=what):
+                with self.assertRaisesRegex(HelloUnreadable,
+                                            f"{what}.* past its end"):
+                    read_client_hello(_FakeSocket([raw]))
 
     def test_a_host_name_beside_another_name_type_still_reads(self):
         """RFC 6066 allows one name per type; only a second host_name has

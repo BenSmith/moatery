@@ -150,6 +150,7 @@ def _parse_server_name(data: bytes):
                 raise HelloUnreadable(
                     "the server_name has an empty label")
             found = name
+    _end(r, "the server_name extension")
     return found
 
 
@@ -166,7 +167,16 @@ def _parse_alpn(data: bytes) -> tuple:
         value = entries.take(entries.u8())
         if len(names) < ALPN_KEPT:
             names.append(value.decode("ascii", "backslashreplace"))
+    _end(r, "the ALPN extension")
     return tuple(names)
+
+
+def _end(r, what):
+    """Refuse bytes past a list's end: a reader that goes on to the
+    enclosing end would find more in them, such as a second name."""
+    if r.remaining():
+        raise HelloUnreadable(
+            f"{what} carries {r.remaining()} bytes past its end")
 
 
 def parse_client_hello(msg: bytes) -> ClientHello:
@@ -201,6 +211,7 @@ def parse_client_hello(msg: bytes) -> ClientHello:
             name = _parse_server_name(data)
         elif etype == TLS_EXT_ALPN:
             alpn = _parse_alpn(data)
+    _end(r, "the ClientHello")
     return ClientHello(name, tuple(seen), alpn or ())
 
 
