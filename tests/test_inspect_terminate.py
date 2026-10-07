@@ -48,8 +48,8 @@ from moatery.http_target import (
     SCHEME_HTTP, SCHEME_HTTPS, host_from_authority, redirect_target,
 )
 from moatery.http_framing import (
-    Framing, HTTP_METHOD_MAX, ReadTimedOut, RequestUnreadable, _Stream,
-    _is_count,
+    Framing, HTTP_METHOD_MAX, ReadTimedOut, RequestUnreadable,
+    ResetWhileIdle, _Stream, _is_count,
     is_http_request_start, request_framing, response_framing,
 )
 from moatery import egress_upstream
@@ -1345,6 +1345,38 @@ class TestADribbledReadIsBoundedAsAWhole(unittest.TestCase):
                       every=0.01)
         head = _Stream(ours).read_head()
         self.assertTrue(head.endswith(b"\r\n\r\n"))
+
+
+class TestAResetBetweenRequests(unittest.TestCase):
+    """A client may reset a kept-alive connection once it has its
+    answer; only that wait, and nothing else, tells the reset apart."""
+
+    def _reset(self):
+        """A pair whose guest end was closed with our bytes unread in it,
+        so our next read is a reset."""
+        ours, guest = socket.socketpair()
+        self.addCleanup(ours.close)
+        ours.settimeout(2.0)
+        ours.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        guest.close()
+        return ours
+
+    def test_a_reset_while_waiting_for_a_next_request_is_told_apart(self):
+        with self.assertRaises(ResetWhileIdle):
+            _Stream(self._reset()).read_head(idle_timeout=2.0)
+
+    def test_a_reset_anywhere_else_is_an_unreadable_request(self):
+        """A new connection's first wait, and a head begun, are not a
+        client done with a connection."""
+        with self.assertRaises(RequestUnreadable) as caught:
+            _Stream(self._reset()).read_head()
+        self.assertNotIsInstance(caught.exception, ResetWhileIdle)
+        ours = self._reset()
+        stream = _Stream(ours)
+        stream._buf = b"GET / HT"
+        with self.assertRaises(RequestUnreadable) as caught:
+            stream.read_head(idle_timeout=2.0)
+        self.assertNotIsInstance(caught.exception, ResetWhileIdle)
 
 
 class TestWhatCountsAsTheStartOfARequest(unittest.TestCase):

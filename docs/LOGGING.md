@@ -41,7 +41,7 @@ status file counts it, so one grep finds both.
 | `bump` | a refusal answered inside a completed handshake, so the client sees a status rather than a reset |
 | `rejected` | a connection refused before it was read: the connection ceiling, or a caller that is not this workload |
 | `note` | something reported that refuses nothing ("Notes") |
-| `close` | a kept-alive connection reached its idle bound |
+| `close` | a kept-alive connection reached its idle bound, or its client reset it between requests |
 | `policy reloaded` | SIGUSR1 loaded a new document; a `WARNING:` line if it was refused |
 
 `WARNING:` lines are the inspector's own trouble, such as a status or

@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import resource
+import select
 import signal
 import socket
 import tempfile
@@ -3404,11 +3405,13 @@ class TestCleartextTimeouts(unittest.TestCase):
         b.settimeout(3.0)
         return a, b
 
-    def _serve(self, hosts, feed, responses=(), watch=None):
-        """Serve a guest that does NOT close its end.
+    def _serve(self, hosts, feed, responses=(), watch=None, reset=b""):
+        """Serve a guest that does NOT close its end, or, with `reset`
+        (how the last answer ends), resets it once that arrives, unread.
 
         `feed` is written to the guest side before serving and nothing more is
-        ever written, so every case here ends on a timeout rather than on EOF.
+        ever written, so every case here ends on a timeout, or on the reset,
+        rather than on EOF.
         Returns (log, counters snapshot, elapsed seconds).
         """
         out = io.StringIO()
@@ -3416,6 +3419,17 @@ class TestCleartextTimeouts(unittest.TestCase):
             [], out, policy=Policy(tls="splice", hosts=tuple(hosts)))
         ours, guest = self._pair()
         guest.sendall(feed)
+        if reset:
+            def hang_up():
+                # The whole answer, still unread, so the close is a reset.
+                deadline = time.monotonic() + 3.0
+                while time.monotonic() < deadline:
+                    if (select.select([guest], [], [], 0.05)[0]
+                            and guest.recv(65536, socket.MSG_PEEK)
+                            .endswith(reset)):
+                        break
+                guest.close()
+            threading.Thread(target=hang_up, daemon=True).start()
         pumps = []
 
         def dial(addr, timeout=None):
@@ -3483,6 +3497,19 @@ class TestCleartextTimeouts(unittest.TestCase):
         self.assertEqual(snap["dispositions"]["forwarded"], 1)
         self.assertIn("plane=cleartext", log)
         self.assertIn("close id=", log)
+
+    def test_a_reset_between_requests_is_a_close_not_a_drop(self):
+        """2026-10-07, pi in a hut: its HTTP client reset every connection
+        once it had the answer, and each reset was recorded as an
+        `unreadable request` drop on the request that never came."""
+        log, snap, elapsed = self._serve(
+            ["a.example"], b"GET / HTTP/1.1\r\nHost: a.example\r\n\r\n",
+            responses=[_OK], reset=_OK)
+        self.assertEqual(self._drops(snap), {})
+        self.assertEqual(snap["dispositions"]["forwarded"], 1)
+        self.assertIn("close id=", log)
+        self.assertIn("Connection reset by peer", log)
+        self.assertLess(elapsed, self.IDLE)
 
     def test_the_idle_wait_is_the_tunnel_number_not_the_decision_one(self):
         """Measured, because the count above would also be satisfied by a

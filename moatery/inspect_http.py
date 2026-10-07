@@ -23,8 +23,9 @@ from .egress_upstream import (
     BROKER_UPSTREAM_KEY, dial_failure_reason, tls_failure,
 )
 from .http_framing import (
-    ReadTimedOut, RequestUnreadable, _Stream, _get_all, _is_count,
-    _split_response_head, copy_body, drain, response_framing, send_response,
+    ReadTimedOut, RequestUnreadable, ResetWhileIdle, _Stream, _get_all,
+    _is_count, _split_response_head, copy_body, drain, response_framing,
+    send_response,
 )
 from .http_request import parse_request, rebuild_request
 from .http_target import SCHEME_HTTP, redirect_target
@@ -104,6 +105,10 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
             insp.log(f"close {where} reason={quoted(exc)}")
             return False
         insp.drop(where, DROP_TIMED_OUT, exc, rec=rec)
+        return False
+    except ResetWhileIdle as exc:
+        # A close between requests, made with a reset.
+        insp.log(f"close {where} reason={quoted(exc)}")
         return False
     except RequestUnreadable as exc:
         insp.drop(where, DROP_UNREADABLE_REQUEST, exc, rec=rec)

@@ -79,6 +79,12 @@ class ReadTimedOut(RequestUnreadable):
         self.idle = idle
 
 
+class ResetWhileIdle(RequestUnreadable):
+    """A reset where a kept-alive connection waits for its next request:
+    the client ending the connection without closing it, which some HTTP
+    clients do after every response."""
+
+
 class Framing(NamedTuple):
     """Where a message body ends. `length` is meaningful only for "length"."""
 
@@ -125,6 +131,8 @@ class _Stream:
                 f"nothing was readable within {waited}s",
                 idle=idle) from None
         except OSError as exc:
+            if idle and isinstance(exc, ConnectionError):
+                raise ResetWhileIdle(f"read failed: {exc}") from exc
             # Chained, so a TLS alert can still be told by its reason.
             raise RequestUnreadable(f"read failed: {exc}") from exc
         finally:
