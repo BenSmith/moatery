@@ -7,6 +7,7 @@ has to name the same ones the minter creates.
 """
 
 import ipaddress
+import re
 import time
 from pathlib import Path
 
@@ -64,11 +65,21 @@ def denial_dir(state_dir) -> Path:
     return Path(state_dir) / DENIAL_DIR_NAME
 
 
+# What a workload's name may be on the CA's subject: openssl's -subj
+# reads `/` and `+` as the start of another attribute, and a common name
+# is at most 64 characters, 12 of them the subject's own.
+CA_NAME = re.compile(r"[A-Za-z0-9._-]{1,52}")
+
+
 def ca_subject(name: str) -> str:
     """The CA's subject, naming the workload, so a certificate error inside
     it says which CA it came from. No product name: the guest reads it as
-    the issuer of every leaf.
+    the issuer of every leaf. ValueError for a name CA_NAME refuses.
     """
+    if not CA_NAME.fullmatch(name):
+        raise ValueError(
+            f"{name!r} is not a name for the CA: letters, digits, `.`, `_` "
+            f"and `-`, at most 52")
     return f"/CN=egress CA ({name})"
 
 

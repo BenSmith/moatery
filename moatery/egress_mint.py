@@ -88,9 +88,12 @@ def mint_ca(name: str, state_dir, *, now: float | None = None,
         with tempfile.TemporaryDirectory(dir=key.parent) as tmp:
             staged_key = Path(tmp) / key.name
             staged_cert = Path(tmp) / cert.name
-            argv = ca_openssl_argv(
-                name, staged_key, staged_cert,
-                now=time.time() if now is None else now)
+            try:
+                argv = ca_openssl_argv(
+                    name, staged_key, staged_cert,
+                    now=time.time() if now is None else now)
+            except ValueError as exc:
+                raise MintFailed(str(exc)) from None
             try:
                 result = runner(argv, capture_output=True, text=True,
                                 timeout=60)

@@ -972,6 +972,27 @@ class TestMoatMintCa(unittest.TestCase):
         self.assertEqual(out, f"{cert}\n")
         self.assertEqual(cert.read_bytes(), first)
 
+    def test_a_name_that_would_add_to_the_subject_is_refused(self):
+        """openssl's -subj reads `/` and `+` as another attribute: the
+        name `a/O=Other` would have put an organisation on the CA."""
+        for name in ("a/O=Other", "a+O=Other", "a b", "a,b", "", "a" * 53):
+            with self.subTest(name=name):
+                code, out, err = self._run("--name", name,
+                                           "--state-dir", str(self.state))
+                self.assertEqual(code, 1)
+                self.assertIn("not a name for the CA", err)
+                self.assertFalse(egress_ca.ca_cert_path(self.state).exists())
+
+    def test_the_longest_name_is_the_whole_common_name(self):
+        name = "a" * 52
+        code, _, err = self._run("--name", name,
+                                 "--state-dir", str(self.state))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            _certificate(egress_ca.ca_cert_path(self.state),
+                         "-subject").strip(),
+            f"subject=CN=egress CA ({name})")
+
     def test_half_a_ca_is_an_error_naming_it(self):
         key = egress_ca.ca_key_path(self.state)
         key.parent.mkdir(mode=0o700)
