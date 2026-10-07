@@ -2,10 +2,10 @@
 them. They are moathut's own, taken from podman's default as
 containers-common 0.67.2 ships it, its capability conditions resolved
 against the hut's, refusing more: making a namespace, in which the hut's
-user would be root, and the mount calls; the keyring, a vsock, and
-io_uring. `strict`, the default, refuses as well the calls that reach
-into another process, which `debug` allows. They change when this
-module does, not when podman's default does.
+user would be root, the mount calls and the kernel's log; the keyring, a
+vsock, and io_uring. `strict`, the default, refuses as well the calls
+that reach into another process, which `debug` allows. They change when
+this module does, not when podman's default does.
 
 libseccomp reads a rule naming one argument twice as matching anything,
 lets the overlapping rule with fewer conditions win whatever the order,
@@ -99,7 +99,7 @@ ALLOWED = (
     "shutdown", "sigaltstack", "signal", "signalfd", "signalfd4",
     "sigprocmask", "sigreturn", "socketpair", "splice",
     "stat", "stat64", "statfs", "statfs64", "statx", "symlink",
-    "symlinkat", "sync", "sync_file_range", "syncfs", "sysinfo", "syslog",
+    "symlinkat", "sync", "sync_file_range", "syncfs", "sysinfo",
     "tee", "tgkill", "time", "timer_create", "timer_delete",
     "timer_getoverrun", "timer_gettime", "timer_gettime64",
     "timer_settime", "timer_settime64", "timerfd_create",
@@ -156,6 +156,10 @@ OBSOLETE = (
 MOUNTS = ("fsconfig", "fsmount", "fsopen", "fspick", "mount",
           "mount_setattr", "move_mount", "open_tree", "open_tree_attr",
           "pivot_root", "umount", "umount2")
+
+# The kernel's log, which a host with kernel.dmesg_restrict unset lets
+# any user read: whether the hut can is not left to the host's sysctl.
+KERNEL_LOG = ("syslog",)
 
 # What reaches into another process: allowed by `debug`.
 DEBUG = ("pidfd_getfd", "process_vm_readv", "process_vm_writev", "ptrace")
@@ -286,7 +290,7 @@ def profile(name, capabilities=CAPABILITIES):
               for arg in _among(2, set(range(NETLINKS)) - {NETLINK_AUDIT})),
         ]
     entries += [
-        _refuse([*refused, *OBSOLETE, *MOUNTS]),
+        _refuse([*refused, *OBSOLETE, *MOUNTS, *KERNEL_LOG]),
         _refuse(NOT_IMPLEMENTED, ENOSYS),
     ]
     return {

@@ -430,6 +430,7 @@ refuses more:
 | `unshare` and `clone` with a `CLONE_NEW*` flag; `setns` | EPERM | nothing in the hut is root in a namespace of its own, where the kernel's network and mount code is open to it |
 | `clone3` | ENOSYS | glibc falls back to `clone`, whose flags the filter can read; `clone3`'s are behind a pointer |
 | `mount`, `umount2`, `pivot_root`, `fsopen`, `fsmount`, `fsconfig`, `fspick`, `open_tree`, `move_mount`, `mount_setattr` | EPERM | |
+| `syslog` | EPERM | the kernel's log, which a host with `kernel.dmesg_restrict` unset lets any user read; `dmesg` in a hut fails as it does on Fedora |
 | `ptrace`, `process_vm_readv`, `process_vm_writev`, `pidfd_getfd` | EPERM | `debug` allows them |
 | `keyctl`, `add_key`, `request_key`, `io_uring_*`, `socketcall` | ENOSYS | programs do without a keyring or io_uring a kernel lacks; io_uring's and socketcall's operations are out of the filter's sight |
 | `socket(AF_VSOCK, ...)`, however the family is written | ENOSYS | a vsock reaches the host, or a VM's hypervisor, around the network namespace |

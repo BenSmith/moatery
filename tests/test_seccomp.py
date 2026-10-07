@@ -77,6 +77,11 @@ def _unconditional(doc, action="SCMP_ACT_ALLOW"):
 
 # Arguments the conditional entries are tried with: namespace flags and
 # not, upper bits, families and protocols around each block's edges.
+def _allow_one(cmp):
+    return {"names": ["socket"], "action": "SCMP_ACT_ALLOW",
+            "args": [cmp]}
+
+
 def _clone_flags():
     every = sum(CLONE_NEW) | CLONE_NEWTIME
     return [0, SIGCHLD, CLONE_THREAD, *CLONE_NEW, CLONE_NEWTIME, every,
@@ -180,6 +185,30 @@ class TestWhatTheProfilesRefuse(unittest.TestCase):
         for doc in (self.strict, self.debug):
             for call in seccomp.MOUNTS:
                 self.assertEqual(decide(doc, call), EPERM, call)
+
+    def test_the_kernels_log_is_not_read_whatever_the_host_allows(self):
+        for doc in (self.strict, self.debug):
+            self.assertEqual(decide(doc, "syslog", 3, 0, 0), EPERM)
+
+    def test_among_matches_its_values_and_nothing_else(self):
+        """Every value in the set matches one comparison, every other
+        value none, an upper bit included, over sets with gaps, runs
+        and both ends."""
+        import random
+        rng = random.Random(7)
+        sets = [{0}, {63}, set(range(64)), set(range(64)) - {16, 40},
+                {1, 2, 3, 5, 8, 13, 21, 34, 55}]
+        sets += [{v for v in range(64) if rng.random() < 0.5}
+                 for _ in range(200)]
+        for values in sets:
+            entries = [_allow_one(cmp) for cmp in seccomp._among(0, values)]
+            doc = {"defaultAction": "SCMP_ACT_ERRNO",
+                   "defaultErrnoRet": ENOSYS, "syscalls": entries}
+            for v in range(64):
+                for arg in (v, (1 << 32) | v, (1 << 63) | v):
+                    want = ALLOW if arg == v and v in values else ENOSYS
+                    self.assertEqual(decide(doc, "socket", arg), want,
+                                     (sorted(values), hex(arg)))
 
     def test_strict_refuses_reaching_into_a_process_and_debug_allows_it(
             self):

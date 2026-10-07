@@ -289,7 +289,7 @@ from moatery.egress_record import (  # noqa
     DROP_UNREACHABLE,
 )
 from moathut.record import ROTATE_BYTES, rotated  # noqa
-from moathut.seccomp import DEBUG, MOUNTS, profile  # noqa
+from moathut.seccomp import DEBUG, KERNEL_LOG, MOUNTS, profile  # noqa
 from moathut.units import CAPABILITIES  # noqa
 
 HUT = "moatery-rig-hut"
@@ -502,6 +502,8 @@ print(json.dumps({
     "socket inet": call(41, 2, 99, 0),
     "socket netlink route": call(41, 16, 3, 0),
     "socket netlink audit": call(41, 16, 3, 9),
+    "io_uring_setup": call(425, 1, 0),
+    "open_by_handle_at": call(304, -1, 0, 0),
 }))
 """
 # What the probe's calls get from the hut's profile, strict.
@@ -510,7 +512,8 @@ SECCOMP_REFUSED = {
     "unshare NEWUSER": "EPERM", "clone3": "ENOSYS", "setns": "EPERM",
     "mount": "EPERM", "ptrace": "EPERM", "process_vm_readv": "EPERM",
     "pidfd_getfd": "EPERM", "keyctl": "ENOSYS", "vsock": "ENOSYS",
-    "vsock, upper bit": "ENOSYS"}
+    "vsock, upper bit": "ENOSYS", "io_uring_setup": "ENOSYS",
+    "open_by_handle_at": "EPERM"}
 # What the kernel answers them with, under podman's default profile; a
 # vsock is refused by it, but not one with an upper bit set.
 SECCOMP_KERNEL = {
@@ -518,6 +521,10 @@ SECCOMP_KERNEL = {
     "unshare NEWUSER": "EINVAL", "clone3": "EINVAL", "setns": "EBADF",
     "mount": "ENOENT", "ptrace": "ESRCH", "process_vm_readv": "0",
     "pidfd_getfd": "EBADF", "keyctl": "ENOTSUP"}
+# What the kernel answers the calls podman's default refuses as well,
+# with no filter at all: a fault on the null pointer each is given.
+SECCOMP_UNFILTERED = {"io_uring_setup": "EFAULT",
+                      "open_by_handle_at": "EFAULT"}
 # And what the hut does, which reaches the kernel under either.
 SECCOMP_ALLOWED = {
     "clone THREAD": "EINVAL", "unshare nothing new": "EINVAL",
@@ -533,7 +540,7 @@ PODMAN_SECCOMP = "/usr/share/containers/seccomp.json"
 # what it allows that the default does not name: the drift report
 # leaves these out.
 NARROWED = {"clone", "clone3", "keyctl", "setns", "socketcall", "unshare",
-            *MOUNTS, *DEBUG} - {"open_tree_attr"}
+            *MOUNTS, *DEBUG, *KERNEL_LOG} - {"open_tree_attr"}
 WIDENED = {"futex_requeue", "futex_wait", "futex_waitv", "futex_wake"}
 SECCOMP_ARCH = {"x86_64": "amd64", "aarch64": "arm64"}.get(
     os.uname().machine, os.uname().machine)
@@ -1151,6 +1158,18 @@ def seccomp_probe(*podman_exec, name=HUT):
         return {"rc": got.returncode, "stderr": got.stderr.strip()[-200:]}
 
 
+def stock_probe(*podman_run):
+    """The probe's errnos in a plain container of the hut's image."""
+    got = run(["podman", "run", "--rm", "--network", "none", "--userns",
+               "keep-id", "--user", USER, *podman_run, "-v",
+               f"{HUT_HOME / SECCOMP_PROBE}:/probe:ro,z", IMAGE, "python3",
+               "/probe"], check=False, timeout=120)
+    try:
+        return json.loads(got.stdout)
+    except ValueError:
+        return {"rc": got.returncode, "stderr": got.stderr.strip()[-200:]}
+
+
 def differing(got, want):
     return {k: got.get(k) for k in want if got.get(k) != want[k]}
 
@@ -1199,14 +1218,7 @@ def seccomp_rows():
     say("seccomp")
     seccomp_drift()
     (HUT_HOME / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)
-    got = run(["podman", "run", "--rm", "--network", "none", "--userns",
-               "keep-id", "--user", USER, "-v",
-               f"{HUT_HOME / SECCOMP_PROBE}:/probe:ro,z", IMAGE, "python3",
-               "/probe"], check=False, timeout=120)
-    try:
-        stock = json.loads(got.stdout)
-    except ValueError:
-        stock = {"rc": got.returncode, "stderr": got.stderr.strip()[-200:]}
+    stock = stock_probe()
     upper = stock.get("vsock, upper bit")
     row("seccomp: under podman's default, every call the probe makes "
         "reaches the kernel, a vsock with an upper bit set among them",
@@ -1215,10 +1227,15 @@ def seccomp_rows():
         and upper not in (None, "EPERM", "ENOSYS"),
         f"differing: {differing(stock, SECCOMP_KERNEL)}; vsock "
         f"{stock.get('vsock')}, with an upper bit {upper}")
+    bare = stock_probe("--security-opt", "seccomp=unconfined")
+    row("seccomp: with no filter, io_uring and a handle open, which "
+        "podman's default refuses too, reach the kernel",
+        not differing(bare, SECCOMP_UNFILTERED),
+        f"differing: {differing(bare, SECCOMP_UNFILTERED)}")
     mine = seccomp_probe("--user", USER)
     row("seccomp: the hut's user is refused, by the profile, a namespace, "
-        "a mount, ptrace, the keyring and a vsock however its family is "
-        "written",
+        "a mount, ptrace, the keyring, io_uring, a handle open and a vsock "
+        "however its family is written",
         not differing(mine, SECCOMP_REFUSED),
         f"differing: {differing(mine, SECCOMP_REFUSED)}")
     row("seccomp: and what a hut does reaches the kernel: a thread, an "
