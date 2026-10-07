@@ -280,10 +280,18 @@ def load_rules(pid, redirect_dns):
     egress device, so the egress chain accepts nothing. `redirect_dns`
     false leaves the port-53 lines out, for the `dns` rows to go red."""
     dev = default_route_device()
+    in_netns(pid, ["nft", "-f", "-"],
+             input=ruleset(dev, redirect_dns=redirect_dns))
+    say(f"  rules loaded into the container's netns (egress on {dev})")
+
+
+def ruleset(dev, *, redirect_dns=True):
+    """The rules load_rules loads: docs/DESIGN.md's "Netns" ruleset
+    with every keyword at its default (tests/test_rig_rules.py)."""
     dns = (f"    udp dport 53  dnat ip to 127.0.0.1:{RESOLVE_PORT}\n"
            f"    tcp dport 53  dnat ip to 127.0.0.1:{RESOLVE_PORT}\n"
            if redirect_dns else "")
-    rules = f"""
+    return f"""
 table inet moatery {{
   chain out {{
     type nat hook output priority -100
@@ -299,8 +307,6 @@ table netdev moatery {{
   }}
 }}
 """
-    in_netns(pid, ["nft", "-f", "-"], input=rules)
-    say(f"  rules loaded into the container's netns (egress on {dev})")
 
 
 def exec_in(argv, timeout=30):

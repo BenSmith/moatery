@@ -306,12 +306,21 @@ def load_rules(pid, neighbour, redirect_dns):
     for the `neighbour` row to go red; `redirect_dns` false the port-53
     lines, for the `dns` rows to."""
     dev = default_route_device()
+    in_netns(pid, ["nft", "-f", "-"],
+             input=ruleset(dev, neighbour=neighbour,
+                           redirect_dns=redirect_dns))
+    say(f"  rules loaded into the container's netns (egress on {dev})")
+
+
+def ruleset(dev, *, neighbour=True, redirect_dns=True):
+    """The rules load_rules loads: docs/DESIGN.md's "Host" ruleset
+    with every keyword at its default (tests/test_rig_rules.py)."""
     ports = f"{{ {INSPECT_TLS}, {INSPECT_CLEARTEXT}, {RESOLVE_PORT} }}"
     nd = riglib.NEIGHBOUR_DISCOVERY if neighbour else ""
     dns = (f"    udp dport 53  dnat ip to {LOOPBACK_MAP}:{RESOLVE_PORT}\n"
            f"    tcp dport 53  dnat ip to {LOOPBACK_MAP}:{RESOLVE_PORT}\n"
            if redirect_dns else "")
-    rules = f"""
+    return f"""
 table inet moatery {{
   chain out {{
     type nat hook output priority -100
@@ -329,8 +338,6 @@ table netdev moatery {{
   }}
 }}
 """
-    in_netns(pid, ["nft", "-f", "-"], input=rules)
-    say(f"  rules loaded into the container's netns (egress on {dev})")
 
 
 def exec_in(argv, timeout=30):

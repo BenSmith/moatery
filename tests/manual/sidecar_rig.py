@@ -330,6 +330,18 @@ def load_rules(pid, neighbour, redirect_dns, private):
     dns = next((ln.split()[1] for ln in resolv.splitlines()
                 if ln.startswith("nameserver")), "169.254.1.1")
     dev = default_route_device(pid)
+    in_netns(pid, ["nft", "-f", "-"],
+             input=ruleset(dev, dns, neighbour=neighbour,
+                           redirect_dns=redirect_dns, private=private))
+    say(f"  rules loaded into the pod's netns (resolver {dns}, "
+        f"egress on {dev})")
+    return dns
+
+
+def ruleset(dev, dns, *, neighbour=True, redirect_dns=True, private=False):
+    """The rules load_rules loads: docs/DESIGN.md's "Sidecar" ruleset
+    with every keyword at its default (tests/test_rig_rules.py), and
+    `private` its "Private addresses" drop."""
     ours = f"{{ {INSPECT_UID}, {BROKER_UID} }}"
     nd = riglib.NEIGHBOUR_DISCOVERY if neighbour else ""
     redirect = (f"    udp dport 53  dnat ip to 127.0.0.1:{RESOLVE_PORT}\n"
@@ -342,7 +354,7 @@ comment "private"
     meta mark {OURS_MARK} ip6 daddr {{ {PRIVATE_V6} }} counter drop \
 comment "private"
 """ if private else ""
-    rules = f"""
+    return f"""
 table inet moatery {{
   chain out {{
     type nat hook output priority -100
@@ -367,10 +379,6 @@ table netdev moatery {{
   }}
 }}
 """
-    in_netns(pid, ["nft", "-f", "-"], input=rules)
-    say(f"  rules loaded into the pod's netns (resolver {dns}, "
-        f"egress on {dev})")
-    return dns
 
 
 def start_workload():
