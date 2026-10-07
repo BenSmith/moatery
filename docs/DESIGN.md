@@ -714,6 +714,10 @@ volume is the inspector's and outlives restarts, so root writing into it
 would follow whatever the inspector left there. The entrypoint refuses a
 `--caller-uid` of 0, 200 or 201, the uids the rules exempt, and starts
 every program with a minimal environment rather than the container's.
+It keeps `SSL_CERT_FILE` and `SSL_CERT_DIR`, which replace the store
+the inspector and the broker verify origins against: they are how an
+origin behind a private CA is trusted, so whoever sets the sidecar's
+environment chooses what it trusts upstream.
 
 **Supervision.** The entrypoint stays as the container's pid 1 and
 supervises the three, which serve together or not at all. A stop is

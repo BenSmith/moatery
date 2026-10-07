@@ -102,7 +102,8 @@ PLANES = (TLS.inspect_port, CLEARTEXT.inspect_port)
 LISTEN_FDS_START = 3
 
 # The environment the programs get, and nothing else of this one's, so a
-# secret passed as a variable never reaches the inspector.
+# secret passed as a variable never reaches the inspector. The two
+# SSL_CERT_ variables set the store origins are verified against.
 PROGRAM_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "SSL_CERT_FILE",
                "SSL_CERT_DIR")
 DEFAULT_PATH = "/usr/sbin:/usr/bin"

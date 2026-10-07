@@ -61,6 +61,9 @@ _TOKEN_CHARS = frozenset(
     "!#$%&'*+-.^_`|~0123456789"
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
+# The headers that say where a message's body ends.
+_FRAMING_NAMES = frozenset(("content-length", "transfer-encoding"))
+
 
 class RequestUnreadable(Exception):
     """The guest's bytes are not a request we will act on. A refusal,
@@ -287,7 +290,10 @@ def _split_response_head(head):
     outside tchar, and none of it moves where the body ends, so none of it
     is refused: latin-1, obs-fold joined, a non-token name dropped. A
     control character is still refused, since it moves where the message
-    ends.
+    ends, and so is a dropped or folded line that is a framing header
+    once trimmed (`Content-Length : 10`): the head is relayed as it came,
+    and a guest that trims would frame the body by a header this read
+    never saw.
     """
     text = head[:-4].decode("latin-1")
     lines = text.split("\r\n")
@@ -296,15 +302,27 @@ def _split_response_head(head):
     for line in lines[1:]:
         _reject_controls(line, "a response header line", tab_ok=True)
         if line[:1] in (" ", "\t"):
+            _refuse_hidden_framing(line, "a folded line")
             if headers:
                 name, value = headers[-1]
                 headers[-1] = (name, (value + " " + line.strip(" \t")).strip())
             continue
         name, sep, value = line.partition(":")
         if not sep or not name or any(c not in _TOKEN_CHARS for c in name):
+            _refuse_hidden_framing(line, "a dropped header line")
             continue
         headers.append((name.lower(), value.strip(" \t")))
     return lines[0], tuple(headers)
+
+
+def _refuse_hidden_framing(line, what):
+    """Raise if a response line this parser does not read as a header is
+    a framing header to one that trims."""
+    name, sep, _ = line.partition(":")
+    name = name.strip(" \t").lower()
+    if sep and name in _FRAMING_NAMES:
+        raise RequestUnreadable(
+            f"{what} is a {name} header to a parser that trims it")
 
 
 def _get_all(headers, name):

@@ -37,6 +37,7 @@ import unittest.mock
 from pathlib import Path
 
 from tests import assert_bare_refusal, load_script
+from tests.test_inspect_listener import _hello_bytes
 from moatery.egress_plane import TLS
 from moatery.inspect_document import VmPolicyEntry
 from moatery.inspect_policy import Policy
@@ -49,10 +50,10 @@ from moatery.http_target import (
 )
 from moatery.http_framing import (
     Framing, HTTP_METHOD_MAX, ReadTimedOut, RequestUnreadable,
-    ResetWhileIdle, _Stream, _is_count,
+    ResetWhileIdle, _Stream, _is_count, _split_response_head,
     is_http_request_start, request_framing, response_framing,
 )
-from moatery import egress_upstream
+from moatery import egress_mint, egress_upstream
 from moatery.egress_upstream import tls_failure
 from moatery import inspect_listener
 from moatery.inspect_listener import MAX_CONNECTIONS, Listener, build_minter
@@ -1992,3 +1993,136 @@ class TestARedialThatCannotBeVerifiedSaysSo(TerminationCase):
         self.assertEqual(reasons[DROP_CLIENT_CERT], 0)
         self.assertEqual(reasons[DROP_RELAY_FAILED], 1)
         self.assertNotIn("`splice` list", out.getvalue())
+
+
+class TestTheTlsContexts(TerminationCase):
+    """What the two legs' contexts hold, asserted rather than left to
+    Python's and OpenSSL's defaults."""
+
+    def _handshake(self, leaf, guest_ctx, session=None):
+        """One guest connection through wrap_guest: (the guest's session,
+        whether it resumed)."""
+        ours, guest = socket.socketpair()
+        self.addCleanup(ours.close)
+        self.addCleanup(guest.close)
+        ours.settimeout(5.0)
+        guest.settimeout(5.0)
+
+        def serve():
+            with inspect_tls.wrap_guest(ours, leaf) as tls:
+                tls.sendall(b"x")
+                tls.recv(1)
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        with guest_ctx.wrap_socket(
+                guest, server_hostname="localhost", session=session) as tls:
+            # The ticket comes after the handshake; reading takes it in.
+            self.assertEqual(tls.recv(1), b"x")
+            tls.sendall(b"y")
+            got = tls.session, tls.session_reused
+        thread.join(5.0)
+        return got
+
+    def test_the_guest_leg_refuses_anything_below_tls_1_2(self):
+        leaf = self._minter(None).leaf("localhost", denied=False)
+        # The context, not a socket: wrapping would wait for a handshake.
+        with unittest.mock.patch.object(
+                ssl.SSLContext, "wrap_socket", autospec=True,
+                side_effect=lambda ctx, *args, **kwargs: ctx):
+            ctx = inspect_tls.wrap_guest(None, leaf)
+        self.assertGreaterEqual(ctx.minimum_version, ssl.TLSVersion.TLSv1_2)
+
+    def test_a_guest_cannot_resume_another_connections_session(self):
+        """Each connection has a context, and so a ticket key, of its own,
+        which nothing else states."""
+        leaf = self._minter(None).leaf("localhost", denied=False)
+        guest_ctx = self._guest_context()
+        session, _ = self._handshake(leaf, guest_ctx)
+        self.assertTrue(session.has_ticket,
+                        "no ticket was issued, so nothing was tried")
+        _, reused = self._handshake(leaf, guest_ctx, session)
+        self.assertFalse(reused)
+
+    def test_the_upstream_leg_verifies_name_and_chain_at_tls_1_2_or_above(self):
+        ctx = egress_upstream.Upstream()._ctx
+        self.assertTrue(ctx.check_hostname)
+        self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
+        self.assertGreaterEqual(ctx.minimum_version, ssl.TLSVersion.TLSv1_2)
+
+
+class TestALeafNamesTheHostNotThePattern(TerminationCase):
+
+    def test_a_wildcard_match_mints_the_one_name_the_guest_asked_for(self):
+        minter = unittest.mock.Mock()
+        minter.leaf.side_effect = egress_mint.MintFailed("stop here")
+        listener = Listener([unittest.mock.Mock()], io.StringIO(),
+                            policy=Policy(tls="inspect",
+                                          hosts=("*.example.com",)),
+                            minter=minter)
+        ours, guest = _tcp_pair()
+        self.addCleanup(ours.close)
+        self.addCleanup(guest.close)
+        guest.sendall(_hello_bytes(server_name="A.Example.com."))
+        ours.settimeout(2.0)
+        with unittest.mock.patch.object(
+                listener.inspection.upstream, "dial_tls") as dial:
+            serve_tls(listener.inspection, ours, _where("tls"))
+        dial.assert_called_once_with("a.example.com")
+        minter.leaf.assert_called_once_with("a.example.com", denied=False)
+
+    def test_the_minted_san_is_that_name_alone(self):
+        leaf = self._minter(None).leaf("a.example.com", denied=False)
+        cert = ssl._ssl._test_decode_cert(str(leaf.path))
+        self.assertEqual(cert["subjectAltName"], (("DNS", "a.example.com"),))
+
+
+class TestTheResponseHeadHasOneFraming(unittest.TestCase):
+    """The response head is relayed as it came and read leniently, so a
+    line this reading drops or folds must not be a framing header to a
+    guest that trims: the two would end the body in different places."""
+
+    CORPUS = (
+        b"Content-Length: 5",
+        b"Transfer-Encoding: chunked",
+        b"content-length:5",
+        b"Content-Length : 5",
+        b"Content-Length\t: 5",
+        b"Transfer-Encoding : chunked",
+        b"X-A: b\r\n Content-Length: 5",
+        b"X-A: b\r\n\tTransfer-Encoding: chunked",
+        b"X A: b",
+        b"X-A: b\r\n folded value",
+        b"Content Length: 5",
+        b"Content-Length\xb2: 5",
+    )
+
+    @staticmethod
+    def _trimmed(lines):
+        """The framing names a parser that trims every line sees."""
+        names = set()
+        for line in lines:
+            name, sep, _ = line.partition(b":")
+            name = name.strip(b" \t").lower()
+            if sep and name in (b"content-length", b"transfer-encoding"):
+                names.add(name.decode())
+        return names
+
+    def test_both_readings_agree_or_the_head_is_refused(self):
+        for fields in self.CORPUS:
+            head = b"HTTP/1.1 200 OK\r\n" + fields + b"\r\n\r\n"
+            with self.subTest(head=head):
+                try:
+                    _, headers = _split_response_head(head)
+                except RequestUnreadable:
+                    continue
+                ours = {n for n, _ in headers
+                        if n in ("content-length", "transfer-encoding")}
+                self.assertEqual(
+                    ours, self._trimmed(head[:-4].split(b"\r\n")[1:]))
+
+    def test_the_ordinary_and_the_harmless_are_still_read(self):
+        for fields in (b"Content-Length: 5", b"X A: b",
+                       b"X-A: b\r\n folded value"):
+            head = b"HTTP/1.1 200 OK\r\n" + fields + b"\r\n\r\n"
+            with self.subTest(head=head):
+                _split_response_head(head)
