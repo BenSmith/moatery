@@ -2080,9 +2080,9 @@ class TestALeafNamesTheHostNotThePattern(TerminationCase):
 
 
 class TestTheResponseHeadHasOneFraming(unittest.TestCase):
-    """The response head is relayed as it came and read leniently, so a
-    line this reading drops or folds must not be a framing header to a
-    guest that trims: the two would end the body in different places."""
+    """The response head is read leniently and relayed as it was read, so
+    the guest frames the body where this relay does, whether it parses
+    strictly or trims."""
 
     CORPUS = (
         b"Content-Length: 5",
@@ -2091,9 +2091,13 @@ class TestTheResponseHeadHasOneFraming(unittest.TestCase):
         b"Content-Length : 5",
         b"Content-Length\t: 5",
         b"Transfer-Encoding : chunked",
+        b"Content-Length : 5\r\nContent-Length: 6",
         b"X-A: b\r\n Content-Length: 5",
         b"X-A: b\r\n\tTransfer-Encoding: chunked",
+        b" Content-Length: 5",
+        b"Content-Length: 5\r\n 0",
         b"X A: b",
+        b"X A: b\r\n Content-Length: 5",
         b"X-A: b\r\n folded value",
         b"Content Length: 5",
         b"Content-Length\xb2: 5",
@@ -2101,35 +2105,91 @@ class TestTheResponseHeadHasOneFraming(unittest.TestCase):
         b"\xa0Content-Length: 5",
         b"Transfer-Encoding\x85: chunked",
     )
+    FRAMING = ("content-length", "transfer-encoding")
 
-    @staticmethod
-    def _trimmed(lines):
+    @classmethod
+    def _trimmed(cls, lines):
         """The framing names a parser that decodes latin-1 and trims every
         line and name with str.strip() sees."""
-        names = set()
+        names = []
         for line in lines:
             name, sep, _ = line.decode("latin-1").strip().partition(":")
             name = name.strip().lower()
-            if sep and name in ("content-length", "transfer-encoding"):
-                names.add(name)
-        return names
+            if sep and name in cls.FRAMING:
+                names.append(name)
+        return sorted(names)
 
-    def test_both_readings_agree_or_the_head_is_refused(self):
+    @classmethod
+    def _strict(cls, lines):
+        """The framing names an RFC 9112 parser that takes no repair sees,
+        or None where it rejects the head."""
+        names = []
+        for line in lines:
+            if line[:1] in (b" ", b"\t"):
+                return None
+            name, sep, _ = line.partition(b":")
+            if sep and name.decode("latin-1").lower() in cls.FRAMING:
+                names.append(name.decode().lower())
+        return sorted(names)
+
+    def test_every_reading_of_the_relayed_head_agrees_or_it_is_refused(self):
         for fields in self.CORPUS:
             head = b"HTTP/1.1 200 OK\r\n" + fields + b"\r\n\r\n"
             with self.subTest(head=head):
                 try:
-                    _, headers = _split_response_head(head)
+                    _, headers, relayed = _split_response_head(head)
                 except RequestUnreadable:
                     continue
-                ours = {n for n, _ in headers
-                        if n in ("content-length", "transfer-encoding")}
-                self.assertEqual(
-                    ours, self._trimmed(head[:-4].split(b"\r\n")[1:]))
+                ours = sorted(n for n, _ in headers if n in self.FRAMING)
+                lines = relayed[:-4].split(b"\r\n")[1:]
+                self.assertEqual(ours, self._trimmed(lines))
+                self.assertEqual(ours, self._strict(lines))
 
-    def test_the_ordinary_and_the_harmless_are_still_read(self):
-        for fields in (b"Content-Length: 5", b"X A: b",
-                       b"X-A: b\r\n folded value"):
+    def test_a_head_needing_no_repair_is_relayed_byte_for_byte(self):
+        head = (b"HTTP/1.1 200 OK\r\nX A: b\r\nContent-Disposition: "
+                b"attachment; filename=\"\xc3\xa9.txt\"\r\n"
+                b"content-length:5\r\n\r\n")
+        self.assertIs(_split_response_head(head)[2], head)
+
+    def test_the_repairs_are_rfc_9112s(self):
+        for fields, relayed in (
+                (b"Content-Length : 5", b"Content-Length: 5"),
+                (b"X-A: b  \r\n \t c", b"X-A: b c"),
+                (b" stray\r\nX-A: b", b"X-A: b")):
             head = b"HTTP/1.1 200 OK\r\n" + fields + b"\r\n\r\n"
             with self.subTest(head=head):
-                _split_response_head(head)
+                self.assertEqual(
+                    _split_response_head(head)[2],
+                    b"HTTP/1.1 200 OK\r\n" + relayed + b"\r\n\r\n")
+
+    def test_the_lenient_reading_still_drops_what_it_did(self):
+        _, headers, _ = _split_response_head(
+            b"HTTP/1.1 200 OK\r\nX A: b\r\nX-B: c\r\n\r\n")
+        self.assertEqual(headers, (("x-b", "c"),))
+
+
+class TestARepairedHeadReachesTheGuest(TerminationCase):
+    """The repairs above, through a terminated exchange: what the guest
+    gets is the head the relay framed by."""
+
+    def _answer(self, response):
+        origin = _Origin(self.origin_pem, response=response)
+        self.addCleanup(origin.close)
+        listener, out = self._listener(_mod(), origin)
+        got, error = self._exchange(listener, origin)
+        self.assertIsNone(error)
+        return got, out.getvalue()
+
+    def test_whitespace_before_a_colon_is_removed_and_the_length_honoured(self):
+        got, _ = self._answer(
+            b"HTTP/1.1 200 OK\r\nContent-Length : 5\r\n\r\nhello")
+        self.assertEqual(
+            got, b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello")
+
+    def test_a_head_that_is_not_passed_on_is_answered_502(self):
+        got, log = self._answer(
+            b"HTTP/1.1 200 OK\r\nContent-Length\xa0: 5\r\n\r\nhello")
+        self.assertTrue(got.startswith(b"HTTP/1.1 502 Bad Gateway\r\n"), got)
+        self.assertNotIn(b"hello", got)
+        self.assertIn("relay failed", log)
+        self.assertIn("a parser that trims it", log)

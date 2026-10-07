@@ -8,8 +8,9 @@ raises RequestUnreadable and the message is declined.
 
 The request parser (`_split_head`) is strict for that reason. The response
 parser (`_split_response_head`) is lenient: that head comes from an origin
-the policy authorised, is relayed verbatim, and is read only for where its
-body ends.
+the policy authorised and is read only for where its body ends. It is
+relayed as it came, except for the lines RFC 9112 has a proxy repair, so
+the guest reads the head this read did.
 """
 
 import email.utils
@@ -284,38 +285,49 @@ def _split_head(head):
 
 
 def _split_response_head(head):
-    """(status line, [(name, value)]) from a response head. Lenient.
+    """(status line, [(name, value)], the head to relay) from a response
+    head. Lenient.
 
     Real origins send raw UTF-8 in a filename, folded headers and names
     outside tchar, and none of it moves where the body ends, so none of it
-    is refused: latin-1, obs-fold joined, a non-token name dropped. A
-    control character is still refused, since it moves where the message
-    ends, and so is a dropped or folded line that is a framing header
-    once trimmed (`Content-Length : 10`): the head is relayed as it came,
-    and a guest that trims would frame the body by a header this read
-    never saw.
+    is refused: latin-1, a non-token name dropped. Two repairs are RFC
+    9112's for a proxy, made in the head relayed so the guest reads what
+    this read did: whitespace before a colon removed (§5.1), and obs-fold
+    joined with a space (§5.2). A whitespace-led line before the first
+    field is dropped (§2.2). Refused: a control character, which moves
+    where the message ends, and a dropped line that is a framing header
+    once trimmed (`Content-Length\xa0: 5`), which a guest that trims
+    would frame the body by.
     """
     text = head[:-4].decode("latin-1")
     lines = text.split("\r\n")
     _reject_controls(lines[0], "the status line", tab_ok=False)
-    headers = []
+    relayed = [lines[0]]
     for line in lines[1:]:
         _reject_controls(line, "a response header line", tab_ok=True)
         if line[:1] in (" ", "\t"):
-            _refuse_hidden_framing(line, "a folded line")
-            if headers:
-                name, value = headers[-1]
-                headers[-1] = (name, (value + " " + line.strip(" \t")).strip())
+            if len(relayed) > 1:
+                relayed[-1] = (relayed[-1].rstrip(" \t") + " "
+                               + line.strip(" \t"))
             continue
         name, sep, value = line.partition(":")
+        if sep and name != name.rstrip(" \t"):
+            name = name.rstrip(" \t")
+            line = name + ":" + value
+        relayed.append(line)
+    headers = []
+    for line in relayed[1:]:
+        name, sep, value = line.partition(":")
         if not sep or not name or any(c not in _TOKEN_CHARS for c in name):
-            _refuse_hidden_framing(line, "a dropped header line")
+            _refuse_hidden_framing(line)
             continue
         headers.append((name.lower(), value.strip(" \t")))
-    return lines[0], tuple(headers)
+    if relayed != lines:
+        head = ("\r\n".join(relayed) + "\r\n\r\n").encode("latin-1")
+    return lines[0], tuple(headers), head
 
 
-def _refuse_hidden_framing(line, what):
+def _refuse_hidden_framing(line):
     """Raise if a response line this parser does not read as a header is
     a framing header to one that trims."""
     name, sep, _ = line.partition(":")
@@ -324,7 +336,8 @@ def _refuse_hidden_framing(line, what):
     name = name.strip().lower()
     if sep and name in _FRAMING_NAMES:
         raise RequestUnreadable(
-            f"{what} is a {name} header to a parser that trims it")
+            f"a dropped header line is a {name} header to a parser that "
+            "trims it")
 
 
 def _get_all(headers, name):

@@ -46,6 +46,11 @@ class _ClientCertDemanded(Exception):
     client certificate. The message is the operator's sentence."""
 
 
+class _HeadRefused(RequestUnreadable):
+    """An origin's response head this relay does not pass on. None of it
+    has been sent, so the guest can still be answered."""
+
+
 def serve_cleartext(insp, conn, where):
     """Authorise every request on this port-80 connection, and relay the
     ones that pass.
@@ -239,6 +244,12 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
                   answered=502)
         send_response(conn, 502, "Bad Gateway", close=True)
         return False
+    except _HeadRefused as exc:
+        # Nothing of the answer has reached the guest, so it can be told.
+        insp.drop(where, DROP_RELAY_FAILED, exc, host=req.host, rec=rec,
+                  answered=502)
+        send_response(conn, 502, "Bad Gateway", close=True)
+        return False
     except (RequestUnreadable, OSError) as exc:
         # Overwrites the `forward` set above. `status` survives if a head
         # had already come back, which tells a relay that failed before the
@@ -269,9 +280,9 @@ def _note_preface(insp, where, pinned_host):
 def _relay_response(insp, up, client, conn, req, where="", rec=None):
     """Relay one response. True if the connection may carry another.
 
-    The head is relayed verbatim and parsed leniently, only to learn where
-    its body ends: it was written by an origin the policy authorised, and
-    the smuggling defence is against the guest's framing.
+    The head is parsed leniently, only to learn where its body ends, and
+    relayed as the parse read it: it was written by an origin the policy
+    authorised, and the smuggling defence is against the guest's framing.
     """
     interim = 0
     while True:
@@ -288,15 +299,18 @@ def _relay_response(insp, up, client, conn, req, where="", rec=None):
             raise
         if not head:
             raise RequestUnreadable("the upstream closed before answering")
-        start, headers = _split_response_head(head)
-        fields = start.split(" ")
-        if len(fields) < 2 or not _is_count(fields[1]):
-            raise RequestUnreadable(
-                f"status line {start!r} is not one we read")
-        status = int(fields[1])
-        if rec is not None:
-            rec.set(status=status)
-        framing = response_framing(status, req.method, headers)
+        try:
+            start, headers, head = _split_response_head(head)
+            fields = start.split(" ")
+            if len(fields) < 2 or not _is_count(fields[1]):
+                raise RequestUnreadable(
+                    f"status line {start!r} is not one we read")
+            status = int(fields[1])
+            if rec is not None:
+                rec.set(status=status)
+            framing = response_framing(status, req.method, headers)
+        except RequestUnreadable as exc:
+            raise _HeadRefused(str(exc)) from None
         conn.sendall(head)
         if status == 101:
             # The upgrade request was authorised; what flows after it is not

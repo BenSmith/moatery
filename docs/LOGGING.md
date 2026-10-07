@@ -66,7 +66,7 @@ Every reason, as the journal, the record and `drop_reasons` spell it:
 | `unreadable request` | a request head this relay does not read |
 | `internal destination` | the dial failed and the name resolves to a private address the policy does not expect: most likely the host's rule refused it ([DESIGN.md](DESIGN.md), "Private addresses") |
 | `upstream unreachable`, `timed out` | the network, either end |
-| `relay failed` | the network, either end, or an origin's answer this relay does not pass on, such as a header that frames the body only for a parser that trims it; the line's text says which |
+| `relay failed` | the network, either end, or an origin's answer this relay does not pass on, such as a header that frames the body only for a parser that trims it, answered 502; the line's text says which |
 | `upstream certificate unverified` | the origin's certificate did not verify |
 | `upstream wants a client certificate` | the host needs `splice` |
 | `credential broker unreachable` | the request needs a key and the broker did not answer; nothing was sent |
