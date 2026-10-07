@@ -76,6 +76,7 @@ python3 tests/manual/host_rig.py                  # every row green
 python3 tests/manual/host_rig.py --without-rules  # must go red
 python3 tests/manual/host_rig.py --without-dns-redirect  # dns red
 python3 tests/manual/host_rig.py --broker-over-tcp  # the broker rows red
+python3 tests/manual/host_rig.py --rules-after-start  # first red
 ```
 
 Runs as the user. Two host facts need `sudo`, and both are undone at
@@ -126,6 +127,7 @@ python3 tests/manual/netns_rig.py --without-rules        # must go red
 python3 tests/manual/netns_rig.py --without-netns-pid    # inspector red
 python3 tests/manual/netns_rig.py --without-dns-redirect # dns red
 python3 tests/manual/netns_rig.py --without-notify       # ready red
+python3 tests/manual/netns_rig.py --rules-after-start    # first, quic red
 ```
 
 **Rows.** host_rig's premise, DNS, silent-drop, quic, request, broker,

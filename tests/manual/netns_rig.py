@@ -12,6 +12,7 @@ ordinary user, from a checkout:
                                         [--without-dns-redirect]
                                         [--without-netns-pid]
                                         [--without-notify]
+                                        [--rules-after-start]
 
 The two host facts riglib needs sudo for are host_rig's, undone at teardown.
 
@@ -19,6 +20,11 @@ THE ROWS
 
   premise   the container's bounding set holds no CAP_NET_ADMIN; the rules
             are in its netns.
+  first     the workload's own first act, the provider request, got 200
+            with the real key: the rules were in before its first packet,
+            and the two programs, started but not yet waited for, served
+            it, so neither a late rule nor a policy loaded after the bind
+            is hidden by the rig's own waiting.
   ready     the units are Type=notify: when systemd reported each started,
             its ports were already listening in the container's namespace,
             so a workload ordered after them cannot dial before the bind.
@@ -57,14 +63,20 @@ THE ROWS
   counters  every caller was named -- in the container's table, which is
             where they are -- and none was dropped as foreign.
 
-`--without-rules` skips the netns rules: premise, dns, silent, quic,
-request and unlisted must go red. `--without-dns-redirect` leaves the
-port-53 lines out of the redirect, so the queries go to pasta's
-forwarder and the egress chain drops them: dns, request and unlisted
-must go red.
+`--without-rules` skips the netns rules: premise, first, dns, silent,
+quic, request, another uid and unlisted must go red.
+`--without-dns-redirect` leaves the port-53 lines out of the redirect,
+so the queries go to pasta's forwarder and the egress chain drops them:
+first, dns, request and unlisted must go red. `--rules-after-start`
+loads the rules two seconds after `podman start` instead of before it:
+first and quic must go red. The first request left the gateway's
+neighbour entry in DELAY, its probes are then dropped with the rest, and
+by the quic row the entry has FAILED: the send waits on it and never
+reaches the chain. The other rows probe once the rules are in, and may
+stay green.
 `--without-netns-pid` starts the inspector without it, so its lookups
-would read the host's table: it must refuse to start, and inspector,
-request, unlisted and counters go red.
+would read the host's table: it must refuse to start, and first,
+inspector, request, unlisted and counters go red.
 `--without-notify` starts the two units as Type=simple, reported started
 when forked, before the launcher has bound anything: ready must go red.
 """
@@ -186,12 +198,6 @@ def start_inspector(pid, netns_pid, notify):
          "--broker", f"unix:{BROKER_SOCKET}", *extra])
     READY["inspector"] = [listening(pid, "tcp", port)
                           for port in (INSPECT_TLS, INSPECT_CLEARTEXT)]
-    for _ in range(50):
-        if STATUS.exists() or not unit_active():
-            break
-        time.sleep(0.2)
-    say(f"  inspector {'up' if unit_active() else 'NOT up'}"
-        f" (pid {unit_pid()})")
 
 
 def start_responder(pid, notify, address=riglib.ANSWER):
@@ -207,12 +213,20 @@ def start_responder(pid, notify, address=riglib.ANSWER):
          "--status", str(RESOLVE_STATUS)])
     READY["responder"] = [listening(pid, proto, RESOLVE_PORT)
                           for proto in ("udp", "tcp")]
-    for _ in range(50):
-        if RESOLVE_STATUS.exists() or not unit_active("resolve"):
-            break
-        time.sleep(0.2)
-    say(f"  responder {'up' if unit_active('resolve') else 'NOT up'}"
-        f" (pid {unit_pid('resolve')})")
+
+
+def await_up():
+    """Wait for both programs' status files. Called after the workload
+    starts, not before: its first request is queued on the bound listeners
+    while the programs load their policy, which is the window that request
+    probes."""
+    for kind, status in (("inspect", STATUS), ("resolve", RESOLVE_STATUS)):
+        for _ in range(50):
+            if status.exists() or not unit_active(kind):
+                break
+            time.sleep(0.2)
+        say(f"  {kind} {'up' if unit_active(kind) else 'NOT up'}"
+            f" (pid {unit_pid(kind)})")
 
 
 def unit_active(kind="inspect"):
@@ -253,7 +267,7 @@ def create_container():
          "-e", f"GIT_SSL_CAINFO={CA_BUNDLE_IN_CONTAINER}",
          "-e", f"PIP_CERT={CA_BUNDLE_IN_CONTAINER}",
          "-e", f"EXAMPLE_API_KEY={PLACEHOLDER}",
-         IMAGE, "sleep", "infinity"], timeout=300)
+         IMAGE, *riglib.FIRST_REQUEST], timeout=300)
     run(["podman", "init", CONTAINER])
     pid = int(run(["podman", "inspect", "-f", "{{.State.Pid}}",
                    CONTAINER]).stdout.strip())
@@ -411,6 +425,7 @@ def probe(pid, dns, secret):
     listed = in_netns(pid, ["nft", "list", "tables"], check=False).stdout
     row("premise: the rules are in the container's netns",
         "table inet moatery" in listed, listed.strip() or "no tables")
+    riglib.first_request_row(exec_in, secret)
 
     say("inspector")
     ipid = unit_pid()
@@ -575,18 +590,22 @@ def main():
     ap.add_argument("--keep", action="store_true",
                     help="leave the container for inspection")
     ap.add_argument("--without-rules", action="store_true",
-                    help="skip the netns rules; premise, dns, silent, "
-                         "request and unlisted must go red")
+                    help="skip the netns rules; premise, first, dns, "
+                         "silent, quic, request, another uid and unlisted "
+                         "must go red")
     ap.add_argument("--without-dns-redirect", action="store_true",
-                    help="leave port 53 out of the redirect; dns, request "
-                         "and unlisted must go red")
+                    help="leave port 53 out of the redirect; first, dns, "
+                         "request and unlisted must go red")
     ap.add_argument("--without-netns-pid", action="store_true",
                     help="start the inspector without --netns-pid; it must "
-                         "refuse, and inspector, request, unlisted and "
-                         "counters go red")
+                         "refuse, and first, inspector, request, unlisted "
+                         "and counters go red")
     ap.add_argument("--without-notify", action="store_true",
                     help="start the listener units as Type=simple; ready "
                          "must go red")
+    ap.add_argument("--rules-after-start", action="store_true",
+                    help="load the rules two seconds after podman start; "
+                         "first and quic must go red")
     args = ap.parse_args()
 
     riglib.preflight(
@@ -619,25 +638,33 @@ def main():
         pid, dns = create_container()
         if args.without_rules:
             say("  rules NOT loaded, as asked")
-        else:
+        elif not args.rules_after_start:
             load_rules(pid, not args.without_dns_redirect)
         start_inspector(pid, not args.without_netns_pid,
                         not args.without_notify)
         start_responder(pid, not args.without_notify)
         run(["podman", "start", CONTAINER])
+        if args.rules_after_start and not args.without_rules:
+            time.sleep(2)
+            say("  rules loaded after the start, as asked")
+            load_rules(pid, not args.without_dns_redirect)
+        await_up()
         probe(pid, dns, secret)
     finally:
         teardown(args.keep)
 
     expected = [note for flag, note in (
-        (args.without_rules, "--without-rules: premise, dns, silent, request "
-                             "and unlisted are expected red"),
+        (args.without_rules, "--without-rules: premise, first, dns, "
+                             "silent, quic, request, another uid and "
+                             "unlisted are expected red"),
         (args.without_dns_redirect,
-         "--without-dns-redirect: dns, request and unlisted are expected "
-         "red"),
-        (args.without_netns_pid, "--without-netns-pid: inspector, "
+         "--without-dns-redirect: first, dns, request and unlisted are "
+         "expected red"),
+        (args.without_netns_pid, "--without-netns-pid: first, inspector, "
                                  "request, unlisted and counters are "
                                  "expected red"),
+        (args.rules_after_start, "--rules-after-start: first and quic "
+                                 "are expected red"),
         (args.without_notify, "--without-notify: ready is expected red"),
     ) if flag]
     rc = riglib.report("; ".join(expected) or None)

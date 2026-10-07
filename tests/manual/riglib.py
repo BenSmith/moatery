@@ -312,6 +312,40 @@ def await_status(read, after):
 
 # --- rows every placement shares ---------------------------------------------
 
+FIRST = "/tmp/first"
+# The workload's command where the controls go in between `podman init`
+# and `podman start`: its first act is the provider request, so its first
+# packets (the name's lookup, then the connection) are the ones a control
+# armed in that gap must already catch. A rig's own probes come later and
+# see only the settled state.
+FIRST_REQUEST = [
+    "sh", "-c",
+    f"curl -s -S --max-time 15 --cacert {CA_BUNDLE_IN_CONTAINER} "
+    f"-H 'Authorization: Bearer {PLACEHOLDER}' -o {FIRST}.body "
+    f"-w '%{{http_code}}' https://{PROVIDER}/v1/probe >{FIRST}.code 2>&1; "
+    f"touch {FIRST}.done; exec sleep infinity"]
+
+
+def first_request_row(exec_in, secret):
+    """The workload's first request, made by FIRST_REQUEST, got 200 with
+    the real key. `exec_in(argv)` runs argv in the workload container."""
+    say("first request")
+    for _ in range(25 * 5):
+        if exec_in(["test", "-e", f"{FIRST}.done"]).returncode == 0:
+            break
+        time.sleep(0.2)
+    code = exec_in(["cat", f"{FIRST}.code"]).stdout.strip()
+    arrived = ""
+    try:
+        arrived = json.loads(exec_in(["cat", f"{FIRST}.body"]).stdout).get(
+            "authorization", "")
+    except ValueError:
+        pass
+    row("first: the workload's first request got 200 with the real key",
+        code == "200" and arrived == f"Bearer {secret}",
+        f"curl {code!r}, the stub saw {arrived!r}")
+
+
 def origin_rows(secret):
     """From the host, straight at the stub: the placeholder alone gets
     401 and the real key 200. The second half is the control that the

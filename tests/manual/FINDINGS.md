@@ -62,6 +62,15 @@ defect in the pair. Two in the rows as first written:
   the host's hosts file, and the previous run's responder line was
   still in the journal. It asks for a fresh name now.
 
+**What it found, the first request, 2026-10-07.** The workload had been
+`sleep infinity`, so its first packet was whichever probe the rig sent,
+and rules loaded after `podman start` would have left every row green.
+Its command is now the provider request, read back by the `first` row:
+34/34; `--rules-after-start` 33/34, only `first` red (curl 7, the name
+answered by pasta's forwarder from the hosts file); `--without-rules`
+8/32, `first` among them, and `quic` and `h2` red too, which the flag's
+list had left out.
+
 ## netns_rig.py — the listeners in the container's netns
 
 **What it found, first run, 2026-09-24.** 21/21, and each flag red where
@@ -86,6 +95,20 @@ No defect in the pair. Two facts for the design:
 crosses the egress device, so the chain accepts nothing: the neighbour
 row, which queried pasta's forwarder, went with the resolver's lines,
 and `--without-neighbour-discovery` with it.
+
+**What it found, the first request, 2026-10-07.** As host_rig's, and the
+status waits moved after `podman start`, so the first request is queued
+on the bound listeners while the programs load their policy: 31/31;
+`--without-rules` 14/31, with `quic` and `another uid` added to its list;
+`--rules-after-start` 29/31, `first` and `quic`. The quic red is the
+fixture: the request before the rules left the gateway's neighbour entry
+in DELAY, the chain then dropped its unicast probes, and by the quic row
+it had FAILED, so the send waited on it and never reached the hook; a
+40 s wait in a bare pasta container showed 443 and 9 both uncounted
+under `quic`, only the ARP requests moving `dropped`. host_rig's chain
+lets ARP out and its quic stayed green. The silent row's `dropped >= 1`
+was green in the same run on those ARP drops alone: it shows the chain
+dropped something, not that the port-9 send reached it.
 
 ## sidecar_rig.py — moatery as a sidecar, with no host install
 

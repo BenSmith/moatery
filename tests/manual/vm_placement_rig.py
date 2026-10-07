@@ -121,6 +121,7 @@ def netns_up(secret, answer, build):
     netns_rig.start_inspector(pid, True, True)
     netns_rig.start_responder(pid, True, answer)
     run(["podman", "start", CONTAINER])
+    netns_rig.await_up()
     return pid, pid
 
 

@@ -11,6 +11,7 @@ sealed key. Run on the proving host as an ordinary user, from a checkout:
                                        [--without-neighbour-discovery]
                                        [--without-dns-redirect]
                                        [--broker-over-tcp]
+                                       [--rules-after-start]
 
 Nothing here needs root except two host facts the rig cannot fake and
 undoes at teardown: a line in /etc/hosts pointing the provider's name at
@@ -23,6 +24,9 @@ THE ROWS
 
   premise   the container's bounding set holds no CAP_NET_ADMIN; the rules
             are in its netns. Without the first, the second is a suggestion.
+  first     the workload's own first act, the provider request, got 200
+            with the real key: the rules were in before its first packet,
+            not only by the time the rig's probes ran.
   dns       the workload's queries, to its resolver over UDP and TCP and to
             any other nameserver, are answered by moat-resolve with the
             loopback map, for names nothing resolves; an AAAA gets no
@@ -65,17 +69,20 @@ THE ROWS
             stub distinguishes at all.
 
 `--without-rules` skips loading the netns rules and changes nothing else.
-The `premise`, `dns`, `silent`, `quic`, `h2`, `request`, `neighbour`,
+The `premise`, `first`, `dns`, `silent`, `quic`, `h2`, `request`, `neighbour`,
 `unlisted` and `counters` rows must go red -- the inspector is never even
 activated, and with no egress chain the counters are absent -- and a run
 where they stay green is measuring nothing. `--without-dns-redirect` leaves the
 port-53 lines out of the redirect: the queries go to pasta's forwarder,
-which the egress chain drops, and `dns`, `h2`, `request`, `neighbour`,
+which the egress chain drops, and `first`, `dns`, `h2`, `request`, `neighbour`,
 `unlisted` and `counters` must go red.
 `--broker-over-tcp` puts the broker on 127.129.0.1:8081 instead of the
 socket path, and the broker's no-TCP and other-uid rows must go red.
 `--without-neighbour-discovery` loads the egress chain without its ARP
 and neighbour-discovery lines; `neighbour` and `unlisted` must go red.
+`--rules-after-start` loads the rules two seconds after `podman start`
+instead of before it: `first` must go red, and the rows after it, which
+probe once the rules are in, may stay green.
 
 WHAT THIS RIG TELLS THE DESIGN
 
@@ -268,7 +275,7 @@ def create_container():
          "-e", f"GIT_SSL_CAINFO={CA_BUNDLE_IN_CONTAINER}",
          "-e", f"PIP_CERT={CA_BUNDLE_IN_CONTAINER}",
          "-e", f"EXAMPLE_API_KEY={PLACEHOLDER}",
-         IMAGE, "sleep", "infinity"], timeout=300)
+         IMAGE, *riglib.FIRST_REQUEST], timeout=300)
     run(["podman", "init", CONTAINER])
     pid = int(run(["podman", "inspect", "-f", "{{.State.Pid}}",
                    CONTAINER]).stdout.strip())
@@ -467,6 +474,7 @@ def probe(pid, dns, secret, over_tcp):
     row("premise: the rules are in the container's netns",
         "table inet moatery" in listed,
         listed.strip() or "no tables")
+    riglib.first_request_row(exec_in, secret)
 
     riglib.dns_rows(
         lambda argv: in_netns(pid, ["python3", "-c", riglib.DNS_LOOKUP,
@@ -625,18 +633,22 @@ def main():
     ap.add_argument("--keep", action="store_true",
                     help="leave the container for inspection")
     ap.add_argument("--without-rules", action="store_true",
-                    help="skip the netns rules; premise, dns, silent, "
-                         "request, neighbour, unlisted and counters must go "
-                         "red")
+                    help="skip the netns rules; premise, first, dns, "
+                         "silent, quic, h2, request, neighbour, unlisted "
+                         "and counters must go red")
     ap.add_argument("--without-neighbour-discovery", action="store_true",
                     help="leave ARP and neighbour discovery out of the "
                          "egress chain; neighbour and unlisted must go red")
     ap.add_argument("--without-dns-redirect", action="store_true",
-                    help="leave port 53 out of the redirect; dns, request, "
-                         "neighbour, unlisted and counters must go red")
+                    help="leave port 53 out of the redirect; first, dns, "
+                         "request, neighbour, unlisted and counters must go "
+                         "red")
     ap.add_argument("--broker-over-tcp", action="store_true",
                     help="the broker on 127.129.0.1:8081; its no-TCP and "
                          "other-uid rows must go red")
+    ap.add_argument("--rules-after-start", action="store_true",
+                    help="load the rules two seconds after podman start; "
+                         "first must go red")
     args = ap.parse_args()
 
     riglib.preflight(
@@ -671,21 +683,28 @@ def main():
         pid, dns = create_container()
         if args.without_rules:
             say("  rules NOT loaded, as asked")
-        else:
+        elif not args.rules_after_start:
             load_rules(pid, not args.without_neighbour_discovery,
                        not args.without_dns_redirect)
         run(["podman", "start", CONTAINER])
+        if args.rules_after_start and not args.without_rules:
+            time.sleep(2)
+            say("  rules loaded after the start, as asked")
+            load_rules(pid, not args.without_neighbour_discovery,
+                       not args.without_dns_redirect)
         probe(pid, dns, secret, args.broker_over_tcp)
     finally:
         teardown(args.keep)
 
     expected = [note for flag, note in (
-        (args.without_rules, "--without-rules: premise, dns, silent, "
-                             "request, neighbour, unlisted and counters are "
-                             "expected red"),
+        (args.without_rules, "--without-rules: premise, first, dns, "
+                             "silent, quic, h2, request, neighbour, "
+                             "unlisted and counters are expected red"),
         (args.without_dns_redirect,
-         "--without-dns-redirect: dns, request, neighbour, unlisted and "
-         "counters are expected red"),
+         "--without-dns-redirect: first, dns, request, neighbour, unlisted "
+         "and counters are expected red"),
+        (args.rules_after_start, "--rules-after-start: first is expected "
+                                 "red"),
         (args.without_neighbour_discovery,
          "--without-neighbour-discovery: neighbour and unlisted are "
          "expected red"),
