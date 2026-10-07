@@ -2072,8 +2072,11 @@ class TestALeafNamesTheHostNotThePattern(TerminationCase):
 
     def test_the_minted_san_is_that_name_alone(self):
         leaf = self._minter(None).leaf("a.example.com", denied=False)
-        cert = ssl._ssl._test_decode_cert(str(leaf.path))
-        self.assertEqual(cert["subjectAltName"], (("DNS", "a.example.com"),))
+        text = subprocess.run(
+            ["openssl", "x509", "-in", str(leaf.path), "-noout", "-ext",
+             "subjectAltName"],
+            capture_output=True, text=True, check=True).stdout
+        self.assertEqual(text.splitlines()[1:], ["    DNS:a.example.com"])
 
 
 class TestTheResponseHeadHasOneFraming(unittest.TestCase):
@@ -2094,17 +2097,21 @@ class TestTheResponseHeadHasOneFraming(unittest.TestCase):
         b"X-A: b\r\n folded value",
         b"Content Length: 5",
         b"Content-Length\xb2: 5",
+        b"Content-Length\xa0: 5",
+        b"\xa0Content-Length: 5",
+        b"Transfer-Encoding\x85: chunked",
     )
 
     @staticmethod
     def _trimmed(lines):
-        """The framing names a parser that trims every line sees."""
+        """The framing names a parser that decodes latin-1 and trims every
+        line and name with str.strip() sees."""
         names = set()
         for line in lines:
-            name, sep, _ = line.partition(b":")
-            name = name.strip(b" \t").lower()
-            if sep and name in (b"content-length", b"transfer-encoding"):
-                names.add(name.decode())
+            name, sep, _ = line.decode("latin-1").strip().partition(":")
+            name = name.strip().lower()
+            if sep and name in ("content-length", "transfer-encoding"):
+                names.add(name)
         return names
 
     def test_both_readings_agree_or_the_head_is_refused(self):

@@ -319,7 +319,9 @@ def _refuse_hidden_framing(line, what):
     """Raise if a response line this parser does not read as a header is
     a framing header to one that trims."""
     name, sep, _ = line.partition(":")
-    name = name.strip(" \t").lower()
+    # Every whitespace, not only SP and HTAB: a parser that trims with
+    # str.strip() or String.trim() drops a latin-1 NBSP as well.
+    name = name.strip().lower()
     if sep and name in _FRAMING_NAMES:
         raise RequestUnreadable(
             f"{what} is a {name} header to a parser that trims it")

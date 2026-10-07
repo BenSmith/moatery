@@ -2218,6 +2218,15 @@ class TestLogInjection(unittest.TestCase):
                         _FakeSocket([_hello_bytes(
                             server_name=f"a{ch}b.example")]))
 
+    def test_a_name_with_whitespace_at_either_end_is_refused(self):
+        """Checked as sent: normalising strips it, and a spliced origin
+        gets the name with it."""
+        for name in (" a.example", "a.example ", "a.example. "):
+            with self.subTest(name=name):
+                with self.assertRaises(HelloUnreadable):
+                    read_client_hello(
+                        _FakeSocket([_hello_bytes(server_name=name)]))
+
     def test_a_name_with_an_empty_label_is_refused(self):
         for name in ("a.example..", "a..example", ".a.example", "."):
             with self.subTest(name=name):

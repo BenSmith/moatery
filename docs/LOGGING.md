@@ -56,7 +56,7 @@ Every reason, as the journal, the record and `drop_reasons` spell it:
 | `not allowlisted` | the name is on no list |
 | `not permitted by policy` | the host's `policy` entries refuse this method or path |
 | `not TLS` | the TLS port was sent something else (suspect) |
-| `malformed ClientHello` | a hello no TLS library writes, or a server name with a character no name has (suspect) |
+| `malformed ClientHello` | a hello no TLS library writes, or a server name with a character or an empty label no name has (suspect) |
 | `ClientHello incomplete` | the hello did not arrive whole: closed, cut short or too slow |
 | `no server name` | the hello names no server: a connection to an address (suspect) |
 | `ECH on a spliced connection` | a hello that would be spliced carries ECH, so the name it was spliced on may not be the real one |
@@ -65,7 +65,8 @@ Every reason, as the journal, the record and `drop_reasons` spell it:
 | `not HTTP`, `not HTTP (policy entry)` | a terminated session did not carry HTTP; the host needs `splice` |
 | `unreadable request` | a request head this relay does not read |
 | `internal destination` | the dial failed and the name resolves to a private address the policy does not expect: most likely the host's rule refused it ([DESIGN.md](DESIGN.md), "Private addresses") |
-| `upstream unreachable`, `relay failed`, `timed out` | the network, either end |
+| `upstream unreachable`, `timed out` | the network, either end |
+| `relay failed` | the network, either end, or an origin's answer this relay does not pass on, such as a header that frames the body only for a parser that trims it; the line's text says which |
 | `upstream certificate unverified` | the origin's certificate did not verify |
 | `upstream wants a client certificate` | the host needs `splice` |
 | `credential broker unreachable` | the request needs a key and the broker did not answer; nothing was sent |

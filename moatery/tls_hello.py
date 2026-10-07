@@ -139,7 +139,9 @@ def _parse_server_name(data: bytes):
                 raise HelloUnreadable(
                     f"the server_name carries the control character {ch!r}, "
                     "which no name has and which forges a line in this log")
-            ch = hostname_bad_character(normalize_hostname(name))
+            # The spelling as sent, bar case: normalising strips whitespace,
+            # and a spliced origin reads the name with it.
+            ch = hostname_bad_character(name.lower())
             if ch is not None:
                 raise HelloUnreadable(
                     f"the server_name carries {ch!r}, which no host name is "
