@@ -1865,11 +1865,16 @@ class TestTlsPlane(unittest.TestCase):
         self.assertEqual(port, 443)
 
     def test_an_unreachable_upstream_is_its_own_reason(self):
+        """The name does not resolve, for the reason's lookup as well:
+        2026-10-07, in a hut, whose responder answers every name with a
+        reserved address, the real lookup made it an internal one."""
         _, listener, out = self._listener(["example.com"])
         conn, _ = self._client(_hello_bytes())
+        unresolved = OSError("Name or service not known")
         with unittest.mock.patch.object(
-                socket, "create_connection",
-                side_effect=OSError("Name or service not known")):
+                socket, "create_connection", side_effect=unresolved), \
+                unittest.mock.patch.object(
+                    socket, "getaddrinfo", side_effect=unresolved):
             serve_tls(listener.inspection, conn, _where("tls"))
         self.assertIn("upstream unreachable", out.getvalue())
         self.assertNotIn("not allowlisted", out.getvalue())
@@ -3730,9 +3735,12 @@ class TestCleartextUpstreamFailure(unittest.TestCase):
         ours, guest = self._pair()
         guest.sendall(b"GET / HTTP/1.1\r\nHost: a.example\r\n\r\n")
         guest.shutdown(socket.SHUT_WR)
+        # Unresolved for the reason's lookup too, as on the TLS plane.
+        unresolved = OSError("Name or service not known")
         with unittest.mock.patch.object(
-                socket, "create_connection",
-                side_effect=OSError("Name or service not known")):
+                socket, "create_connection", side_effect=unresolved), \
+                unittest.mock.patch.object(
+                    socket, "getaddrinfo", side_effect=unresolved):
             serve_cleartext(listener.inspection, ours, _where("cleartext"))
         ours.close()
         log, got = out.getvalue(), _read_all(guest)
@@ -3795,12 +3803,18 @@ class TestEchTripwire(unittest.TestCase):
             [], out, policy=Policy(tls="splice", hosts=tuple(hosts))), out
 
     def _serve(self, listener, payload):
+        """The figures move before any dial, so a spliced hello dials
+        nothing real: 2026-10-07, the suite run in a hut, whose responder
+        answers every name, reached the hut's own inspector."""
         guest, ours = socket.socketpair()
         self.addCleanup(guest.close)
         self.addCleanup(ours.close)
         guest.sendall(payload)
         ours.settimeout(2.0)
-        serve_tls(listener.inspection, ours, _where("tls"))
+        with unittest.mock.patch.object(
+                socket, "create_connection",
+                side_effect=OSError("Name or service not known")):
+            serve_tls(listener.inspection, ours, _where("tls"))
 
     def test_an_allowlisted_ech_hello_moves_capability_and_not_the_alarm(self):
         """THE case the split exists for: an ordinary modern client reaching
