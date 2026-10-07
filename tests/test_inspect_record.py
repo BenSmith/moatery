@@ -272,6 +272,37 @@ class TestTheRecordFile(unittest.TestCase):
         self.assertEqual([r["host"] for r in self._lines()],
                          ["one.example", "two.example"])
 
+    def test_a_short_write_is_finished_not_left_short(self):
+        real = os.write
+
+        def short(fd, data):
+            return real(fd, data[:7])
+        log = self._log()
+        with unittest.mock.patch.object(egress_record.os, "write", short):
+            log.write({"id": "a", "host": "one.example"})
+        self.assertEqual(self._lines(), [{"id": "a", "host": "one.example"}])
+        self.assertEqual(log._size, os.path.getsize(self.path))
+
+    def test_a_line_torn_by_a_failure_costs_that_line_alone(self):
+        """The disk filling mid-line leaves it without its newline; the
+        next line starts on its own, so the reader loses one, not two."""
+        from moathut import record
+        real = os.write
+        calls = []
+
+        def fill(fd, data):
+            calls.append(data)
+            if len(calls) == 1:
+                return real(fd, data[:9])
+            raise OSError(28, "No space left on device")
+        log = self._log(out=io.StringIO())
+        with unittest.mock.patch.object(egress_record.os, "write", fill):
+            log.write({"id": "a", "host": "one.example"})
+        log.write({"id": "b", "host": "two.example"})
+        self.assertEqual([d["id"] for d in record.lines(Path(self.path))],
+                         ["b"])
+        self.assertEqual(log._size, os.path.getsize(self.path))
+
     def test_a_new_file_is_0600(self):
         """The mode IS the access decision here: root and the workload uid,
         nobody else, which is the whole reason the record is not in a
@@ -396,9 +427,9 @@ class TestTheRecordFile(unittest.TestCase):
 
         def torn(fd, data):
             if fd == log._fd and data.endswith(b"\n"):
-                real(fd, data[:8])
+                done = real(fd, data[:8])
                 time.sleep(0.001)
-                return real(fd, data[8:])
+                return done + real(fd, data[8:])
             return real(fd, data)
 
         with unittest.mock.patch.object(egress_record.os, "write", torn):

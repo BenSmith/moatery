@@ -131,6 +131,17 @@ class TestTheStatusFile(unittest.TestCase):
             os.umask(old)
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
 
+    def test_a_link_planted_at_the_temporary_name_is_not_followed(self):
+        """A status path pointed into a shared directory: a link planted
+        where the temporary file goes must not have its target written."""
+        target = Path(self.dir) / "elsewhere"
+        target.write_text("theirs")
+        os.symlink(target, self.path + ".tmp")
+        write_status(self.path, {"n": 1})
+        self.assertEqual(target.read_text(), "theirs")
+        self.assertEqual(json.loads(Path(self.path).read_text())["n"], 1)
+        self.assertFalse(os.path.islink(self.path))
+
     def test_the_payload_is_not_mutated_by_the_write(self):
         """The caller's snapshot is live state in one of the two producers;
         stamping it in place would put written_at into the counters."""

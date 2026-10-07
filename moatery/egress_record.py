@@ -305,6 +305,8 @@ class RequestLog:
         self._reopen = False
         # Which kinds of failure have warned: each once per file.
         self._warned = set()
+        # Whether a failed write left a line without its newline.
+        self._torn = False
 
     def reopen(self):
         """Ask for a reopen. Async-signal-safe: one assignment, no I/O."""
@@ -322,15 +324,18 @@ class RequestLog:
             with self._lock:
                 if self._reopen or self._fd is None:
                     self._open_locked()
-                # One write of the whole line, under the lock: O_APPEND
-                # alone does not make a partial write atomic.
+                # The whole line, under the lock: O_APPEND alone does not
+                # make a partial write atomic.
                 data = line.encode()
+                if self._torn:
+                    # Ends the torn line, so a reader loses it alone
+                    # rather than it and this one joined.
+                    data = b"\n" + data
                 refusal = record.get("decision") == "drop"
                 cap = self._drop_max_bytes if refusal else self._max_bytes
                 over = self._size + len(data) > cap
                 if not over:
-                    os.write(self._fd, data)
-                    self._size += len(data)
+                    self._write_locked(data)
             if over and refusal:
                 self._fail(f"{self._path} reached its cap of {cap} bytes "
                            "for refusals; they are dropped until it is "
@@ -342,6 +347,20 @@ class RequestLog:
             return
         except OSError as exc:
             self._fail(f"could not write {self._path}: {exc}")
+
+    def _write_locked(self, data):
+        """All of `data`, or raise: a write can be short when the disk
+        fills or the file reaches RLIMIT_FSIZE."""
+        done = 0
+        try:
+            while done < len(data):
+                done += os.write(self._fd, data[done:])
+        finally:
+            self._size += done
+            if done == len(data):
+                self._torn = False
+            elif done:
+                self._torn = True
 
     def _open_locked(self):
         if self._fd is not None:
@@ -361,8 +380,9 @@ class RequestLog:
             os.close(fd)
             raise
         self._fd = fd
-        # A new file warns afresh.
+        # A new file warns afresh, and has no torn line.
         self._warned = set()
+        self._torn = False
 
     def _fail(self, message, kind="write"):
         if self._on_failure is not None:

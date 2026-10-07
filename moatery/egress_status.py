@@ -75,7 +75,15 @@ def write_status(path: str, payload: dict) -> None:
     body = dict(payload)
     body["written_at"] = time.time()
     tmp = f"{path}.tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # Made afresh: one left in the directory, or a link planted there, is
+    # never opened, so a status path in a shared directory writes nothing
+    # else.
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                 0o600)
     try:
         os.fchmod(fd, 0o600)
     except OSError:
