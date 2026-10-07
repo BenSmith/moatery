@@ -18,7 +18,8 @@ import time
 from typing import NamedTuple
 
 from .inspect_document import (
-    hostname_bad_character, hostname_control_character, normalize_hostname,
+    hostname_bad_character, hostname_control_character, hostname_empty_label,
+    normalize_hostname,
 )
 
 # The ceiling on a ClientHello, in bytes. A post-quantum one spans more
@@ -107,18 +108,24 @@ class _Reader:
 
 
 def _parse_server_name(data: bytes):
-    """The first host_name in a server_name extension, or None.
+    """The host_name in a server_name extension, or None.
 
     Non-ASCII is refused, since a name on the wire is punycode (RFC 6066).
     So is a control character, or any character no name is spelled with,
-    since this name goes into journal lines.
+    since this name goes into journal lines. So is a second host_name,
+    which RFC 6066 forbids: a spliced origin reads the hello itself, and
+    must not be left to pick another name than the one checked here.
     """
     r = _Reader(data)
     entries = _Reader(r.take(r.u16()))
+    found = None
     while entries.remaining():
         kind = entries.u8()
         value = entries.take(entries.u16())
         if kind == TLS_SNI_HOST_NAME:
+            if found is not None:
+                raise HelloUnreadable(
+                    "the server_name carries a second host_name")
             try:
                 name = value.decode("ascii")
             except UnicodeDecodeError:
@@ -137,8 +144,11 @@ def _parse_server_name(data: bytes):
                 raise HelloUnreadable(
                     f"the server_name carries {ch!r}, which no host name is "
                     "spelled with")
-            return name
-    return None
+            if hostname_empty_label(normalize_hostname(name)):
+                raise HelloUnreadable(
+                    "the server_name has an empty label")
+            found = name
+    return found
 
 
 def _parse_alpn(data: bytes) -> tuple:
@@ -180,10 +190,14 @@ def parse_client_hello(msg: bytes) -> ClientHello:
     while exts.remaining():
         etype = exts.u16()
         data = exts.take(exts.u16())
+        if etype in (TLS_EXT_SERVER_NAME, TLS_EXT_ALPN) and etype in seen:
+            # RFC 8446 §4.2 forbids it, and either copy is a reading.
+            raise HelloUnreadable(
+                f"extension 0x{etype:04x} appears twice in the ClientHello")
         seen.append(etype)
-        if etype == TLS_EXT_SERVER_NAME and name is None:
+        if etype == TLS_EXT_SERVER_NAME:
             name = _parse_server_name(data)
-        elif etype == TLS_EXT_ALPN and alpn is None:
+        elif etype == TLS_EXT_ALPN:
             alpn = _parse_alpn(data)
     return ClientHello(name, tuple(seen), alpn or ())
 

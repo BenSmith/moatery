@@ -148,9 +148,13 @@ every host.
 Nothing inside means the `Host` header too. A spliced name on a shared
 front, such as a CDN that routes by `Host`, reaches every other site behind
 that front: the workload names the allowed host in its handshake and another
-in its request. Splice only names whose servers answer for themselves,
-and never a wildcard over a provider's shared domain, which admits every
-customer on it.
+in its request. The name is matched lowercased and without a trailing
+dot, and the origin gets the workload's spelling, so a front that reads
+`Allowed.Example.` as another name than `allowed.example` serves what it
+chooses; the request's `Host` already lets the workload ask it anything.
+Splice only names whose servers answer for themselves, and never a
+wildcard over a provider's shared domain, which admits every customer on
+it.
 
 A hello carrying encrypted_client_hello (ECH) is refused on a connection
 that would be spliced, with the reason `ECH on a spliced connection`.

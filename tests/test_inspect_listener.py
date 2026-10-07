@@ -583,6 +583,15 @@ def _grease_extension(value=0x0a0a):
     return value.to_bytes(2, "big") + b"\x00\x00"
 
 
+def _sni_extension(*entries):
+    """A server_name extension (RFC 6066) holding `entries`, each a
+    (name_type, name) pair, in order."""
+    body = b"".join(bytes([kind]) + len(n).to_bytes(2, "big") + n
+                    for kind, n in entries)
+    body = len(body).to_bytes(2, "big") + body
+    return b"\x00\x00" + len(body).to_bytes(2, "big") + body
+
+
 def _alpn_extension(*names):
     """An ALPN extension (RFC 7301) offering `names`, in order."""
     body = b"".join(len(n).to_bytes(1, "big") + n for n in names)
@@ -651,6 +660,37 @@ class TestClientHelloParser(unittest.TestCase):
         raw = _hello_bytes(b"\x00\x2a" + (300).to_bytes(2, "big") + b"\x00" * 300)
         sock = _FakeSocket([raw[:20], raw[20:100], raw[100:]])
         hello = read_client_hello(sock)
+        self.assertEqual(hello.server_name, "example.com")
+
+    def test_a_second_server_name_extension_is_refused(self):
+        """A spliced origin reads the hello itself. OpenSSL refuses this
+        one, but which name another stack would serve is the origin's
+        choice, and the name checked has to be the only one."""
+        raw = _hello_bytes(_sni_extension((0, b"second.example")),
+                           server_name="first.example")
+        with self.assertRaisesRegex(HelloUnreadable, "twice"):
+            read_client_hello(_FakeSocket([raw]))
+
+    def test_a_second_host_name_in_one_extension_is_refused(self):
+        raw = _hello_bytes(
+            _sni_extension((0, b"first.example"), (0, b"second.example")),
+            server_name=None)
+        with self.assertRaisesRegex(HelloUnreadable, "second host_name"):
+            read_client_hello(_FakeSocket([raw]))
+
+    def test_a_second_alpn_extension_is_refused(self):
+        raw = _hello_bytes(_alpn_extension(b"http/1.1")
+                           + _alpn_extension(b"h2"))
+        with self.assertRaisesRegex(HelloUnreadable, "twice"):
+            read_client_hello(_FakeSocket([raw]))
+
+    def test_a_host_name_beside_another_name_type_still_reads(self):
+        """RFC 6066 allows one name per type; only a second host_name has
+        two readings."""
+        raw = _hello_bytes(
+            _sni_extension((7, b"opaque"), (0, b"example.com")),
+            server_name=None)
+        hello = read_client_hello(_FakeSocket([raw]))
         self.assertEqual(hello.server_name, "example.com")
 
     def test_a_hello_with_no_sni_reads_but_names_nothing(self):
@@ -1969,6 +2009,44 @@ class TestPerHostSplice(unittest.TestCase):
             received += chunk
         self.assertEqual(received, raw)
 
+    def test_a_spelling_is_matched_normalised_and_reaches_the_origin_raw(self):
+        """Pinned, and documented in POLICY.md: the policy and the dial use
+        the normalised name, and the origin reads the guest's own bytes. A
+        front that serves `Allowed.Example.` as another name serves what
+        `Host` could already ask it for."""
+        _, listener, out = self._listener(
+            ["allowed.example"], ["allowed.example"])
+        raw = _hello_bytes(server_name="Allowed.Example.")
+        conn, guest = self._client(raw)
+        guest.shutdown(socket.SHUT_WR)
+        upstream, far = socket.socketpair()
+        self.addCleanup(upstream.close)
+        self.addCleanup(far.close)
+        with unittest.mock.patch.object(
+                socket, "create_connection", return_value=upstream) as dial:
+            serve_tls(listener.inspection, conn, _where("tls"))
+        self.assertEqual(dial.call_args.args[0],
+                         ("allowed.example", TLS.guest_port))
+        self.assertIn("host=allowed.example", out.getvalue())
+        far.settimeout(2.0)
+        upstream.close()
+        self.assertIn(b"Allowed.Example.", far.recv(65536))
+
+    def test_a_name_with_two_trailing_dots_is_refused_not_matched(self):
+        """Found 2026-10-07 writing the test above: one root dot was
+        stripped at the hello and another at every match, so
+        `allowed.example..` was admitted, then dialled and logged as
+        `allowed.example.`."""
+        _, listener, out = self._listener(
+            ["allowed.example"], ["allowed.example"], tls="splice")
+        conn, guest = self._client(_hello_bytes(
+            server_name="allowed.example.."))
+        guest.shutdown(socket.SHUT_WR)
+        with unittest.mock.patch.object(socket, "create_connection") as dial:
+            serve_tls(listener.inspection, conn, _where("tls"))
+        dial.assert_not_called()
+        self.assertIn("empty label", out.getvalue())
+
     def test_a_host_not_on_the_splice_list_is_still_terminated(self):
         _, listener, _ = self._listener(
             ["a.example", "b.example"], ["a.example"])
@@ -2139,6 +2217,13 @@ class TestLogInjection(unittest.TestCase):
                     read_client_hello(
                         _FakeSocket([_hello_bytes(
                             server_name=f"a{ch}b.example")]))
+
+    def test_a_name_with_an_empty_label_is_refused(self):
+        for name in ("a.example..", "a..example", ".a.example", "."):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(HelloUnreadable, "empty label"):
+                    read_client_hello(
+                        _FakeSocket([_hello_bytes(server_name=name)]))
 
     def test_an_ordinary_name_still_reads(self):
         """The guard must not cost the names that are not attacks."""
@@ -2623,6 +2708,12 @@ class TestCleartextAuthorisation(unittest.TestCase):
                           "[not-an-address]"):
             with self.subTest(authority=authority):
                 with self.assertRaises(RequestUnreadable):
+                    host_from_authority(authority)
+
+    def test_an_authority_with_an_empty_label_is_refused(self):
+        for authority in ("a.example..", "a..example:80", ".a.example"):
+            with self.subTest(authority=authority):
+                with self.assertRaisesRegex(RequestUnreadable, "empty label"):
                     host_from_authority(authority)
 
     def test_an_ipv6_literal_authority_is_still_read(self):

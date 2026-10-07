@@ -55,6 +55,16 @@ def hostname_bad_character(host: str) -> str | None:
     return None
 
 
+def hostname_empty_label(host: str) -> bool:
+    """Whether a normalised name has an empty label.
+
+    normalize_hostname strips one root dot and every match normalises
+    again, so `a.example..` would be admitted as `a.example` and dialled
+    and logged as `a.example.`.
+    """
+    return "" in host.split(".")
+
+
 def hostname_match(host: str, patterns) -> bool:
     """Whether a hostname is authorised by a list of fnmatch patterns.
 

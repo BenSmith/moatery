@@ -13,7 +13,9 @@ are reduced the same way to the one name policy is matched against.
 import ipaddress
 from typing import NamedTuple
 
-from .inspect_document import hostname_bad_character, normalize_hostname
+from .inspect_document import (
+    hostname_bad_character, hostname_empty_label, normalize_hostname,
+)
 from .egress_plane import CLEARTEXT, TLS
 from .http_framing import RequestUnreadable
 
@@ -222,6 +224,9 @@ def host_from_authority(authority, scheme=SCHEME_HTTP):
             raise RequestUnreadable(
                 f"the authority carries {ch!r}, which no host name is "
                 "spelled with")
+        if hostname_empty_label(host):
+            raise RequestUnreadable(
+                f"authority {authority!r} has an empty label")
     # A plane only ever dials its own port, so an authority naming another
     # describes a destination neither end is on.
     if port not in ("", str(scheme.port)):
