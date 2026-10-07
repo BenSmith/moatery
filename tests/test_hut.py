@@ -332,7 +332,24 @@ class TestUnits(unittest.TestCase):
         self.assertNotIn("Network=", self.work)
 
     def test_the_workload_keeps_the_hosts_time_zone(self):
-        self.assertEqual(_keys(self.work, "Timezone"), ["local"])
+        zone = Path(self.enterContext(
+            tempfile.TemporaryDirectory())) / "localtime"
+        zone.symlink_to("/usr/share/zoneinfo/Europe/Paris")
+        with mock.patch("moathut.units.LOCALTIME", zone):
+            work = container_unit(self.hut, self.settings, None)
+        self.assertEqual(_keys(work, "Timezone"), ["local"])
+
+    def test_a_host_without_a_zone_gives_the_workload_utc(self):
+        """2026-10-07: a host with no /etc/localtime, which is UTC, could
+        not start a hut: podman's Timezone=local found no file to read.
+        A link to a zone the host lacks is the same."""
+        gone = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        dangling = gone / "dangling"
+        dangling.symlink_to(gone / "nowhere")
+        for zone in (gone / "localtime", dangling):
+            with mock.patch("moathut.units.LOCALTIME", zone):
+                work = container_unit(self.hut, self.settings, None)
+            self.assertEqual(_keys(work, "Timezone"), ["UTC"], zone)
 
     def test_the_prompt_is_mounted_read_only(self):
         self.assertIn(f"{self.hut.prompt}:{PROMPT_PATH}:ro,Z",

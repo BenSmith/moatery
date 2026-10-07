@@ -63,6 +63,11 @@ PROMPT_PATH = "/etc/profile.d/moathut.sh"
 # Where the hut reads the namespace its rules were loaded into.
 MARK_PATH = "/run/moathut/netns"
 
+# The host's zone, which podman's Timezone=local reads. A host without
+# it is on UTC (localtime(5)), and podman refuses to start a container
+# with local there.
+LOCALTIME = Path("/etc/localtime")
+
 
 class Settings(NamedTuple):
     """What `create` decided, kept in hut.json for the other commands."""
@@ -258,7 +263,7 @@ Group={settings.gid}
 WorkingDir={_value(settings.home_path)}
 Exec=sleep infinity
 RunInit=true
-Timezone=local
+Timezone={_timezone()}
 SeccompProfile={_value(hut.seccomp)}
 {body}
 
@@ -267,6 +272,10 @@ SeccompProfile={_value(hut.seccomp)}
     _tool(settings, "sudoers", hut.name))}
 SuccessExitStatus=143
 """ + (_AUTOSTART if settings.autostart else "")
+
+
+def _timezone():
+    return "local" if LOCALTIME.exists() else "UTC"
 
 
 # Started with the user's manager, at login or, lingering, at boot, the

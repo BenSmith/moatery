@@ -330,7 +330,10 @@ units differ from the example's in these ways:
 - No `[Install]` unless `--autostart`: without it a hut runs from
   `enter` to `stop`.
 - `Timezone=local`: the workload's clock reads in the host's zone, not
-  the image's (UTC in Fedora's).
+  the image's (UTC in Fedora's). A host without `/etc/localtime` is on
+  UTC, and podman cannot start a container with `local` there, so its
+  huts get `Timezone=UTC`; the units are written again at a stopped
+  hut's next start, so a zone set later reaches it then.
 - The prompt is mounted read-only at `/etc/profile.d/moathut.sh`, and
   puts `⬢ NAME` before bash's prompt, magenta, or red as root. Fedora's
   `/etc/bashrc` reads it, so root's shell has it from the image's
