@@ -116,7 +116,8 @@ container placements, 5.3 or later for moathut.
 
 ## Installing
 
-Fedora 44 builds are in Copr, each release built there from its tag:
+Builds for Fedora 43, 44 and 45 are in Copr, each release built there
+from its tag:
 
 ```bash
 sudo dnf copr enable benjamin-coder-smith/moatery
