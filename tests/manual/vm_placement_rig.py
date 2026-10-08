@@ -9,6 +9,7 @@ whose listeners are inside the namespace:
 
     python3 tests/manual/vm_placement_rig.py --placement netns|sidecar
                                              [--loopback-answer]
+                                             [--rules-after-boot]
                                              [--keep] [--no-build]
 
   netns     netns_rig.py's host side: the broker a user unit, the
@@ -22,7 +23,9 @@ Both answer every name with riglib.ANSWER, moathut's, which passt
 carries out of the guest and the redirect lands on the listeners by
 port. `--loopback-answer` (netns only) answers with the namespace's
 127.0.0.1 instead, which the guest takes for its own: request, unlisted
-and drop must go red.
+and drop must go red. `--rules-after-boot` loads the rules when the
+probe reports `boot` instead of before `podman start`: boot must go red,
+and the probe's rows, sent after, may stay green.
 
 The guest, the seed and the qemu image are vm_rig.py's; it needs what
 that rig needs (a KVM host, the guest qcow2), and the sidecar image
@@ -33,11 +36,15 @@ THE ROWS
   premise   qemu's container holds no CAP_NET_ADMIN; the rules are in
             the namespace; qemu holds /dev/kvm; the guest is a namespace
             of its own.
+  ready     netns only: netns_rig.py's, for the units this rig starts.
+  boot      vm_rig.py's: the guest's first traffic, chronyd's at boot,
+            was in the rules' hands.
   dns       the guest's queries, to its resolver over UDP and TCP and to
             another nameserver, are answered with the placement's
             address; an AAAA gets no records.
   egress    the guest's UDP sends return while the namespace's drop
-            counter moves; the one to 443 moves `quic`.
+            counter moves by them, from the probe's `boot`; the one to
+            443 moves `quic`.
   request   from inside the guest, with the placeholder, the provider
             answers 200 and reports the REAL key; the record says
             forwarded under the credential.
@@ -99,7 +106,7 @@ def container_pid(name):
 
 # --- netns -------------------------------------------------------------------
 
-def netns_up(secret, answer, build):
+def netns_up(secret, answer, build, rules):
     riglib.mint_ca(netns_rig.STATE)
     riglib.write_bundle(ca_cert_path(netns_rig.STATE).read_text(),
                         netns_rig.BUNDLE)
@@ -117,7 +124,9 @@ def netns_up(secret, answer, build):
     run(["podman", "init", CONTAINER])
     pid = container_pid(CONTAINER)
     say(f"  qemu container initialised (pid {pid})")
-    netns_rig.load_rules(pid, True)
+    netns_rig.pin_gateway(pid)
+    if rules:
+        netns_rig.load_rules(pid, True)
     netns_rig.start_inspector(pid, True, True)
     netns_rig.start_responder(pid, True, answer)
     run(["podman", "start", CONTAINER])
@@ -130,6 +139,7 @@ def netns_reads():
         "records": lambda: riglib.parse_records(
             netns_rig.RECORD.read_text()),
         "status": netns_rig.STATUS.read_text,
+        "resolve": netns_rig.RESOLVE_STATUS.read_text,
     }
 
 
@@ -140,7 +150,7 @@ def netns_down():
 
 # --- sidecar -----------------------------------------------------------------
 
-def sidecar_up(secret, answer, build):
+def sidecar_up(secret, answer, build, rules):
     riglib.make_stub_cert()
     riglib.write_policy(sidecar_rig.POLICY)
     sidecar_rig.create_secret(secret)
@@ -156,7 +166,8 @@ def sidecar_up(secret, answer, build):
     riglib.write_bundle(sidecar_rig.sidecar_file(
         f"{sidecar_rig.STATE_IN_SIDECAR}/ca/egress-ca.crt"),
         sidecar_rig.BUNDLE)
-    sidecar_rig.load_rules(spid, True, True, True)
+    if rules:
+        sidecar_rig.load_rules(spid, True, True, True)
     vm_rig.write_seed(sidecar_rig.BUNDLE, answer)
     uid = sidecar_rig.WORKLOAD_UID
     create_qemu(["--pod", sidecar_rig.POD],
@@ -171,6 +182,8 @@ def sidecar_reads():
         "records": lambda: riglib.parse_records(
             sidecar_rig.sidecar_file(f"{state}/egress.jsonl")),
         "status": lambda: sidecar_rig.sidecar_file(f"{state}/status.json"),
+        "resolve": lambda: sidecar_rig.sidecar_file(
+            f"{state}/resolve-status.json"),
     }
 
 
@@ -180,22 +193,37 @@ def sidecar_down():
     run(["podman", "secret", "rm", sidecar_rig.SECRET], check=False)
 
 
+def netns_rules(ns_pid):
+    netns_rig.load_rules(ns_pid, True)
+
+
+def sidecar_rules(ns_pid):
+    sidecar_rig.load_rules(ns_pid, True, True, True)
+
+
 PLACEMENTS = {
-    "netns": (netns_up, netns_reads, netns_down),
-    "sidecar": (sidecar_up, sidecar_reads, sidecar_down),
+    "netns": (netns_up, netns_reads, netns_down, netns_rules),
+    "sidecar": (sidecar_up, sidecar_reads, sidecar_down, sidecar_rules),
 }
 
 
 # --- the rows ----------------------------------------------------------------
 
-def chain_counter(ns_pid, comment):
+def chain_counter(ns_pid, comment, unit="packets"):
     out = vm_rig.in_netns(ns_pid, ["nft", "list", "chain", "netdev",
                                    "moatery", "egress"], check=False).stdout
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
             fields = line.split()
-            return int(fields[fields.index("packets") + 1])
+            return int(fields[fields.index(unit) + 1])
     return -1
+
+
+def baseline(ns_pid):
+    """vm_rig.baseline's, read from the placement's namespace."""
+    return {"dropped": chain_counter(ns_pid, "dropped"),
+            "bytes": chain_counter(ns_pid, "dropped", "bytes"),
+            "quic": chain_counter(ns_pid, "quic")}
 
 
 def records(reads):
@@ -205,7 +233,8 @@ def records(reads):
         return []
 
 
-def probe(ns_pid, qemu_pid, reports, secret, answer, reads):
+def probe(ns_pid, qemu_pid, reports, secret, answer, reads, base,
+          placement):
     say("premise")
     caps = int(next(ln.split()[1] for ln in
                     Path(f"/proc/{qemu_pid}/status").read_text()
@@ -228,6 +257,8 @@ def probe(ns_pid, qemu_pid, reports, secret, answer, reads):
     row("premise: the guest is a namespace of its own",
         bool(boot.get("netns")) and boot.get("netns") != ns,
         f"guest {boot.get('netns')} container {ns}")
+    if placement == "netns":
+        netns_rig.ready_rows()
 
     say("dns")
     dns = {r.get("label"): r for r in reports if r.get("probe") == "dns"}
@@ -236,17 +267,22 @@ def probe(ns_pid, qemu_pid, reports, secret, answer, reads):
                           ("provider", answer)):
         got = dns.get(label, {}).get("result")
         row(f"dns: {label} answers {expect}", got == expect, repr(got))
+    status = riglib.await_status(reads["resolve"], time.time())
+    vm_rig.boot_rows(reports, {} if status is None
+                     else status.get("unlisted_names", {}))
 
     say("egress")
     udp = {r.get("port"): r.get("result")
            for r in reports if r.get("probe") == "udp"}
-    dropped = chain_counter(ns_pid, "dropped")
+    dropped = chain_counter(ns_pid, "dropped") - base["dropped"]
+    grew = chain_counter(ns_pid, "dropped", "bytes") - base["bytes"]
     row("egress: the guest's UDP sends returned and the chain dropped "
         "them", udp.get(9) == "sent" and udp.get(443) == "sent"
-        and dropped >= 2, f"sends={udp}, dropped={dropped}")
-    quic = chain_counter(ns_pid, "quic")
+        and dropped >= 2 and grew >= riglib.SILENT_SIZE,
+        f"sends={udp}, dropped +{dropped} (+{grew} bytes) since boot")
+    quic = chain_counter(ns_pid, "quic") - base["quic"]
     row("egress: the guest's UDP to 443 is counted as quic",
-        quic >= 1, f"quic={quic}")
+        quic == 1, f"quic +{quic} since boot")
 
     say("request")
     prov = vm_rig.pick(reports, "http", label="provider")
@@ -315,6 +351,9 @@ def main():
                     help="leave the containers for inspection")
     ap.add_argument("--no-build", action="store_true",
                     help="reuse the last qemu image")
+    ap.add_argument("--rules-after-boot", action="store_true",
+                    help="load the rules when the guest's probe reports "
+                         "boot; boot must go red")
     ap.add_argument("--guest-timeout", type=int, default=300)
     args = ap.parse_args()
 
@@ -339,18 +378,27 @@ def main():
         sys.exit("--loopback-answer is for the netns placement")
     answer = "127.0.0.1" if args.loopback_answer else riglib.ANSWER
     secret = "sk-real-" + os.urandom(12).hex()
-    up, reads, down = PLACEMENTS[args.placement]
+    up, reads, down, rules = PLACEMENTS[args.placement]
 
     say(f"placement: {args.placement}, answer {answer}")
     try:
-        ns_pid, qemu_pid = up(secret, answer, not args.no_build)
+        ns_pid, qemu_pid = up(secret, answer, not args.no_build,
+                              not args.rules_after_boot)
         say("guest (booting)")
-        reports = vm_rig.await_reports(args.guest_timeout)
+        base = {}
+
+        def at_boot():
+            if args.rules_after_boot:
+                say("  rules loaded at the guest's boot report, as asked")
+                rules(ns_pid)
+            base.update(baseline(ns_pid))
+        reports = vm_rig.await_reports(args.guest_timeout, at_boot)
         if reports is None:
             say(f"  the guest did not finish in {args.guest_timeout}s")
             say(vm_rig.SERIAL.read_text(errors="replace")[-2000:])
             sys.exit(1)
-        probe(ns_pid, qemu_pid, reports, secret, answer, reads())
+        probe(ns_pid, qemu_pid, reports, secret, answer, reads(),
+              base or baseline(ns_pid), args.placement)
         if args.placement == "sidecar":
             sidecar_rig.label_rows(CONTAINER)
     finally:
@@ -360,9 +408,12 @@ def main():
         riglib.stop_children()
         riglib.restore_privileged_ports()
         riglib.remove_hosts_entry()
-    return riglib.report(
-        "--loopback-answer: request, unlisted and drop are expected red"
-        if args.loopback_answer else None)
+    expected = [note for flag, note in (
+        (args.loopback_answer,
+         "--loopback-answer: request, unlisted and drop are expected red"),
+        (args.rules_after_boot, "--rules-after-boot: boot is expected red"),
+    ) if flag]
+    return riglib.report("; ".join(expected) or None)
 
 
 if __name__ == "__main__":

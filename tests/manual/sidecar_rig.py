@@ -437,7 +437,8 @@ UDP_SEND = """
 import socket, sys
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 try:
-    s.sendto(b"x", (sys.argv[1], int(sys.argv[2])))
+    s.sendto(b"x" * int((sys.argv[3:] or [1])[0]),
+             (sys.argv[1], int(sys.argv[2])))
 except OSError as exc:
     print(type(exc).__name__)
 else:
@@ -451,15 +452,15 @@ FILTERED_UDP = ("192.0.2.1", 9)
 QUIC_UDP = ("192.0.2.1", 443)
 
 
-def chain_counter(pid, comment):
-    """The egress chain's counter with this comment, in packets, or -1 if
+def chain_counter(pid, comment, unit="packets"):
+    """The egress chain's counter with this comment, in `unit`, or -1 if
     the chain is absent (as under --without-rules)."""
     out = in_netns(pid, ["nft", "list", "chain", "netdev", "moatery",
                          "egress"], check=False).stdout
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
             fields = line.split()
-            return int(fields[fields.index("packets") + 1])
+            return int(fields[fields.index(unit) + 1])
     return -1
 
 
@@ -580,13 +581,17 @@ def probe(sidecar_pid, workload_pid, secret, dns):
         lambda: sidecar_file(f"{STATE_IN_SIDECAR}/resolve-status.json"))
 
     say("silent drop")
+    before = chain_counter(sidecar_pid, "dropped", "bytes")
     sent = in_netns(sidecar_pid, ["python3", "-c", UDP_SEND,
-                                  FILTERED_UDP[0], str(FILTERED_UDP[1])],
+                                  FILTERED_UDP[0], str(FILTERED_UDP[1]),
+                                  str(riglib.SILENT_SIZE)],
                     check=False).stdout.strip()
     moved = chain_counter(sidecar_pid, "dropped")
-    row("silent drop: a filtered UDP send returns rc=0, not EPERM",
-        sent == "sent" and moved >= 1,
-        f"send={sent!r}, dropped counter={moved}")
+    grew = chain_counter(sidecar_pid, "dropped", "bytes") - before
+    row("silent drop: a filtered UDP send returns rc=0, not EPERM, and "
+        "the chain dropped it",
+        sent == "sent" and before >= 0 and grew >= riglib.SILENT_SIZE,
+        f"send={sent!r}, dropped counter +{grew} bytes")
 
     say("quic")
     before = chain_counter(sidecar_pid, "quic")

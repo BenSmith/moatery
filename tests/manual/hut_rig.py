@@ -172,8 +172,10 @@ THE ROWS
             stopped, the manager's start of default.target, as at login,
             starts it with the rules, and its first request was
             inspected.
-  outside   after `podman pod restart`, outside systemd, the pod is in the
-            held namespace, with the rules, enter serves it, and neither
+  outside   after `podman pod restart`, outside systemd, the workload's
+            first request is inspected, or refused before it leaves; the
+            pod is in the held namespace, with the rules, enter serves
+            it, and neither
             a shell nor ls warns. With a table deleted from the host,
             where the user is root over the namespace, ls marks it
             unprotected and says so, and enter refuses it; stop, then
@@ -445,7 +447,8 @@ UDP_SEND = """
 import socket, sys
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 try:
-    s.sendto(b"x", (sys.argv[1], int(sys.argv[2])))
+    s.sendto(b"x" * int((sys.argv[3:] or [1])[0]),
+             (sys.argv[1], int(sys.argv[2])))
 except OSError as exc:
     print(type(exc).__name__)
 else:
@@ -727,7 +730,7 @@ def pasta_words(path):
     return None
 
 
-def counter(comment):
+def counter(comment, unit="packets"):
     pid = infra_pid()
     if pid is None:
         return -1
@@ -736,7 +739,7 @@ def counter(comment):
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
             fields = line.split()
-            return int(fields[fields.index("packets") + 1])
+            return int(fields[fields.index(unit) + 1])
     return -1
 
 
@@ -1123,10 +1126,11 @@ def held_rows():
         f"rc={flush.returncode} {flush.stderr.strip()[-160:]}; "
         f"{sorted(found) or 'no tables'}")
     if not RULES <= found:
-        say("  the rules are gone: the pod restarted to load them again")
+        say("  the rules are gone: the hut stopped and entered to load "
+            "them again")
         before = len(starts())
-        run(["systemctl", "--user", "restart", POD_SERVICE], check=False,
-            timeout=120)
+        hut("stop", HUT)
+        hut("enter", HUT, "--", "true")
         await_start(before)
     stock = "moatery-rig-stock"
     run(["podman", "pod", "rm", "-f", "-i", stock], check=False)
@@ -1303,12 +1307,14 @@ def dns_rows():
 
 def drop_rows():
     say("silent drop")
-    before = counter("dropped")
-    sent = exec_in(["python3", "-c", UDP_SEND, *FILTERED_UDP]).stdout.strip()
+    before = counter("dropped", "bytes")
+    sent = exec_in(["python3", "-c", UDP_SEND, *FILTERED_UDP,
+                    str(riglib.SILENT_SIZE)]).stdout.strip()
     moved = counter("dropped")
+    grew = counter("dropped", "bytes") - before
     row("silent: a filtered UDP send returns rc=0, and is dropped",
-        sent == "sent" and moved > before >= 0,
-        f"send={sent!r}, dropped counter {before} -> {moved}")
+        sent == "sent" and before >= 0 and grew >= riglib.SILENT_SIZE,
+        f"send={sent!r}, dropped counter +{grew} bytes")
 
     say("quic")
     before = counter("quic")
@@ -1924,8 +1930,21 @@ def outside_rows():
     pid, before, was = infra_pid(), len(starts()), held()
     run(["podman", "pod", "restart", HUT], check=False, timeout=120)
     seen = await_start(before)
-    if seen:
-        say(f"  the workload's first request after it: http={seen[1:2]}")
+    # podman starts the workload outside the units' order, so the
+    # listeners may not be back for its first request. The held
+    # namespace's rules still send it to them: served, or refused
+    # without leaving.
+    if seen is None:
+        row("outside: the first request after it was inspected or "
+            "refused, and never reached the provider", False,
+            "the workload's first act wrote no line in 30 s")
+    else:
+        nonce, code = (seen + ["", ""])[:2]
+        ok, detail = served(f"/start/{nonce}", code)
+        row("outside: the first request after it was inspected or "
+            "refused, and never reached the provider",
+            ok or (code == "000" and not stub_logged(f"/start/{nonce}")),
+            detail)
     now = infra_pid()
     found = tables(now)
     entered = hut("enter", HUT, "--", "true")

@@ -127,7 +127,7 @@ python3 tests/manual/netns_rig.py --without-rules        # must go red
 python3 tests/manual/netns_rig.py --without-netns-pid    # inspector red
 python3 tests/manual/netns_rig.py --without-dns-redirect # dns red
 python3 tests/manual/netns_rig.py --without-notify       # ready red
-python3 tests/manual/netns_rig.py --rules-after-start    # first, quic red
+python3 tests/manual/netns_rig.py --rules-after-start    # first red
 ```
 
 **Rows.** host_rig's premise, DNS, silent-drop, quic, request, broker,
@@ -218,6 +218,7 @@ python3 tests/manual/vm_rig.py                  # builds the qemu image first
 python3 tests/manual/vm_rig.py --without-rules  # must go red
 python3 tests/manual/vm_rig.py --without-dns-redirect  # dns red
 python3 tests/manual/vm_rig.py --without-neighbour-discovery  # dns red
+python3 tests/manual/vm_rig.py --rules-after-boot  # boot red
 python3 tests/manual/vm_rig.py --no-build       # reuse the last image
 python3 tests/manual/vm_rig.py --keep           # leave the container
 ```
@@ -254,6 +255,7 @@ its workload, uid 1000 with every capability dropped.
 ```bash
 python3 tests/manual/vm_placement_rig.py --placement netns
 python3 tests/manual/vm_placement_rig.py --placement sidecar  # builds
+python3 tests/manual/vm_placement_rig.py --placement netns --rules-after-boot
 python3 tests/manual/vm_placement_rig.py --placement netns \
     --loopback-answer                                       # must go red
 python3 tests/manual/vm_placement_rig.py --placement netns --no-build

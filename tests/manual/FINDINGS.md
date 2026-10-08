@@ -110,6 +110,18 @@ lets ARP out and its quic stayed green. The silent row's `dropped >= 1`
 was green in the same run on those ARP drops alone: it shows the chain
 dropped something, not that the port-9 send reached it.
 
+
+**What it found, the neighbour, 2026-10-08.** The silent row now sends
+`riglib.SILENT_SIZE` bytes and counts the chain's bytes, so ARP requests
+(42 bytes each) cannot pass it. The rig pins pasta's gateway entry
+PERMANENT before the rules load: in a bare pasta container under this
+ruleset the entry was STALE at start, PROBE on first use and FAILED by
+15 s, and from then a connect got EHOSTUNREACH without reaching the
+chain, which passt hands a guest as a refusal. That is what a workload
+in this placement sees: after its first quarter-minute a blocked
+destination is refused at once, not timed out. 31/31;
+`--rules-after-start` 30/31, only `first` (curl 7).
+
 ## sidecar_rig.py — moatery as a sidecar, with no host install
 
 **What it found, first run, 2026-09-22.** One defect in the pair, the
@@ -172,6 +184,12 @@ The name is asked of a nameserver that does not exist now, which only
 the redirect answers. `--without-rules` also turns neighbour and
 private red, which its note had left out.
 
+
+**What it found, the silent row, 2026-10-08.** It counts bytes, as
+netns_rig's does: 38/38. The pod's chain drops ARP too and its entry is
+not pinned; the counted sends come within seconds of the gateway's
+first use.
+
 ## vm_rig.py — moatery under a VM
 
 **What it found, first run, 2026-09-28.** 30/30; `--without-rules` 11/29,
@@ -196,6 +214,15 @@ defect in the pair. Four facts, all in the guest half:
   the guest's DNS reaches pasta's forwarder through passt, where the
   port-53 DNAT claims it. SELinux in Enforcing needed no extra flag for
   `--device /dev/kvm` or the bind mount.
+
+
+**What it found, boot, 2026-10-08.** The guest reports chronyd's
+sources, stops it and waits five seconds; the rig takes its counter
+baseline at that report, so egress and quic count the probe's sends
+(by bytes) and not boot's. 32/32: chronyd's one source was the answered
+169.254.1.3, reach 0, and the responder counted `2.fedora.pool.ntp.org`.
+`--rules-after-boot` 30/32, only the two boot rows: four real pool
+addresses reached, no name counted.
 
 ## vm_placement_rig.py — a VM in the netns and sidecar placements
 
@@ -235,6 +262,17 @@ Outside the rig, the same day, two more ways to hold a VM:
 proving host: host_rig 33/33, netns_rig 30/30, vm_rig 30/30, this rig
 `--placement netns` 20/20 and `--placement sidecar` 22/22, sidecar_rig
 38/38, hut_rig 130/130. No defect.
+
+
+**What it found, boot and the neighbour, 2026-10-08.** vm_rig's boot
+rows, egress by bytes since boot, netns_rig's ready rows, and
+`--rules-after-boot`. The first netns run was 23/24: drop read errno
+111, not a timeout. The guest's connect came after the five-second boot
+wait, when the gateway's entry had FAILED (netns_rig.py's neighbour
+paragraph); `--rules-after-boot` was 19/24, egress, quic and drop red
+with boot. With the entry pinned: netns 24/24, sidecar 24/24, netns
+`--rules-after-boot` 22/24, only boot (four real pool addresses, reach
+1 to 3, no name counted).
 
 ## hut_rig.py — a moathut hut, through its command line
 
@@ -499,3 +537,9 @@ rig nor the `log` it spawned had Python's handler (`signal.getsignal`
 read 1 under that launch, `default_int_handler` in the foreground). The
 rig now sets a SIGINT handler at its start, which every child gets back
 as the default; the second run, launched the same way, read `status 0`.
+
+**What it found, the window rows, 2026-10-08.** The silent row counts
+bytes; recovery after a flush restarts the netns unit through `moathut
+stop` and `enter` instead of the pod's; a new outside row holds the
+first request after `podman pod restart` to have been inspected or
+refused and never to have reached the provider. 132/132.

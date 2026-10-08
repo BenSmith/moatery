@@ -69,10 +69,7 @@ quic, request, another uid and unlisted must go red.
 so the queries go to pasta's forwarder and the egress chain drops them:
 first, dns, request and unlisted must go red. `--rules-after-start`
 loads the rules two seconds after `podman start` instead of before it:
-first and quic must go red. The first request left the gateway's
-neighbour entry in DELAY, its probes are then dropped with the rest, and
-by the quic row the entry has FAILED: the send waits on it and never
-reaches the chain. The other rows probe once the rules are in, and may
+first must go red. The other rows probe once the rules are in, and may
 stay green.
 `--without-netns-pid` starts the inspector without it, so its lookups
 would read the host's table: it must refuse to start, and first,
@@ -229,6 +226,14 @@ def await_up():
             f" (pid {unit_pid(kind)})")
 
 
+def ready_rows():
+    say("ready")
+    for unit, seen in READY.items():
+        row(f"ready: the {unit}'s ports were listening in the container "
+            "when its unit was reported started", seen and all(seen),
+            f"listening: {seen}")
+
+
 def unit_active(kind="inspect"):
     return run(["systemctl", "--user", "is-active",
                 f"{UNIT}-{kind}.service"], check=False).stdout.strip() \
@@ -276,12 +281,30 @@ def create_container():
     dns = next((ln.split()[1] for ln in Path(resolv).read_text().splitlines()
                 if ln.startswith("nameserver")), "169.254.1.1")
     say(f"  container created and initialised (pid {pid}, resolver {dns})")
+    pin_gateway(pid)
     return pid, dns
 
 
 def in_netns(pid, argv, **kw):
     return run(["podman", "unshare", "nsenter", "-t", str(pid), "-n",
                 *argv], **kw)
+
+
+def pin_gateway(pid):
+    """The chain drops ARP, so the gateway's entry, pasta's seed, would
+    go FAILED on first use, and a send would then wait on it without
+    reaching the chain. Pinned, every dropped packet is counted."""
+    route = json.loads(in_netns(pid, ["ip", "-j", "route", "show",
+                                      "default"]).stdout)[0]
+    gw, dev = route["gateway"], route["dev"]
+    mac = next((n["lladdr"] for n in json.loads(
+        in_netns(pid, ["ip", "-j", "neigh", "show", gw]).stdout)
+        if "lladdr" in n), None)
+    if mac is None:
+        raise SystemExit(f"no neighbour entry for {gw} to pin")
+    in_netns(pid, ["ip", "neigh", "replace", gw, "lladdr", mac,
+                   "dev", dev, "nud", "permanent"])
+    say(f"  gateway {gw} pinned at {mac}")
 
 
 def default_route_device():
@@ -362,7 +385,8 @@ UDP_SEND = """
 import socket, sys
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 try:
-    s.sendto(b"x", (sys.argv[1], int(sys.argv[2])))
+    s.sendto(b"x" * int((sys.argv[3:] or [1])[0]),
+             (sys.argv[1], int(sys.argv[2])))
 except OSError as exc:
     print(type(exc).__name__)
 else:
@@ -378,13 +402,13 @@ OTHER_UID = 65534
 QUIC_UDP = ("192.0.2.1", 443)
 
 
-def chain_counter(pid, comment):
+def chain_counter(pid, comment, unit="packets"):
     out = in_netns(pid, ["nft", "list", "chain", "netdev", "moatery",
                          "egress"], check=False).stdout
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
             fields = line.split()
-            return int(fields[fields.index("packets") + 1])
+            return int(fields[fields.index(unit) + 1])
     return -1
 
 
@@ -442,11 +466,7 @@ def probe(pid, dns, secret):
         f"inodes {inodes}; in the container's {sorted(inside)}; "
         f"in the host's {sorted(outside)}")
 
-    say("ready")
-    for unit, seen in READY.items():
-        row(f"ready: the {unit}'s ports were listening in the container "
-            "when its unit was reported started", seen and all(seen),
-            f"listening: {seen}")
+    ready_rows()
 
     say("host")
     for port in (INSPECT_TLS, INSPECT_CLEARTEXT):
@@ -468,12 +488,16 @@ def probe(pid, dns, secret):
         dns, riglib.ANSWER, RESOLVE_STATUS.read_text)
 
     say("silent drop")
+    before = chain_counter(pid, "dropped", "bytes")
     sent = in_netns(pid, ["python3", "-c", UDP_SEND, FILTERED_UDP[0],
-                          str(FILTERED_UDP[1])], check=False).stdout.strip()
+                          str(FILTERED_UDP[1]), str(riglib.SILENT_SIZE)],
+                    check=False).stdout.strip()
     moved = chain_counter(pid, "dropped")
-    row("silent drop: a filtered UDP send returns rc=0, not EPERM",
-        sent == "sent" and moved >= 1,
-        f"send={sent!r}, dropped counter={moved}")
+    grew = chain_counter(pid, "dropped", "bytes") - before
+    row("silent drop: a filtered UDP send returns rc=0, not EPERM, and "
+        "the chain dropped it",
+        sent == "sent" and before >= 0 and grew >= riglib.SILENT_SIZE,
+        f"send={sent!r}, dropped counter +{grew} bytes")
 
     say("quic")
     before = chain_counter(pid, "quic")
@@ -605,7 +629,7 @@ def main():
                          "must go red")
     ap.add_argument("--rules-after-start", action="store_true",
                     help="load the rules two seconds after podman start; "
-                         "first and quic must go red")
+                         "first, silent and quic must go red")
     args = ap.parse_args()
 
     riglib.preflight(
@@ -663,8 +687,8 @@ def main():
         (args.without_netns_pid, "--without-netns-pid: first, inspector, "
                                  "request, unlisted and counters are "
                                  "expected red"),
-        (args.rules_after_start, "--rules-after-start: first and quic "
-                                 "are expected red"),
+        (args.rules_after_start, "--rules-after-start: first is "
+                                 "expected red"),
         (args.without_notify, "--without-notify: ready is expected red"),
     ) if flag]
     rc = riglib.report("; ".join(expected) or None)

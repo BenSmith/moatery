@@ -12,6 +12,7 @@ an ordinary user, from a checkout:
     python3 tests/manual/vm_rig.py [--keep] [--no-build]
                                        [--image PATH] [--without-rules]
                                        [--without-dns-redirect]
+                                       [--rules-after-boot]
                                        [--without-neighbour-discovery]
 
 Nothing here needs root except the two host facts every placement needs,
@@ -27,11 +28,16 @@ THE ROWS
             qemu holds /dev/kvm; the guest is a namespace inside the
             container's, and the guest's own nft tables hold none of ours.
   egress    the guest's UDP sends return while the container chain's
-            `dropped` counter moves: the guest's egress IS the container's.
+            `dropped` counter moves by them, counted from the probe's
+            `boot`: the guest's egress IS the container's.
   dns       the guest's raw queries, over UDP and TCP and to another
             nameserver, are answered by moat-resolve with the map;
             an AAAA gets no records; the responder's status names the
             guest's names and not the provider's.
+  boot      the guest's first traffic, chronyd's pool lookup and polls
+            at boot, was in the rules' hands: its sources were never
+            reached, and the responder counted the pool's name. The
+            probe then stops chronyd, so the counters after are its own.
   silent    a filtered UDP send returns rc=0 while the drop counter
             moves -- the netdev egress hook, not an output filter.
   quic      the guest's UDP to 443 moves the `quic` counter, which the
@@ -54,11 +60,13 @@ THE ROWS
   counters  every connection's caller was named; none was foreign.
 
 `--without-rules` skips loading the netns rules: premise, egress, dns,
-silent, quic, request, neighbour, broker, unlisted and counters must go
+boot, silent, quic, request, neighbour, broker, unlisted and counters must go
 red. `--without-dns-redirect` leaves port 53 out of the redirect: dns,
 request, unlisted and counters must go red. `--without-neighbour-discovery`
 loads the egress chain without its ARP lines: dns, request, unlisted and
-counters must go red.
+counters must go red. `--rules-after-boot` loads the rules when the
+probe reports `boot` instead of before `podman start`: boot must go red,
+and the probe's rows, sent after, may stay green.
 """
 
 import argparse
@@ -415,9 +423,11 @@ def create_container(image):
 
 # --- reading what the guest and the inspector wrote --------------------------
 
-def await_reports(timeout):
+def await_reports(timeout, at_boot=None):
     """The guest's MOATERY-RIG lines, once its probe says done, or the
-    reports so far if the container stops. None on timeout."""
+    reports so far if the container stops. None on timeout. `at_boot()`
+    runs once, when the probe reports `boot`: the guest then waits
+    BASELINE_WAIT before it sends anything else."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         text = PROBE_LOG.read_text(errors="replace") \
@@ -429,6 +439,9 @@ def await_reports(timeout):
                     reports.append(json.loads(line[len("MOATERY-RIG "):]))
                 except ValueError:
                     pass
+        if at_boot and any(r.get("probe") == "boot" for r in reports):
+            at_boot()
+            at_boot = None
         if any(r.get("probe") == "done" for r in reports):
             return reports
         if "MOATERY-RIG-EXIT=" in text:
@@ -475,21 +488,46 @@ else:
 """
 
 
-def chain_counter(pid, comment):
-    """The egress chain's counter with this comment, in packets, or -1 if
+def chain_counter(pid, comment, unit="packets"):
+    """The egress chain's counter with this comment, in `unit`, or -1 if
     the chain is absent (as under --without-rules)."""
     out = in_netns(pid, ["nft", "list", "chain", "netdev", "moatery",
                          "egress"], check=False).stdout
     for line in out.splitlines():
         if "packets" in line and f'comment "{comment}"' in line:
             fields = line.split()
-            return int(fields[fields.index("packets") + 1])
+            return int(fields[fields.index(unit) + 1])
     return -1
+
+
+def baseline(pid):
+    """The counters as the probe reports `boot`, which the rows measure
+    its own sends from: chronyd's drops before it are the boot's."""
+    return {"dropped": chain_counter(pid, "dropped"),
+            "bytes": chain_counter(pid, "dropped", "bytes"),
+            "quic": chain_counter(pid, "quic")}
 
 
 # --- the rows ----------------------------------------------------------------
 
-def probe(pid, reports, secret, broker_before, neigh_empty):
+def boot_rows(reports, counted):
+    """The guest's first traffic is its boot's: chronyd looks up its
+    pool and polls what the answer names, long before the probe runs, so
+    rules that armed after `podman start` would have let it out. Its
+    sources never reached, and the pool's name among the responder's
+    `counted` names, are the observation that they were in first."""
+    say("boot")
+    sources = pick(reports, "chrony").get("sources")
+    reached = [s for s in sources or [] if len(s) < 6 or s[5] != "0"]
+    row("boot: chronyd's sources, from the guest's first lookup, were "
+        "never reached", bool(sources) and not reached,
+        f"sources={sources}")
+    pool = sorted(n for n in counted if n.endswith("pool.ntp.org"))
+    row("boot: the responder counted chronyd's pool name", bool(pool),
+        f"pool names counted: {pool or 'none'}")
+
+
+def probe(pid, reports, secret, broker_before, neigh_empty, base):
     say(f"premise (programs: {LIBEXEC})")
     caps = int(next(ln.split()[1] for ln in
                     Path(f"/proc/{pid}/status").read_text().splitlines()
@@ -540,27 +578,31 @@ def probe(pid, reports, secret, broker_before, neigh_empty):
     asked = time.time()
     say("dns counters (waiting for the responder's next status write)")
     status = riglib.await_status(RESOLVE_STATUS.read_text, asked)
+    counted = {} if status is None else status.get("unlisted_names", {})
     if status is None:
         row("dns: the responder wrote its status", False,
             "not updated within 40 s")
     else:
-        counted = status.get("unlisted_names", {})
         row("dns: the responder counted the guest's names, not the "
             "provider's",
             set(names) <= set(counted) and PROVIDER not in counted,
             f"unlisted_names={counted}")
+    boot_rows(reports, counted)
 
     say("guest egress")
     udp = {r.get("port"): r.get("result")
            for r in reports if r.get("probe") == "udp"}
-    dropped = chain_counter(pid, "dropped")
-    quic = chain_counter(pid, "quic")
+    dropped = chain_counter(pid, "dropped") - base["dropped"]
+    grew = chain_counter(pid, "dropped", "bytes") - base["bytes"]
+    quic = chain_counter(pid, "quic") - base["quic"]
     row("egress: the guest's UDP sends returned and the container's chain "
         "dropped them",
-        udp.get(9) == "sent" and udp.get(443) == "sent" and dropped >= 2,
-        f"sends={udp}, dropped counter={dropped}")
+        udp.get(9) == "sent" and udp.get(443) == "sent" and dropped >= 2
+        and grew >= riglib.SILENT_SIZE,
+        f"sends={udp}, dropped counter +{dropped} (+{grew} bytes) since "
+        "boot")
     row("quic: the guest's UDP to 443 is counted as quic",
-        quic == 1, f"quic counter={quic}")
+        quic == 1, f"quic counter +{quic} since boot")
 
     say("request")
     prov = pick(reports, "http", label="provider")
@@ -618,7 +660,7 @@ def probe(pid, reports, secret, broker_before, neigh_empty):
         tcp_guest.get("result") in ("TimeoutError", "timeout")
         and dropped >= 3,
         f"guest tcp to map:{DROP_PORT}={tcp_guest.get('result')!r}, "
-        f"dropped counter={dropped}")
+        f"dropped counter +{dropped} since boot")
 
     say("unlisted")
     unl = pick(reports, "http", label="unlisted")
@@ -675,8 +717,8 @@ def main():
                     help="seconds to wait for the guest's probes")
     ap.add_argument("--without-rules", action="store_true",
                     help="skip the netns rules; premise, egress, dns, "
-                         "silent, quic, request, broker, unlisted and "
-                         "counters must go red")
+                         "boot, silent, quic, request, broker, unlisted "
+                         "and counters must go red")
     ap.add_argument("--without-dns-redirect", action="store_true",
                     help="leave port 53 out of the redirect; dns, request, "
                          "unlisted and counters must go red")
@@ -684,6 +726,9 @@ def main():
                     help="leave ARP and neighbour discovery out of the "
                          "egress chain; dns, request, unlisted and counters "
                          "must go red")
+    ap.add_argument("--rules-after-boot", action="store_true",
+                    help="load the rules when the guest's probe reports "
+                         "boot, not before podman start; boot must go red")
     args = ap.parse_args()
 
     if platform.machine() != "x86_64":
@@ -734,16 +779,25 @@ def main():
         start_units()
         say("container")
         pid = create_container(args.image)
-        if args.without_rules:
-            say("  rules NOT loaded, as asked")
-        else:
+        def rules():
             load_rules(pid, not args.without_neighbour_discovery,
                        not args.without_dns_redirect)
+        if args.without_rules:
+            say("  rules NOT loaded, as asked")
+        elif not args.rules_after_boot:
+            rules()
         neigh_empty = flush_neighbours(pid)
         broker_before = journal("broker").count(" ok ")
         run(["podman", "start", CONTAINER])
         say("guest (booting)")
-        reports = await_reports(args.guest_timeout)
+        base = {}
+
+        def at_boot():
+            if args.rules_after_boot and not args.without_rules:
+                say("  rules loaded at the guest's boot report, as asked")
+                rules()
+            base.update(baseline(pid))
+        reports = await_reports(args.guest_timeout, at_boot)
         if reports is None:
             say(f"  the guest did not finish in {args.guest_timeout}s; "
                 "serial tail:")
@@ -752,14 +806,17 @@ def main():
             say(PROBE_LOG.read_text(errors="replace")[-2000:]
                 if PROBE_LOG.exists() else "  (no probe output)")
             sys.exit(1)
-        probe(pid, reports, secret, broker_before, neigh_empty)
+        probe(pid, reports, secret, broker_before, neigh_empty,
+              base or baseline(pid))
     finally:
         teardown(args.keep)
 
     expected = [note for flag, note in (
         (args.without_rules, "--without-rules: premise, egress, dns, "
-                             "silent, quic, request, broker, unlisted and "
-                             "counters are expected red"),
+                             "boot, silent, quic, request, broker, unlisted "
+                             "and counters are expected red"),
+        (args.rules_after_boot, "--rules-after-boot: boot is expected "
+                                "red"),
         (args.without_dns_redirect,
          "--without-dns-redirect: dns, request, unlisted and counters are "
          "expected red"),

@@ -36,6 +36,12 @@ CA = "/etc/moatery-rig/bundle.pem"
 PLACEHOLDER = "sk-placeholder"
 DROP_PORT = 8081
 TEST_NET = "192.0.2.1"
+# The port-9 send's payload, riglib.SILENT_SIZE: bytes no stray boot
+# packet adds to the `dropped` counter.
+UDP_SIZE = 1000
+# How long the probe waits after `boot`, for the host to read the
+# counters it measures the probe's own sends from.
+BASELINE_WAIT = 5
 TRUST_VARS = ("SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
               "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO", "PIP_CERT",
               "EXAMPLE_API_KEY")
@@ -206,9 +212,27 @@ def tcp_probe():
          seconds=round(time.time() - started, 2))
 
 
+def chrony():
+    """chronyd's sources, from its lookup and polls since boot: the
+    guest's first traffic, sent while nothing of the rig's ran. Then
+    chronyd stops, so the drops after `boot` are the probe's own."""
+    try:
+        out = subprocess.run(["chronyc", "-n", "-c", "sources"],
+                             capture_output=True, text=True,
+                             timeout=10).stdout
+        subprocess.run(["systemctl", "stop", "chronyd"],
+                       capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        emit("chrony", sources=None, error=type(exc).__name__)
+        return
+    emit("chrony", sources=[ln.split(",") for ln in out.splitlines()])
+
+
 def main():
+    chrony()
     emit("boot", netns=os.readlink("/proc/self/ns/net"),
          python=sys.version.split()[0])
+    time.sleep(BASELINE_WAIT)
     emit("resolver", server=resolver())
     emit("env", vars={k: v for k, v in os.environ.items()
                       if k in TRUST_VARS})
@@ -228,7 +252,8 @@ def main():
     for port in (9, 443):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            s.sendto(b"x", (TEST_NET, port))
+            s.sendto(b"x" * (UDP_SIZE if port == 9 else 1),
+                     (TEST_NET, port))
             emit("udp", port=port, result="sent")
         except OSError as exc:
             emit("udp", port=port, result=type(exc).__name__)

@@ -312,6 +312,11 @@ def await_status(read, after):
 
 # --- rows every placement shares ---------------------------------------------
 
+# The silent rows' payload. Where the egress chain drops ARP too, a send
+# held on an unresolved gateway moves `dropped` only by ARP requests of
+# 42 bytes; the send itself moves its bytes by this many.
+SILENT_SIZE = 1000
+
 FIRST = "/tmp/first"
 # The workload's command where the controls go in between `podman init`
 # and `podman start`: its first act is the provider request, so its first
