@@ -17,13 +17,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: unit-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   unit:
-    if: ${{ github.server_url == 'https://github.com' }}
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-24.04
     container: registry.fedoraproject.org/fedora:44
     timeout-minutes: 20
@@ -34,7 +37,9 @@ jobs:
           openssl util-linux
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: A user to run as
         run: |
@@ -59,7 +64,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
