@@ -1370,6 +1370,35 @@ class TestCommands(unittest.TestCase):
         for name in (".bashrc", ".bash_profile"):
             self.assertEqual((kept / name).read_text(), "mine\n")
 
+    def test_a_link_a_kept_home_has_in_a_shell_files_place_is_kept(self):
+        """The home outlives its hut, and was that hut's workload to
+        write, as the user: a link it left is not followed out of the
+        home, whether or not its target exists."""
+        kept = Hut("agent", self.dirs).home
+        kept.mkdir(parents=True)
+        absent = self.home / ".bashrc.d" / "planted"
+        absent.parent.mkdir()
+        present = self.home / ".profile"
+        present.write_text("the user's\n")
+        (kept / ".bashrc").symlink_to(absent)
+        (kept / ".bash_profile").symlink_to(present)
+        self._create()
+        self.assertFalse(os.path.lexists(absent))
+        self.assertEqual(present.read_text(), "the user's\n")
+        self.assertEqual(os.readlink(kept / ".bashrc"), str(absent))
+
+    def test_a_mount_point_through_a_link_in_a_kept_home_is_refused(self):
+        kept = Hut("agent", self.dirs).home
+        kept.mkdir(parents=True)
+        outside = self.home / "outside"
+        outside.mkdir()
+        (kept / "projects").symlink_to(outside)
+        with self.assertRaisesRegex(commands.HutError,
+                                    f"{kept}/projects is a link"):
+            self._create(mounts=["projects/p"])
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertTrue((kept / "projects").is_symlink())
+
     def test_a_hut_from_before_the_prompt_gains_it_when_written_again(self):
         """Its workload's unit is written again, so the file it mounts
         is."""

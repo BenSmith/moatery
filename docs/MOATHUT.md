@@ -89,7 +89,9 @@ namespace without the rules, with a warning on stderr.
 
 **rm** stops the hut and removes its units and what podman made from
 them; its home and its record stay unless `--home`. With `--home`, a
-hut already removed has the home it left removed. It removes the hut's
+hut already removed has the home it left removed. A kept home was its
+workload's to write, so `create` makes nothing in it through a link: a
+mount point under a link there is refused. It removes the hut's
 Ptyxis profile too.
 
 **ptyxis** writes a Ptyxis profile, `moathut NAME`, whose tabs run
@@ -342,7 +344,8 @@ units differ from the example's in these ways:
   `~/.local/bin` and `~/bin` on `PATH`, and reads the prompt, which an
   image whose `bashrc` does not read `/etc/profile.d` needs; `enter`'s
   shell is a login shell, which reads only the first. Files the home has
-  are kept. The prompt is written with the units. A mount may not cover
+  are kept, and so is a link in their place, which is not followed. The
+  prompt is written with the units. A mount may not cover
   it.
 - The prompt also warns, in an interactive shell only, when the shell is
   in another namespace than the rules were loaded into, as one in a

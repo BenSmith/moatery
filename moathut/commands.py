@@ -321,12 +321,10 @@ def _lay_out(hut, settings, broker, policy_path, host_bundle, environ,
     for mount in settings.mounts:
         target = PurePosixPath(mount.target)
         if target.is_relative_to(settings.home_path):
-            (hut.home / target.relative_to(settings.home_path)).mkdir(
-                parents=True, exist_ok=True)
+            _home_dirs(hut.home, target.relative_to(settings.home_path))
     for name, text in ((".bashrc", _BASHRC),
                        (".bash_profile", _BASH_PROFILE)):
-        if not (hut.home / name).exists():
-            (hut.home / name).write_text(text)
+        _home_file(hut.home / name, text)
     hut.policy.write_bytes(Path(policy_path).read_bytes())
     hut.policy.chmod(0o600)
     minted = runner([*interpreter(settings),
@@ -348,6 +346,30 @@ def _lay_out(hut, settings, broker, policy_path, host_bundle, environ,
             raise HutError(f"quadlet did not generate {service} "
                            "(/usr/libexec/podman/quadlet -dryrun -user "
                            "says why)")
+
+
+# A home kept from an earlier hut was that hut's workload to write, and
+# what is written into it here is written as the user: a link the
+# workload left is refused, never followed out of the home.
+
+def _home_dirs(home, relative):
+    path = home
+    for part in relative.parts:
+        path = path / part
+        if path.is_symlink():
+            raise HutError(f"{path} is a link, and a mount point in the "
+                           "hut's home is not made through one")
+        path.mkdir(exist_ok=True)
+
+
+def _home_file(path, text):
+    """`text` at `path` unless something is there, a link included."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    except FileExistsError:
+        return
+    with os.fdopen(fd, "w") as handle:
+        handle.write(text)
 
 
 def _units_to_stop(hut):
