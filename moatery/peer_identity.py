@@ -15,13 +15,61 @@ import socket
 import struct
 from pathlib import Path
 
-PROC_NET_TCP = ("/proc/net/tcp", "/proc/net/tcp6")
+TABLE_NAMES = ("net/tcp", "net/tcp6")
+
+
+class NoSocketTable(Exception):
+    """None of a namespace's socket tables could be read."""
+
+
+class SocketTables:
+    """The TCP socket tables of one network namespace, read from a /proc
+    directory: this process's own, or another's.
+
+    Another process's directory is held open from the start, so once that
+    process has gone its tables cannot be read at all, rather than being
+    those of whichever process is later given its pid.
+    """
+
+    def __init__(self, directory=None):
+        self.directory = directory
+        self._dir_fd = None
+        if directory is None:
+            return
+        try:
+            self._dir_fd = os.open(
+                directory, os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        except OSError:
+            # Read as no table at all.
+            pass
+
+    def _open(self, name):
+        if self.directory is None:
+            return open(f"/proc/self/{name}")
+        if self._dir_fd is None:
+            raise FileNotFoundError(f"{self.directory}/{name}")
+        return open(name,
+                    opener=lambda path, flags: os.open(path, flags,
+                                                       dir_fd=self._dir_fd))
+
+    def read(self):
+        """The data lines of each table that can be read."""
+        for name in TABLE_NAMES:
+            try:
+                with self._open(name) as fh:
+                    lines = fh.readlines()[1:]
+            except OSError:
+                continue
+            yield lines
+
+
+OWN_TABLES = SocketTables()
 
 
 def netns_tables(pid):
     """The socket tables of `pid`'s network namespace, for listeners bound
     there by another process."""
-    return (f"/proc/{pid}/net/tcp", f"/proc/{pid}/net/tcp6")
+    return SocketTables(f"/proc/{pid}")
 
 # What a connection was aimed at before the host translated it: one option
 # per family, not interchangeable.
@@ -122,35 +170,29 @@ def peer_orphaned_from(rows, locals_, peer):
     return bool(found) and all(inode == 0 for _uid, inode in found)
 
 
-def _proc_tables(paths=PROC_NET_TCP):
-    """The data lines of each /proc/net table that can be read."""
-    for path in paths:
-        try:
-            with open(path) as fh:
-                yield fh.readlines()[1:]
-        except OSError:
-            continue
-
-
 def peer_uid(locals_, peer):
     """uid owning the far end of an accepted connection, or None."""
-    for rows in _proc_tables():
+    for rows in OWN_TABLES.read():
         uid = peer_uid_from(rows, locals_, peer)
         if uid is not None:
             return uid
     return None
 
 
-def peer_caller(locals_, peer, tables=PROC_NET_TCP):
+def peer_caller(locals_, peer, tables=OWN_TABLES):
     """(uid or None, orphaned) for the far end of an accepted connection,
-    from one read of each of `tables`.
+    from one read of each of `tables`. Raises NoSocketTable if none can be
+    read: a caller found in no table is then no sign of churn.
     """
-    orphaned = False
-    for rows in _proc_tables(tables):
+    orphaned = read = False
+    for rows in tables.read():
+        read = True
         uid = peer_uid_from(rows, locals_, peer)
         if uid is not None:
             return uid, False
         orphaned = orphaned or peer_orphaned_from(rows, locals_, peer)
+    if not read:
+        raise NoSocketTable(tables.directory or "/proc/self")
     return None, orphaned
 
 
@@ -167,7 +209,7 @@ def peer_closed(sock):
     return info[0] != TCP_ESTABLISHED
 
 
-def listed_in(sock, tables=PROC_NET_TCP):
+def listed_in(sock, tables=OWN_TABLES):
     """Whether `sock` has a row in one of `tables`, by inode; None if none
     of them can be read.
 
@@ -177,7 +219,7 @@ def listed_in(sock, tables=PROC_NET_TCP):
     """
     inode = str(os.fstat(sock.fileno()).st_ino)
     read = False
-    for rows in _proc_tables(tables):
+    for rows in tables.read():
         read = True
         for line in rows:
             f = line.split()

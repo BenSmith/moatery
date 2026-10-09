@@ -464,7 +464,12 @@ namespace.
 
 **The caller check.** The caller's socket is in the container's table,
 not the host's. `--netns-pid PID` points the inspector's lookups at
-`/proc/PID/net/tcp` and `tcp6`. The uid there is the host's view of it:
+`/proc/PID/net/tcp` and `tcp6`, through `/proc/PID` held open from
+start: once PID exits they cannot be read, rather than being the tables
+of whichever process gets its pid next, and every connection is refused
+until the inspector restarts. A table that is read and has no row for a
+caller is the socket table changing under the read, so that caller is
+admitted unnamed and counted. The uid there is the host's view of it:
 container root is the user, and every other uid inside is one of the
 user's subuids. With `--netns-pid` the inspector serves all of them,
 every uid PID's user namespace maps, read from its `uid_map` at start

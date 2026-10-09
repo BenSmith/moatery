@@ -96,7 +96,7 @@ from riglib import (  # noqa
 )
 from moatery.egress_ca import ca_cert_path  # noqa
 from moatery.egress_record import DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED  # noqa
-from moatery.peer_identity import PROC_NET_TCP, netns_tables  # noqa
+from moatery.peer_identity import OWN_TABLES, netns_tables  # noqa
 
 CONTAINER = "moatery-rig-netns"
 UNIT = "moatery-rig-netns"
@@ -427,11 +427,7 @@ def listener_inodes(ipid):
 
 def rows_for(inodes, tables):
     found = set()
-    for path in tables:
-        try:
-            lines = Path(path).read_text().splitlines()[1:]
-        except OSError:
-            continue
+    for lines in tables.read():
         for line in lines:
             f = line.split()
             if len(f) >= 10 and f[9] in inodes:
@@ -459,7 +455,7 @@ def probe(pid, dns, secret):
         "not running: " + journal("inspect").strip()[-400:])
     inodes = listener_inodes(ipid) if up else []
     inside = rows_for(inodes, netns_tables(pid))
-    outside = rows_for(inodes, PROC_NET_TCP)
+    outside = rows_for(inodes, OWN_TABLES)
     row("inspector: both listeners are in the container's table, "
         "neither in the host's",
         len(inodes) == 2 and inside == set(inodes) and not outside,

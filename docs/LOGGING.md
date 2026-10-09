@@ -73,6 +73,7 @@ Every reason, as the journal, the record and `drop_reasons` spell it:
 | `connection ceiling reached`, `mint rationed`, `could not mint a leaf` | the inspector's own limits |
 | `caller is not this workload` | a connection from another uid (suspect) |
 | `caller closed before it was identified` | the caller left before its uid was read |
+| `no socket table to identify the caller in` | the `--netns-pid` process has exited; every connection is refused until the inspector restarts |
 
 **Suspect** marks what no client following its own configuration
 produces: the journal line carries `suspect=yes`, the status file sums

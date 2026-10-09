@@ -31,8 +31,8 @@ from .egress_ca import ca_cert_path, ca_key_path
 from .http_framing import RequestUnreadable
 from .egress_mint import Minter
 from .egress_record import (
-    DROP_CALLER_CLOSED, DROP_CEILING, DROP_FOREIGN_CALLER, LOG_ID_FIELD, Where,
-    format_endpoint,
+    DROP_CALLER_CLOSED, DROP_CEILING, DROP_FOREIGN_CALLER,
+    DROP_NO_SOCKET_TABLE, LOG_ID_FIELD, Where, format_endpoint,
 )
 from . import egress_relay
 from .egress_status import write_status
@@ -41,7 +41,8 @@ from . import inspect_tls
 from .inspect_policy import load_policy
 from .inspect_scope import Inspection, quoted
 from .peer_identity import (
-    PROC_NET_TCP, in_ranges, local_endpoints, peer_caller, peer_closed,
+    OWN_TABLES, NoSocketTable, in_ranges, local_endpoints, peer_caller,
+    peer_closed,
 )
 
 
@@ -114,7 +115,7 @@ class Listener:
     def __init__(self, sockets, out=None, limit=MAX_CONNECTIONS, policy=None,
                  status_path=None, minter=None, record_path=None,
                  broker_endpoint=None, caller_uid=None, caller_ranges=None,
-                 peer_tables=PROC_NET_TCP, policy_path=None):
+                 peer_tables=OWN_TABLES, policy_path=None):
         self._sockets = list(sockets)
         # Where a reload reads the policy from; None: it cannot be.
         self._policy_path = policy_path
@@ -132,7 +133,7 @@ class Listener:
                                else tuple(caller_ranges))
         # The socket tables callers are looked up in: this process's own
         # namespace's, or the one the listeners were bound in.
-        self._peer_tables = tuple(peer_tables)
+        self._peer_tables = peer_tables
         # None: count, never write.
         self._status_path = status_path
         self.inspection = Inspection(
@@ -303,6 +304,12 @@ class Listener:
                                            self._peer_tables)
             if caller is None and not orphaned:
                 orphaned = peer_closed(conn)
+        except NoSocketTable:
+            # Read through a process that has gone: no caller can be named
+            # again, and admitting every one unnamed would serve anyone.
+            self.inspection.drop(where, DROP_NO_SOCKET_TABLE, verb="rejected")
+            conn.close()
+            return False
         except Exception:
             # A second layer that throws must not take the connection path
             # down with it.

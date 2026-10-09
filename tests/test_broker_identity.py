@@ -10,6 +10,7 @@ import ipaddress
 import os
 import socket
 import struct
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -333,16 +334,53 @@ class TestTheTablesAreAParameter(unittest.TestCase):
         self.assertIs(peer_identity.listed_in(
             srv, peer_identity.netns_tables(os.getpid())), True)
 
+    def _proc_dir(self, path, rows=""):
+        os.makedirs(os.path.join(path, "net"))
+        with open(os.path.join(path, "net", "tcp"), "w") as fh:
+            fh.write("  sl  local_address rem_address ...\n" + rows)
+
     def test_a_table_without_its_row_does_not_list_it(self):
         srv = self._listener()
-        empty = self.enterContext(tempfile.NamedTemporaryFile("w"))
-        empty.write("  sl  local_address rem_address ...\n")
-        empty.flush()
-        self.assertIs(peer_identity.listed_in(srv, (empty.name,)), False)
+        d = self.enterContext(tempfile.TemporaryDirectory())
+        self._proc_dir(os.path.join(d, "1"))
+        tables = peer_identity.SocketTables(os.path.join(d, "1"))
+        self.assertIs(peer_identity.listed_in(srv, tables), False)
 
     def test_no_readable_table_is_none_not_false(self):
         srv = self._listener()
-        self.assertIsNone(peer_identity.listed_in(srv, ("/nonexistent",)))
+        self.assertIsNone(peer_identity.listed_in(
+            srv, peer_identity.SocketTables("/nonexistent")))
+
+    def test_the_tables_are_read_through_the_directory_held_at_start(self):
+        """A pid reused after its process exits names another process's
+        /proc directory, and a lookup that opened the path again would
+        read whichever namespace that one is in. Here the path is taken
+        over by a directory whose table lists the listener: the held one
+        still does not."""
+        srv = self._listener()
+        inode = os.fstat(srv.fileno()).st_ino
+        d = self.enterContext(tempfile.TemporaryDirectory())
+        path = os.path.join(d, "4242")
+        self._proc_dir(path)
+        tables = peer_identity.SocketTables(path)
+        os.rename(path, os.path.join(d, "gone"))
+        self._proc_dir(path, f"   0: 0100007F:1F90 00000000:0000 0A "
+                             f"00000000:00000000 00:00000000 00000000 "
+                             f"1000 0 {inode}\n")
+        self.assertIs(peer_identity.listed_in(
+            srv, peer_identity.SocketTables(path)), True)
+        self.assertIs(peer_identity.listed_in(srv, tables), False)
+
+    def test_a_process_that_has_exited_leaves_no_table(self):
+        srv = self._listener()
+        holder = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        tables = peer_identity.netns_tables(holder.pid)
+        self.assertIs(peer_identity.listed_in(srv, tables), True)
+        holder.kill()
+        holder.wait()
+        self.assertIsNone(peer_identity.listed_in(srv, tables))
 
     def test_a_caller_is_looked_up_only_in_the_tables_given(self):
         srv = self._listener()
@@ -353,9 +391,9 @@ class TestTheTablesAreAParameter(unittest.TestCase):
         endpoints = peer_identity.local_endpoints(conn)
         self.assertEqual(peer_identity.peer_caller(endpoints, peer[:2]),
                          (os.getuid(), False))
-        self.assertEqual(
-            peer_identity.peer_caller(endpoints, peer[:2], ("/nonexistent",)),
-            (None, False))
+        with self.assertRaises(peer_identity.NoSocketTable):
+            peer_identity.peer_caller(
+                endpoints, peer[:2], peer_identity.SocketTables("/nonexistent"))
 
 
 CONTAINER_NS = "         0          0          1\n         1          1      65536\n"

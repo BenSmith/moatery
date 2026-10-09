@@ -17,6 +17,7 @@ import resource
 import select
 import signal
 import socket
+import subprocess
 import tempfile
 import threading
 import time
@@ -67,6 +68,7 @@ from moatery.egress_record import (
     DROP_CLIENT_CERT,
     DROP_CALLER_CLOSED,
     DROP_ECH_SPLICED,
+    DROP_NO_SOCKET_TABLE,
     DROP_FOREIGN_CALLER,
     DROP_MISDIRECTED,
     DROP_MISDIRECTED_LISTED,
@@ -1713,21 +1715,43 @@ class TestEntrypointWiring(unittest.TestCase):
         rc, listener, err = self._started(
             [], inherited_listening_sockets=lambda: [sock])
         self.assertEqual(rc, 0, err)
-        self.assertEqual(listener._peer_tables, peer_identity.PROC_NET_TCP)
+        self.assertIs(listener._peer_tables, peer_identity.OWN_TABLES)
 
     def test_the_netns_pid_reaches_the_lookup(self):
         """This process's own pid names this namespace, whose table holds
         the listener; the lookups must be handed that table, not the
-        default."""
+        default, and the one the start checked, not the same path opened
+        again."""
         sock = self._bound()
         pid = os.getpid()
+        checked = []
+
+        def listed_in(s, tables):
+            checked.append(tables)
+            return peer_identity.listed_in(s, tables)
+
         rc, listener, err = self._started(
             ["--netns-pid", str(pid)],
             inherited_listening_sockets=lambda: [sock],
+            listed_in=listed_in,
             namespace_uids=lambda pid: [(524288, 65536)])
         self.assertEqual(rc, 0, err)
-        self.assertEqual(listener._peer_tables,
-                         peer_identity.netns_tables(pid))
+        self.assertEqual(listener._peer_tables.directory, f"/proc/{pid}")
+        self.assertEqual(len(checked), 1)
+        self.assertIs(checked[0], listener._peer_tables)
+
+    def test_a_netns_pid_that_has_exited_refuses_to_start(self):
+        sock = self._bound()
+        holder = subprocess.Popen(["sleep", "60"])
+        holder.kill()
+        holder.wait()
+        rc, listener, err = self._started(
+            ["--netns-pid", str(holder.pid)],
+            inherited_listening_sockets=lambda: [sock],
+            namespace_uids=lambda pid: [(524288, 65536)])
+        self.assertEqual(rc, 1)
+        self.assertIsNone(listener)
+        self.assertIn("cannot be read", err)
 
     def test_the_netns_pid_serves_its_namespaces_uids(self):
         """Listeners in the workload's network namespace are reachable only
@@ -5040,7 +5064,7 @@ class TestCallerIdentity(unittest.TestCase):
         """Listeners bound in a container's namespace have their callers in
         its table; a lookup that read this namespace's would name none."""
         local = ("198.18.0.1", CLEARTEXT.inspect_port)
-        tables = ("/proc/4242/net/tcp", "/proc/4242/net/tcp6")
+        tables = object()
         listener = Listener([_listener_with(local)], io.StringIO(),
                             peer_tables=tables)
         with unittest.mock.patch.object(
@@ -5049,7 +5073,39 @@ class TestCallerIdentity(unittest.TestCase):
                 unittest.mock.patch("os.getuid", return_value=self.OWN_UID):
             listener._handle(_mock_conn(), ("192.0.2.1", 1024),
                              _listener_with(local))
-        self.assertEqual(lookup.call_args.args[2], tables)
+        self.assertIs(lookup.call_args.args[2], tables)
+
+    def test_callers_are_refused_once_the_tables_holder_has_exited(self):
+        """Read through a process that has gone, there is no table left to
+        name a caller in, and admitting each one unnamed would serve any
+        uid that can reach the listener. A real connection and a real
+        lookup: the holder is killed and reaped before the caller dials."""
+        holder = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        tables = peer_identity.netns_tables(holder.pid)
+        srv = socket.socket()
+        self.addCleanup(srv.close)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        client = socket.create_connection(srv.getsockname())
+        self.addCleanup(client.close)
+        conn, peer = srv.accept()
+        self.addCleanup(conn.close)
+        local = ("127.0.0.1", CLEARTEXT.inspect_port)
+        self.assertIs(peer_identity.listed_in(srv, tables), True)
+        holder.kill()
+        holder.wait()
+        out = io.StringIO()
+        listener = Listener([_listener_with(local)], out,
+                            peer_tables=tables)
+        listener._handle(conn, peer, _listener_with(local))
+        snap = listener.status()
+        self.assertEqual(snap["drop_reasons"][DROP_NO_SOCKET_TABLE], 1)
+        self.assertEqual(snap["caller_unresolved"], 0)
+        self.assertIn(DROP_NO_SOCKET_TABLE, out.getvalue())
+        self.assertNotIn("suspect=yes", out.getvalue())
+        self.assertEqual(client.recv(1), b"")
 
     def test_a_raising_lookup_does_not_take_the_connection_path_down(self):
         """A hardening check that can throw is worse than one that fails soft:

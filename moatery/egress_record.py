@@ -50,6 +50,9 @@ DROP_FOREIGN_CALLER = "caller is not this workload"
 # The caller wrote and closed before it could be identified, which any local
 # uid can choose to do.
 DROP_CALLER_CLOSED = "caller closed before it was identified"
+# None of the namespace's socket tables could be read, so no caller can be
+# named: the process they were read through has gone.
+DROP_NO_SOCKET_TABLE = "no socket table to identify the caller in"
 DROP_RELAY_FAILED = "relay failed"
 DROP_TIMED_OUT = "timed out"
 DROP_UNVERIFIED = "upstream certificate unverified"
@@ -85,6 +88,7 @@ DROP_REASONS = (
     DROP_CEILING,
     DROP_FOREIGN_CALLER,
     DROP_CALLER_CLOSED,
+    DROP_NO_SOCKET_TABLE,
     DROP_RELAY_FAILED,
     DROP_TIMED_OUT,
     DROP_UNVERIFIED,

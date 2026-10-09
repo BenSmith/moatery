@@ -44,7 +44,7 @@ sys.dont_write_bytecode = True
 from moatery.inspect_policy import load_policy
 from moatery.inspect_listener import Listener, build_minter
 from moatery.peer_identity import (
-    PROC_NET_TCP, listed_in, namespace_uids, netns_tables, unmappable_uids)
+    OWN_TABLES, listed_in, namespace_uids, netns_tables, unmappable_uids)
 from moatery.sd_listen import NotSocketActivated
 from moatery.sd_listen import (
     inherited_listening_sockets as sd_inherited_listening_sockets)
@@ -215,7 +215,7 @@ def main(argv=None):
     except NotSocketActivated as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    tables = (PROC_NET_TCP if args.netns_pid is None
+    tables = (OWN_TABLES if args.netns_pid is None
               else netns_tables(args.netns_pid))
     for sock in sockets:
         listed = listed_in(sock, tables)
