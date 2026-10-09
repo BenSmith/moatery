@@ -258,6 +258,17 @@ does the broker for a brokered host. Where the programs run on the host
 as the user, a name that resolves to `127.0.0.1` reaches whatever the
 user has listening on the host's loopback.
 
+What reaches it depends on the connection. A terminated connection
+verifies the origin's certificate against the name, and so does the
+broker: a service that cannot present one for that name gets the dial
+and a ClientHello, never the request, and the inspector's drop is
+`upstream certificate unverified`, since `internal destination` counts
+only a dial that failed. A spliced connection is relayed as it is, with
+no certificate checked, so a spliced name reaches whatever it resolves
+to on 443. On port 80 there is no certificate: a name allowed there
+that is not brokered is sent its request in cleartext
+([POLICY.md](POLICY.md), "Port 80").
+
 Stopping that is a rule on the programs' own outbound sockets, and
 moatery loads no rules. Whoever places it writes one, where the
 placement gives them somewhere to put it:
