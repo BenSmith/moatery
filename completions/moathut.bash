@@ -85,7 +85,7 @@ _moathut() {
     case $command in
         "")
             options="--version"
-            names="create enter log allow network-policy stop rm ls
+            names="create enter cp log allow network-policy stop rm ls
                 credential ptyxis" ;;
         create)
             options="--network-policy --image --mount --autostart --seccomp
@@ -93,6 +93,21 @@ _moathut() {
         enter)
             options="--root"
             ((n == 0)) && names=$(_moathut_huts) ;;
+        cp)
+            # Host paths, and each hut as NAME:, whose paths are not
+            # completed: bash splits the word at the colon.
+            if [[ $cur != -* && $prev != : ]]; then
+                _filedir
+                local name only=1
+                for name in $(_moathut_huts); do
+                    [[ $name: == "$cur"* ]] && COMPREPLY+=("$name:")
+                done
+                for name in "${COMPREPLY[@]}"; do
+                    [[ $name == *: ]] || only=
+                done
+                [[ $only && ${#COMPREPLY[@]} -gt 0 ]] && compopt -o nospace
+                return
+            fi ;;
         log)
             options="--refused"
             ((n == 0)) && names=$(_moathut_huts) ;;

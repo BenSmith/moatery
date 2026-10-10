@@ -3,12 +3,15 @@ takes its inputs as arguments, so the tests can hand them in."""
 
 import json
 import os
+import posixpath
 import random
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import tarfile
+import threading
 import time
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
@@ -20,14 +23,15 @@ from moatery.inspect_document import (INSPECT_DIGEST_KEY,
 from moatery.inspect_policy import load_policy
 from moatery.sd_notify import notify_ready
 
-from . import credentials, document, ptyxis, record, seccomp
+from . import archive, credentials, document, ptyxis, record, seccomp
+from .archive import ArchiveRefused
 from .credentials import CredentialError, brokering, describe
 from .document import AllowRefused
 from .mounts import MountRefused, parse_mount, refuse
 from .netns import (NetnsError, connect, exec_with_pid, load_rules, make,
                     netns_id, pod_pid, release, rules_loaded)
 from .paths import Hut, huts_root, credentials_root, described, sealed, \
-    valid_name
+    shares_root, valid_name
 from .process import CommandFailed, run
 from .units import (CA_VARIABLES, MARK_PATH, PROMPT_PATH, Settings,
                     containers_conf, interpreter, prompt, render)
@@ -520,9 +524,10 @@ def _refresh(hut, settings, dirs, runner):
         runner(["systemctl", "--user", "daemon-reload"])
 
 
-def enter(name, command, *, root, dirs, cwd, environ, isatty,
-          runner=run, execvp=os.execvp, warn=_warn):
-    hut, settings = _existing(name, dirs)
+def _start(hut, settings, dirs, runner, warn):
+    """The hut started if it is stopped, with its rules, its listeners
+    and its broker, as enter and cp find it."""
+    name = hut.name
     if not _running(hut, runner):
         _refresh(hut, settings, dirs, runner)
     if hut.broker_file.exists() and _broker_state(hut, runner) != "active":
@@ -553,6 +558,12 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
         warn(f"hut {name}'s broker did not start, and requests with its "
              f"credentials are refused; see journalctl --user -u "
              f"{hut.broker_service}")
+
+
+def enter(name, command, *, root, dirs, cwd, environ, isatty,
+          runner=run, execvp=os.execvp, warn=_warn):
+    hut, settings = _existing(name, dirs)
+    _start(hut, settings, dirs, runner, warn)
     uid, gid = (0, 0) if root else (settings.uid, settings.gid)
     user = f"{uid}:{gid}"
     command = list(command)
@@ -564,6 +575,235 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
         if variable in environ:
             argv += ["--env", variable]
     execvp("podman", [*argv, name, *command])
+
+
+def _in_hut(word):
+    """(NAME, PATH) for a word naming a path in a hut, NAME:PATH, and None
+    for a host path; one with a colon in it is given as ./PATH."""
+    name, colon, path = word.partition(":")
+    return (name, path) if colon and valid_name(name) else None
+
+
+def _inside(settings, path):
+    """A path in the hut, absolute: from its home, as from ~."""
+    if path == "~" or path.startswith("~/"):
+        path = path[2:]
+    return posixpath.normpath(posixpath.join(settings.home_path, path))
+
+
+def _named(names):
+    if "" in names:
+        raise HutError("cp copies a file or a directory, not /")
+    for n in names:
+        if names.count(n) > 1:
+            raise HutError(f"cp is given two sources named {n}")
+
+
+def _hut_writable(dirs):
+    """Where a hut can write on the host, each real: every hut's home,
+    and one kept from a removed hut, and every mount a hut has that is
+    not read-only."""
+    roots = {Path(os.path.realpath(shares_root(dirs)))}
+    for _hut, settings in _huts(dirs):
+        roots.update(Path(os.path.realpath(m.source))
+                     for m in settings.mounts if not m.readonly)
+    return roots
+
+
+# How many links resolving one path may pass through, as the kernel's
+# limit.
+_HOPS = 40
+
+
+def _lookups(path):
+    """The directories resolving PATH looks a name up in, and where it
+    ends, each real, as the kernel resolves them: a link is followed
+    where it is met, and .. goes up from where the walk has got to."""
+    pending = os.path.join(os.getcwd(), path).split("/")[::-1]
+    current, looked, hops = "/", [], 0
+    while pending:
+        part = pending.pop()
+        if part in ("", "."):
+            continue
+        if part == "..":
+            current = os.path.dirname(current)
+            continue
+        looked.append(current)
+        candidate = os.path.join(current, part)
+        if not os.path.islink(candidate):
+            current = candidate
+            continue
+        hops += 1
+        if hops > _HOPS:
+            raise HutError(f"{path}: too many links")
+        target = os.readlink(candidate)
+        if target.startswith("/"):
+            current = "/"
+        pending.extend(target.split("/")[::-1])
+    return looked, current
+
+
+def _apart(path, roots, *, holding=False):
+    """PATH, real, if resolving it looks nothing up where a hut can
+    write, nor ends there; with HOLDING, nor holds such a place. A hut
+    could otherwise swap a link in on the way, and send what cp writes,
+    or take what it reads, anywhere the user can reach."""
+    looked, real = _lookups(path)
+    for at in (*looked, real):
+        for root in roots:
+            if Path(at).is_relative_to(root):
+                raise HutError(f"cp refuses {path}: it is in or reached "
+                               f"through {root}, where a hut can write; "
+                               "copy to and from a directory no hut can "
+                               "write")
+    for root in roots if holding else ():
+        if root.is_relative_to(real):
+            raise HutError(f"cp refuses {path}: it holds {root}, where a "
+                           "hut can write")
+    return real
+
+
+# How much of what the hut's tar says is kept to show.
+_SAID = 4096
+
+
+def _drain(pipe):
+    """PIPE read to its end by a thread, which keeps its first bytes."""
+    kept = bytearray()
+
+    def read():
+        with pipe:
+            for chunk in iter(lambda: pipe.read(65536), b""):
+                kept.extend(chunk[:max(0, _SAID - len(kept))])
+    thread = threading.Thread(target=read, daemon=True)
+    thread.start()
+    return thread, kept
+
+
+def _escaped(text):
+    """TEXT with every character a terminal could act on written out."""
+    return "".join(c if c.isprintable() else
+                   f"\\x{ord(c):02x}" if ord(c) < 0x100 else
+                   f"\\u{ord(c):04x}" for c in text)
+
+
+def _said(name, drained, warn):
+    """What the hut's tar said, which is the hut's to write: shown with
+    nothing a terminal would act on. A tar that holds the pipe open
+    past its exit is not waited for."""
+    thread, kept = drained
+    thread.join(5)
+    for line in bytes(kept).decode("utf-8", "replace").splitlines():
+        warn(f"hut {name}'s tar: {_escaped(line)}")
+
+
+def _tar_failed(name, code):
+    if code == 127:
+        return f"hut {name}'s image has no tar, which cp runs in it"
+    return f"hut {name}'s tar exited {code}" if code else None
+
+
+def cp(sources, destination, *, dirs, runner=run, spawn=subprocess.Popen,
+       warn=_warn):
+    """Host files into a hut, or a hut's out of it, by the hut's own tar,
+    run as its user: every path in the hut is the hut's to resolve, and
+    what it sends is taken as a hut's."""
+    *given, to = (_in_hut(word) for word in (*sources, destination))
+    if to and not any(given):
+        return _cp_in(to[0], sources, to[1], dirs=dirs, runner=runner,
+                      spawn=spawn, warn=warn)
+    if not to and all(given) and len({n for n, _ in given}) == 1:
+        return _cp_out(given[0][0], [p for _, p in given], destination,
+                       dirs=dirs, runner=runner, spawn=spawn, warn=warn)
+    raise HutError("cp copies host files into a hut, or one hut's out of "
+                   "it, with the hut's side NAME:PATH")
+
+
+def _cp_in(name, sources, path, *, dirs, runner, spawn, warn):
+    hut, settings = _existing(name, dirs)
+    for source in sources:
+        if not os.path.lexists(source):
+            raise HutError(f"{source}: no such file or directory")
+    names = [os.path.basename(os.path.abspath(s)) for s in sources]
+    _named(names)
+    roots = _hut_writable(dirs)
+    for source in sources:
+        _apart(source, roots, holding=True)
+    _start(hut, settings, dirs, runner, warn)
+    user = f"{settings.uid}:{settings.gid}"
+    target = _inside(settings, path)
+    if runner(["podman", "exec", "--user", user, name, "test", "-d",
+               target], check=False).returncode == 0:
+        into = target
+    elif len(sources) > 1 or path.endswith("/"):
+        raise HutError(f"hut {name} has no directory {target}")
+    else:
+        into, base = posixpath.split(target)
+        names = [base]
+    tar = spawn(["podman", "exec", "-i", "--user", user, name, "tar", "-x",
+                 "-f", "-", "-C", into], stdin=subprocess.PIPE,
+                stderr=subprocess.PIPE)
+    drained = _drain(tar.stderr)
+    try:
+        with tar.stdin:
+            archive.pack(sources, names, tar.stdin, warn)
+    except BrokenPipeError:
+        pass  # its tar stopped reading, and its status says why
+    except OSError as exc:
+        tar.wait()
+        _said(name, drained, warn)
+        raise HutError(f"{exc.filename}: {exc.strerror}") from None
+    code = tar.wait()
+    _said(name, drained, warn)
+    failed = _tar_failed(name, code)
+    if failed:
+        raise HutError(failed)
+
+
+def _cp_out(name, paths, destination, *, dirs, runner, spawn, warn):
+    hut, settings = _existing(name, dirs)
+    targets = [_inside(settings, p) for p in paths]
+    bases = [posixpath.basename(t) for t in targets]
+    _named(bases)
+    roots = _hut_writable(dirs)
+    if os.path.isdir(destination):
+        into, names = _apart(destination, roots), bases
+    elif len(targets) > 1 or destination.endswith("/"):
+        raise HutError(f"{destination}: no such directory")
+    else:
+        parent, last = os.path.split(os.path.join(os.getcwd(),
+                                                  destination))
+        into, names = _apart(parent, roots), [last]
+    for n in names:
+        if os.path.lexists(os.path.join(into, n)):
+            raise HutError(f"{os.path.join(into, n)} exists, and cp puts "
+                           "what a hut sends in place of nothing")
+    if not os.path.isdir(into):
+        raise HutError(f"{into}: no such directory")
+    _start(hut, settings, dirs, runner, warn)
+    user = f"{settings.uid}:{settings.gid}"
+    for target, base, n in zip(targets, bases, names):
+        tar = spawn(["podman", "exec", "--user", user, name, "tar", "-c",
+                     "-h", "-f", "-", "-C", posixpath.dirname(target), "--",
+                     base], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE)
+        drained = _drain(tar.stderr)
+        try:
+            with tar.stdout:
+                taken = archive.take(
+                    tar.stdout, into, base, n,
+                    lambda said: warn(f"hut {name} sent {said}"))
+        except (ArchiveRefused, tarfile.TarError, OSError) as exc:
+            code = tar.wait()
+            _said(name, drained, warn)
+            failed = _tar_failed(name, code)
+            raise HutError(f"{target} in hut {name} is not copied: {exc}"
+                           + (f"; {failed}" if failed else "")) from None
+        code = tar.wait()
+        _said(name, drained, warn)
+        failed = _tar_failed(name, code)
+        if failed:
+            raise HutError(f"{failed}; what it sent is at {taken}")
 
 
 def stop(name, *, dirs, runner=run):

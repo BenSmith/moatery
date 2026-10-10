@@ -115,7 +115,8 @@ Every start is a fresh container from the image. What survives a stop:
 - **The hut's home.** It has its own home directory, separate from
   yours, so anything installed under it (`pip install --user`, tools in
   `~/.local`) is kept, and `~/.local/bin` is on the hut's `PATH`. SELinux keeps every other hut and container out
-  of it; you can still reach it from the host.
+  of it; you can still reach it from the host, but copy with `moathut
+  cp` (below) rather than into it there.
 - **Your mounts.** These are your own directories. Any hut can mount
   the same directory, so two huts can work on one project.
 
@@ -131,6 +132,28 @@ image's system bundle, and `SSL_CERT_FILE`,
 `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO` and
 `PIP_CERT` point at it, so curl, git, pip, Python and Node trust the
 inspector without any setup.
+
+## Copying files in and out
+
+Don't copy into a hut's home on the host. Whatever runs in the hut can
+leave a link there, and a copy from the host follows the link
+wherever it points, into your own files. `moathut cp` copies through
+the hut itself:
+
+```
+moathut cp notes.txt data/ work:          # into the hut's home
+moathut cp work:build/report.pdf ~/Downloads/
+```
+
+The hut's side is `NAME:PATH`, from the hut's home. Out of a hut, links
+come as the files they point to, and `cp` never replaces a file: copy
+to a new name, or move the old one aside first. The image needs `tar`;
+Fedora's toolbox images have it.
+
+`cp` won't copy to or from a directory a hut can write, such as a
+project you mounted, since the hut could redirect the copy with a link.
+A mounted project is in the hut already: copy inside the hut instead,
+or through a directory only you write, like `~/Downloads`.
 
 ## Coming from toolbx or distrobox
 

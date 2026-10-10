@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """hut_rig.py — a moathut hut, made and run through its command line.
 
-docs/MOATHUT.md: `moathut credential add`, `create`, `enter`, `log`,
-`allow`, `network-policy`, `stop` and `rm`, the hut's units run by the
+docs/MOATHUT.md: `moathut credential add`, `create`, `enter`, `cp`,
+`log`, `allow`, `network-policy`, `stop` and `rm`, the hut's units run by the
 user's manager and quadlet, the namespace its netns unit holds, the
 netns placement's rules and listeners in it, and the hut's broker. Run
 on the proving host as an ordinary user, from a checkout:
@@ -14,7 +14,7 @@ on the proving host as an ordinary user, from a checkout:
                                     [--listeners-required]
                                     [--without-reload] [--without-reopen]
                                     [--without-autostart]
-                                    [--uninspected-ruled]
+                                    [--uninspected-ruled] [--cp-unguarded]
                                     [--restarts N]
 
 The tool is the checkout's bin/moathut running the checkout's
@@ -49,6 +49,11 @@ removes them before `rm`:
   open pod  with --uninspected-ruled, on the pod of the hut made
             --network-policy none, an ExecStartPost= that loads the
             rules into its namespace.
+
+With --cp-unguarded, the cp rows run moathut with a sitecustomize that
+swaps in a naive cp: copying in writes the hut's home directly from the
+host, copying out unpacks straight into the destination with only
+tarfile's data filter, and neither refuses a place a hut can write.
 
 The stub is on the host's 127.0.0.1, which the pod cannot reach, so
 anything the stub answers came by the inspector's dial. The provider is
@@ -112,6 +117,29 @@ THE ROWS
             host and not in the user's. The directories between the home
             and a mount inside it are the user's to write in.
   mount     a :ro mount is at the DST it was given, and read-only.
+  cp        Copying in:
+            - premise: the hut leaves a link in its home pointing at a
+              host file, and a plain cp on the host into the hut's home
+              follows it and overwrites that host file.
+            - moathut cp to the same link leaves the host file alone,
+              and the copy lands in the hut.
+            - the copy is labelled at the hut's level, so the hut's own
+              tar wrote it.
+            Copying out:
+            - a directory arrives whole, and a link in it arrives as a
+              copy of the file it points to.
+            - premise: an archive holding a link and then a file written
+              through it overwrites a host file next to the destination
+              when unpacked with tarfile's data filter alone.
+            - from a hut with a fake tar that sends that archive,
+              moathut cp leaves the host file alone and skips the link.
+            A writable mount:
+            - premise: the hut leaves a link in the shared project,
+              named like an output directory and pointing at a host
+              directory, and a host write into it lands there.
+            - moathut cp out into it is refused, and nothing lands.
+            - moathut cp in from the mount is refused, and nothing
+              reaches the hut.
   label     the workload runs at the hut's level, and its home, bundle,
             prompt and mark are labelled at it; its /dev/shm, the pod's,
             is writable; a container at podman's own level is refused the
@@ -267,6 +295,13 @@ made --network-policy none, from its pod's ExecStartPost=:
 uninspected's rows that its namespace holds no moatery table and that
 its connect to the host's port arrives must go red.
 
+`--cp-unguarded` swaps in a naive cp that copies on the host side:
+copying in writes the hut's home directly from the host, copying out
+unpacks straight into the destination with only tarfile's data filter,
+and neither refuses a place a hut can write. cp's five rows that the
+host file is left alone, the copy is the hut's and a writable mount is
+refused must go red.
+
 `--without-autostart` makes the hut without --autostart: the create
 row's ls, and the autostart rows, must go red, and outside's first,
 which restarts the pod the autostart row started.
@@ -281,6 +316,7 @@ starts, since a Type=simple unit is started when forked.
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import pty
@@ -290,6 +326,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import tarfile
 import sys
 import threading
 import time
@@ -436,6 +473,20 @@ SHARED = ".moatery-rig-shared"
 READONLY = RIG / "hut-ro"
 READONLY_AT = "/srv/moatery-rig-ro"
 STUB_LOG = RIG / "stub.log"
+# cp's: what is copied in, the host's file a link the hut plants names,
+# where things are copied out to, the --cp-unguarded sitecustomize, and
+# a tar that sends a link and then a file through it, put ahead of the
+# image's in the hut.
+CP_SOURCE = RIG / "hut-cp-source"
+CP_VICTIM = RIG / "hut-cp-victim"
+CP_OUT = RIG / "hut-cp-out"
+CP_UNGUARDED = RIG / "hut-cp-unguarded"
+CP_SENDING = RIG / "hut-cp-sending-tar"
+CP_STEERED = RIG / "hut-cp-steered"
+PLANTED = ".moatery-rig-planted"
+MADE = ".moatery-rig-made"
+SENT = ".moatery-rig-sent"
+FAKE_TAR = "/usr/local/bin/tar"
 HOSTS_MARK = "moathut-rig"
 
 if riglib.INSTALLED:
@@ -605,6 +656,55 @@ NARROWED = {"clone", "clone3", "keyctl", "setns", "socketcall", "unshare",
 WIDENED = {"futex_requeue", "futex_wait", "futex_waitv", "futex_wake"}
 SECCOMP_ARCH = {"x86_64": "amd64", "aarch64": "arm64"}.get(
     os.uname().machine, os.uname().machine)
+
+CP_UNGUARDED_SCRIPT = """\
+# written by tests/manual/hut_rig.py: --cp-unguarded. moathut cp as a
+# copy on the host side would be: into the hut's home on the host, and
+# out unpacked in place under tarfile's data filter alone.
+import os, posixpath, shutil, tarfile
+from moathut import archive, commands
+
+
+def cp_in(name, sources, path, *, dirs, runner, spawn, warn):
+    hut, settings = commands._existing(name, dirs)
+    target = commands._inside(settings, path)
+    on_host = hut.home / posixpath.relpath(target, settings.home_path)
+    for source in sources:
+        shutil.copyfile(source, on_host / os.path.basename(source)
+                        if on_host.is_dir() else on_host)
+
+
+def take(stream, into, base, name, warn):
+    with tarfile.open(fileobj=stream, mode="r|") as sent:
+        sent.extractall(into, filter="data")
+    if base != name:
+        os.rename(os.path.join(into, base), os.path.join(into, name))
+    return os.path.join(into, name)
+
+
+commands._cp_in = cp_in
+commands._hut_writable = lambda dirs: set()
+archive.take = take
+"""
+
+SENDING_TAR = f"""\
+#!/usr/bin/python3
+# written by tests/manual/hut_rig.py: a hut's tar that sends {SENT}, in it
+# a link to the destination's victim, and then a file through the link.
+import io, sys, tarfile
+out = tarfile.open(fileobj=sys.stdout.buffer, mode="w|")
+top = tarfile.TarInfo("{SENT}")
+top.type, top.mode = tarfile.DIRTYPE, 0o755
+out.addfile(top)
+link = tarfile.TarInfo("{SENT}/x")
+link.type, link.linkname = tarfile.SYMTYPE, "../victim"
+out.addfile(link)
+data = b"theirs\\n"
+file = tarfile.TarInfo("{SENT}/x")
+file.size = len(data)
+out.addfile(file, io.BytesIO(data))
+out.close()
+"""
 
 SITECUSTOMIZE = """\
 # written by tests/manual/hut_rig.py: the broker's interpreter waits
@@ -1351,6 +1451,115 @@ def home_rows(tag):
         HOSTS_MARK in host and HOSTS_MARK not in inside,
         f"the line on the host: {HOSTS_MARK in host}; in the hut: "
         f"{HOSTS_MARK in inside}")
+
+
+def cp_rows(tag, unguarded):
+    say("cp")
+    env = None
+    if unguarded:
+        env = {"PYTHONPATH": ":".join(filter(None, (
+            str(CP_UNGUARDED), TOOL_ENV.get("PYTHONPATH"))))}
+        say("  cp copies on the host side, as asked")
+    CP_SOURCE.write_text(tag + "\n")
+    CP_VICTIM.write_text("host's\n")
+    exec_in(["ln", "-sfn", str(CP_VICTIM), f"{INSIDE}/{PLANTED}"])
+    shutil.copyfile(CP_SOURCE, HUT_HOME / PLANTED)
+    reached = CP_VICTIM.read_text()
+    row("cp: premise: a plain copy on the host into the hut's home "
+        "follows a link the hut left there and overwrites the host file",
+        reached == tag + "\n", f"the host's file reads {reached!r}")
+    CP_VICTIM.write_text("host's\n")
+    copied = hut("cp", str(CP_SOURCE), f"{HUT}:{PLANTED}", env=env)
+    inside = exec_in(["cat", f"{INSIDE}/{PLANTED}"]).stdout
+    victim = CP_VICTIM.read_text()
+    row("cp: moathut cp to the same link leaves the host file alone, and "
+        "the copy lands in the hut",
+        copied.returncode == 0 and victim == "host's\n"
+        and inside == tag + "\n",
+        f"rc={copied.returncode} {copied.stderr.strip()[-160:]!r}; the "
+        f"host's file {victim!r}; in the hut {inside!r}")
+    level, label = hut_level(), label_of(HUT_HOME / PLANTED)
+    row("cp: the copy is labelled at the hut's level, so the hut's own "
+        "tar wrote it",
+        bool(level) and label == f"system_u:object_r:container_file_t:"
+        f"{level}", f"level {level}; {PLANTED} {label!r}")
+    exec_in(["rm", "-f", f"{INSIDE}/{PLANTED}"])
+
+    exec_in(["sh", "-c", f'mkdir -p "{INSIDE}/{MADE}" && echo {tag} > '
+             f'"{INSIDE}/{MADE}/file" && ln -sfn file "{INSIDE}/{MADE}/link"'])
+    shutil.rmtree(CP_OUT, ignore_errors=True)
+    CP_OUT.mkdir()
+    out = hut("cp", f"{HUT}:{MADE}", str(CP_OUT), env=env)
+    got = CP_OUT / MADE
+    arrived = {p.name: (p.is_symlink(), p.read_text())
+               for p in got.iterdir()} if got.is_dir() else {}
+    beside = sorted(p.name for p in CP_OUT.iterdir())
+    row("cp: copying out, a directory arrives whole, a link in it as a "
+        "copy of the file it points to",
+        out.returncode == 0 and beside == [MADE] and arrived == {
+            "file": (False, tag + "\n"), "link": (False, tag + "\n")},
+        f"rc={out.returncode} {out.stderr.strip()[-160:]!r}; {beside}; "
+        f"{arrived}")
+
+    sent = subprocess.run([sys.executable, str(CP_SENDING)],
+                          capture_output=True, timeout=30).stdout
+    premise = RIG / "hut-cp-premise"
+    shutil.rmtree(premise, ignore_errors=True)
+    premise.mkdir()
+    (premise / "victim").write_text("host's\n")
+    with tarfile.open(fileobj=io.BytesIO(sent)) as archive:
+        archive.extractall(premise, filter="data")
+    reached = (premise / "victim").read_text()
+    shutil.rmtree(premise)
+    row("cp: premise: the fake tar's archive, unpacked with tarfile's "
+        "data filter alone, overwrites a host file next to the "
+        "destination",
+        reached == "theirs\n", f"the file reads {reached!r}")
+    victim = CP_OUT / "victim"
+    victim.write_text("host's\n")
+    (HUT_HOME / ".moatery-rig-tar").write_text(SENDING_TAR)
+    sudo_in(["install", "-m", "755", f"{INSIDE}/.moatery-rig-tar", FAKE_TAR])
+    try:
+        taken = hut("cp", f"{HUT}:{SENT}", str(CP_OUT), env=env)
+    finally:
+        sudo_in(["rm", "-f", FAKE_TAR])
+        (HUT_HOME / ".moatery-rig-tar").unlink(missing_ok=True)
+    x = CP_OUT / SENT / "x"
+    left = victim.read_text()
+    row("cp: from a hut whose fake tar sends that archive, moathut cp "
+        "leaves the host file alone and skips the link",
+        taken.returncode == 0 and left == "host's\n"
+        and not x.is_symlink() and x.exists() and x.read_text() ==
+        "theirs\n" and "a link; not taken" in taken.stderr,
+        f"rc={taken.returncode} {taken.stderr.strip()[-200:]!r}; the file "
+        f"reads {left!r}; x is a link: {x.is_symlink()}")
+
+    shutil.rmtree(CP_STEERED, ignore_errors=True)
+    CP_STEERED.mkdir()
+    exec_in(["ln", "-sfn", str(CP_STEERED), f"{PROJECT}/out"])
+    (PROJECT / "out" / "probe").write_text(tag + "\n")
+    landed = sorted(os.listdir(CP_STEERED))
+    row("cp: premise: the hut leaves a link in the shared project, and a "
+        "host write into it lands where the link points",
+        landed == ["probe"], f"{CP_STEERED.name}: {landed}")
+    (CP_STEERED / "probe").unlink(missing_ok=True)
+    steered = hut("cp", f"{HUT}:{MADE}", f"{PROJECT}/out/", env=env)
+    landed = sorted(os.listdir(CP_STEERED))
+    row("cp: moathut cp out into the shared project is refused, and "
+        "nothing lands where the hut's link points",
+        steered.returncode == 1 and "where a hut can write" in
+        steered.stderr and landed == [],
+        f"rc={steered.returncode} {steered.stderr.strip()[-160:]!r}; "
+        f"{CP_STEERED.name}: {landed}")
+    fetched = hut("cp", str(SUBDIR / "file"), f"{HUT}:", env=env)
+    inside = exec_in(["test", "-e", f"{INSIDE}/file"]).returncode == 0
+    row("cp: moathut cp in from the shared project is refused, and "
+        "nothing reaches the hut",
+        fetched.returncode == 1 and "where a hut can write" in
+        fetched.stderr and not inside,
+        f"rc={fetched.returncode} {fetched.stderr.strip()[-160:]!r}; in "
+        f"the hut: {inside}")
+    exec_in(["rm", "-f", f"{PROJECT}/out", f"{INSIDE}/file"])
 
 
 def dns_rows():
@@ -2400,6 +2609,7 @@ def probe(args, tag, secret):
     seccomp_rows()
     home_rows(tag)
     label_rows()
+    cp_rows(tag, args.cp_unguarded)
     dns_rows()
     drop_rows()
     request_rows()
@@ -2439,8 +2649,11 @@ def clear_leftovers():
     for path in (MARKER, HOME / WRITTEN, SEALED, DESCRIBED):
         path.unlink(missing_ok=True)
     shutil.rmtree(SLOW, ignore_errors=True)
-    for path in (NFT_FAILS, NFT_LOADS_NOTHING):
+    for path in (NFT_FAILS, NFT_LOADS_NOTHING, CP_OUT, CP_UNGUARDED,
+                 CP_STEERED):
         shutil.rmtree(path, ignore_errors=True)
+    for path in (CP_SOURCE, CP_VICTIM, CP_SENDING):
+        path.unlink(missing_ok=True)
     OLD_RULES.unlink(missing_ok=True)
     OPEN_RULES.unlink(missing_ok=True)
     run(["podman", "pod", "rm", "-f", "-i", "moatery-rig-stock"],
@@ -2470,6 +2683,9 @@ def material():
         editor.chmod(0o755)
     SLOW.mkdir(parents=True, exist_ok=True)
     (SLOW / "sitecustomize.py").write_text(SITECUSTOMIZE)
+    CP_UNGUARDED.mkdir(parents=True, exist_ok=True)
+    (CP_UNGUARDED / "sitecustomize.py").write_text(CP_UNGUARDED_SCRIPT)
+    CP_SENDING.write_text(SENDING_TAR)
     for directory, body in ((NFT_FAILS, "echo 'hut_rig: nft fails, as "
                                         "asked' >&2\nexit 1\n"),
                             (NFT_LOADS_NOTHING, "cat > /dev/null\n")):
@@ -2499,8 +2715,11 @@ def teardown(keep):
             if (config / "hut.json").exists():
                 hut("rm", name, "--home")
         for path in (PROJECT, READONLY, SLOW, TWIN_LOGS, OPEN_LOGS,
-                     NFT_FAILS, NFT_LOADS_NOTHING):
+                     NFT_FAILS, NFT_LOADS_NOTHING, CP_OUT, CP_UNGUARDED,
+                     CP_STEERED):
             shutil.rmtree(path, ignore_errors=True)
+        for path in (CP_SOURCE, CP_VICTIM, CP_SENDING):
+            path.unlink(missing_ok=True)
         OLD_RULES.unlink(missing_ok=True)
         OPEN_RULES.unlink(missing_ok=True)
         for path in (MARKER, SEALED, DESCRIBED):
@@ -2550,6 +2769,11 @@ def main():
                          "with no network policy; uninspected's rows that "
                          "its namespace has no table and its connect "
                          "arrives must go red")
+    ap.add_argument("--cp-unguarded", action="store_true",
+                    help="swap in a naive cp that copies on the host "
+                         "side; cp's five rows that the host file is left "
+                         "alone, the copy is the hut's and a writable "
+                         "mount is refused must go red")
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
     args = ap.parse_args()
@@ -2631,6 +2855,11 @@ def main():
             "--uninspected-ruled: uninspected's rows that its namespace "
             "holds no moatery table and that its connect arrives are "
             "expected red")
+    if args.cp_unguarded:
+        expected.append(
+            "--cp-unguarded: cp's five rows that the host file is left "
+            "alone, the copy is the hut's and a writable mount is refused "
+            "are expected red")
     if args.without_autostart:
         expected.append(
             "--without-autostart: create's ls, the autostart rows and "

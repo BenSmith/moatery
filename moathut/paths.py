@@ -47,6 +47,11 @@ def huts_root(dirs):
     return dirs.config / "moatery" / "hut"
 
 
+def shares_root(dirs):
+    """Where each hut's home is, and a removed hut's kept home."""
+    return dirs.data / "moatery" / "hut"
+
+
 def credentials_root(dirs):
     """Beside the huts, not among them, where a hut's name could be
     its."""
@@ -141,7 +146,7 @@ class Hut(NamedTuple):
 
     @property
     def share(self):
-        return self.dirs.data / "moatery" / "hut" / self.name
+        return shares_root(self.dirs) / self.name
 
     @property
     def home(self):

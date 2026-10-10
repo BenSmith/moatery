@@ -71,14 +71,15 @@ class TestTheCompletion(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.home)
         self.env = {"HOME": str(self.home), "PATH": os.environ["PATH"]}
 
-    def complete(self, line, env=None):
+    def complete(self, line, env=None, cwd=None):
         """What a tab at the end of LINE offers. bash splits `--like=`
-        into `--like` and `=`, and so does this."""
-        words = line.replace("=", " = ").split(" ")
+        into `--like` and `=`, and `work:` into `work` and `:`, and so
+        does this."""
+        words = re.sub("([=:])", r" \1 ", line).split(" ")
         result = subprocess.run(
             ["bash", "-c", DRIVER, "bash", line, *words],
             env=env or self.env, capture_output=True, text=True,
-            timeout=30)
+            timeout=30, cwd=cwd)
         self.assertEqual(result.returncode, 0, result.stderr)
         return set(result.stdout.split())
 
@@ -165,6 +166,18 @@ class TestTheCompletion(unittest.TestCase):
     def test_none_is_offered_beside_policy_files(self):
         self.assertIn("none",
                       self.complete("moathut create x --network-policy "))
+
+    def test_cp_offers_host_paths_and_each_hut_as_its_side(self):
+        """A hut's own paths are not completed."""
+        self.make_hut("work")
+        self.make_hut("play")
+        (self.home / "notes").write_text("")
+        self.assertEqual(self.complete("moathut cp ", cwd=self.home),
+                         {"work:", "play:", "notes", ".config"})
+        self.assertEqual(self.complete("moathut cp notes w", cwd=self.home),
+                         {"work:"})
+        self.assertEqual(self.complete("moathut cp work:", cwd=self.home),
+                         set())
 
     def test_huts_are_read_where_moathut_keeps_them(self):
         """XDG_CONFIG_HOME as paths.user_dirs reads it: honoured when

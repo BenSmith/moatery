@@ -278,8 +278,8 @@ another port at the answered address times out. The counters.
 
 ## hut_rig.py — a moathut hut, through its command line
 
-`docs/MOATHUT.md`: `moathut credential add`, `create`, `enter`, `log`,
-`allow`, `network-policy`, `stop` and `rm`, the hut's units run by the
+`docs/MOATHUT.md`: `moathut credential add`, `create`, `enter`, `cp`,
+`log`, `allow`, `network-policy`, `stop` and `rm`, the hut's units run by the
 user's manager and quadlet, the namespace its netns unit holds, the netns
 placement's rules and listeners in it, and the hut's broker.
 The tool is the checkout's `bin/moathut`, or with
@@ -296,6 +296,7 @@ python3 tests/manual/hut_rig.py --without-reload    # must go red
 python3 tests/manual/hut_rig.py --without-reopen    # must go red
 python3 tests/manual/hut_rig.py --without-autostart  # must go red
 python3 tests/manual/hut_rig.py --uninspected-ruled  # must go red
+python3 tests/manual/hut_rig.py --cp-unguarded      # must go red
 python3 tests/manual/hut_rig.py --restarts 10       # more restarts of each
 ```
 
@@ -310,7 +311,8 @@ system's, for two rows, or one that loads nothing, under
 row; under `--without-held-netns` the pod makes its own namespace, and
 loads the rules into it at its start, and under `--uninspected-ruled`
 the pod of a hut made `--network-policy none` loads them into its
-namespace; and the workload's `Exec=` is a
+namespace; under `--cp-unguarded` moathut runs a naive `cp` that
+copies on the host side; and the workload's `Exec=` is a
 script whose
 first act at every start is a request to the provider, with a nonce in
 its path, recorded in the hut's home, and under `--listeners-required`
@@ -392,6 +394,17 @@ moatery table and its prompt says uninspected; a TCP connect from it to
 a port on the host's address arrives, the listener reading what it
 sent, and the same connect from the rig's hut times out, the listener
 reading nothing more; `allow`, `log` and `network-policy` refuse it.
+`cp`, copying in: a plain host `cp` into the hut's home follows a link
+the hut left there and overwrites the host file it points to, while
+`moathut cp` to the same link leaves that file alone, and the copy lands
+in the hut labeled at the hut's level. Copying out: a directory arrives
+whole, a link in it as a copy of the file it points to. A fake `tar` in
+the hut sends a link and then a file written through it; that archive,
+unpacked with tarfile's data filter alone, overwrites a host file next
+to the destination, and `moathut cp` leaves that file alone and skips
+the link. A link the hut leaves in the shared project steers a host
+write into it elsewhere; `moathut cp` out into the project, and in from
+it, is refused, and nothing lands or reaches the hut.
 `credential rm` is refused while the hut names the credential. `rm` leaves no unit,
 pod or container, nor the broker's socket, and keeps the home and the
 record; `create`, with a policy naming no credential, finds the home

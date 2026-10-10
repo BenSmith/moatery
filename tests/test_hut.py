@@ -17,6 +17,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 import unittest
@@ -1071,6 +1072,8 @@ class FakeHost:
         code, out = 0, ""
         if argv[:3] == ["podman", "container", "exists"]:
             code = 1
+        elif argv[-3:-1] == ["test", "-d"]:
+            code = 0 if Path(argv[-1]).is_dir() else 1
         elif argv[:3] == ["podman", "pod", "exists"]:
             code = 0 if self.pod else 1
         elif argv[:3] == ["systemd-creds", "--user", "encrypt"]:
@@ -1120,6 +1123,70 @@ class FakeHost:
         if check and code:
             raise commands.CommandFailed(line)
         return subprocess.CompletedProcess(argv, code, out, "")
+
+
+class _Pipe(io.BytesIO):
+    """A pipe's end, whose bytes outlast its close."""
+
+    def close(self):
+        self.sent = self.getvalue()
+        super().close()
+
+
+class FakeTar:
+    """The hut's tar, as cp runs it by podman exec: its argv kept, and the
+    archive read or written with tarfile at the paths it names, which
+    here are the host's. With SENDS, those bytes are what it writes
+    instead; SAYS is what it writes to stderr, and CODE its exit
+    status."""
+
+    def __init__(self, sends=None, code=0, says=b""):
+        self.calls, self.sends, self.code = [], sends, code
+        self.says = says
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(argv)
+        tar = argv[argv.index("tar"):]
+        done = mock.Mock()
+        done.stderr = io.BytesIO(self.says)
+        if tar[:2] == ["tar", "-x"]:
+            done.stdin = _Pipe()
+
+            def wait():
+                with tarfile.open(fileobj=io.BytesIO(done.stdin.sent)) as t:
+                    t.extractall(tar[-1], filter="fully_trusted")
+                return self.code
+            done.wait.side_effect = wait
+            return done
+        sent = self.sends
+        if sent is None:
+            out = io.BytesIO()
+            with tarfile.open(fileobj=out, mode="w", dereference=True) as t:
+                t.add(os.path.join(tar[tar.index("-C") + 1], tar[-1]),
+                      arcname=tar[-1])
+            sent = out.getvalue()
+        done.stdout = io.BytesIO(sent)
+        done.wait.return_value = self.code
+        return done
+
+
+def _archive(*members):
+    """A tar archive of (name, type, content): a file's bytes, or a link's
+    target."""
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w") as archive:
+        for name, kind, content in members:
+            info = tarfile.TarInfo(name)
+            info.type = kind
+            if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE):
+                info.linkname = content
+            elif kind == tarfile.REGTYPE:
+                info.size = len(content)
+            else:
+                info.mode = 0o755
+            archive.addfile(info, io.BytesIO(content) if kind ==
+                            tarfile.REGTYPE else None)
+    return out.getvalue()
 
 
 class TestCommands(unittest.TestCase):
@@ -2525,6 +2592,297 @@ with mock.patch.object(cli, "unit_netns", held):
         hut, _ = self._create(policy=str(named))
         self.assertTrue(Settings.from_json(hut.settings.read_text())
                         .inspected)
+
+    def _cp(self, sources, destination, *, host=None, tar=None, warn=None):
+        tar = tar or FakeTar()
+        commands.cp(sources, destination, dirs=self.dirs,
+                    runner=host or FakeHost(self.home), spawn=tar,
+                    warn=warn or self.fail)
+        return tar
+
+    def _host_files(self):
+        """notes, and a directory with a file and a link to it, on the
+        host outside the user's home, which here is the hut's too."""
+        root = self.home.parent / "host"
+        (root / "dir").mkdir(parents=True)
+        (root / "notes").write_text("mine\n")
+        (root / "dir" / "file").write_text("deep\n")
+        (root / "dir" / "link").symlink_to("file")
+        return root
+
+    def test_cp_copies_host_files_in_by_the_huts_own_tar_as_its_user(self):
+        """Started as enter starts it; a link inside is sent as a link,
+        and a fifo not at all."""
+        self._create()
+        src = self._host_files()
+        os.mkfifo(src / "dir" / "pipe")
+        host, warned = FakeHost(self.home), []
+        tar = self._cp([str(src / "notes"), str(src / "dir")], "agent:",
+                       host=host, warn=warned.append)
+        self.assertIn(["systemctl", "--user", "start",
+                       "moathut-agent.service"], host.calls)
+        self.assertIn(["podman", "exec", "--user", "1000:1000", "agent",
+                       "test", "-d", str(self.home)], host.calls)
+        self.assertEqual(tar.calls, [[
+            "podman", "exec", "-i", "--user", "1000:1000", "agent", "tar",
+            "-x", "-f", "-", "-C", str(self.home)]])
+        self.assertEqual((self.home / "notes").read_text(), "mine\n")
+        self.assertEqual((self.home / "dir" / "file").read_text(), "deep\n")
+        self.assertEqual(os.readlink(self.home / "dir" / "link"), "file")
+        self.assertFalse((self.home / "dir" / "pipe").exists())
+        self.assertEqual(warned, ["'dir/pipe' is not a file, a directory "
+                                  "or a link; not sent"])
+
+    def test_cp_names_one_source_anew_in_a_hut_where_no_directory_is(self):
+        """And a source named through a link is what it points to."""
+        self._create()
+        src = self._host_files()
+        (src / "named").symlink_to(src / "notes")
+        tar = self._cp([str(src / "named")], "agent:~/kept")
+        self.assertEqual(tar.calls[0][-1], str(self.home))
+        self.assertEqual((self.home / "kept").read_text(), "mine\n")
+        self.assertFalse((self.home / "kept").is_symlink())
+        self._cp([str(src / "notes")], "agent:projects")
+        self.assertTrue((self.home / "projects" / "notes").exists())
+
+    def test_cp_copies_a_huts_files_out_as_what_its_links_point_to(self):
+        self._create()
+        made = self.home / "made"
+        made.mkdir()
+        (made / "file").write_text("hut's\n")
+        (made / "link").symlink_to("file")
+        out = self.home.parent / "out"
+        out.mkdir()
+        tar = self._cp(["agent:made"], str(out))
+        self.assertEqual(tar.calls, [[
+            "podman", "exec", "--user", "1000:1000", "agent", "tar", "-c",
+            "-h", "-f", "-", "-C", str(self.home), "--", "made"]])
+        self.assertEqual((out / "made" / "file").read_text(), "hut's\n")
+        self.assertEqual((out / "made" / "link").read_text(), "hut's\n")
+        self.assertFalse((out / "made" / "link").is_symlink())
+        self.assertEqual([p.name for p in out.iterdir()], ["made"])
+        self._cp(["agent:~/made/file"], str(out / "copy"))
+        self.assertEqual((out / "copy").read_text(), "hut's\n")
+
+    def test_what_a_hut_sends_reaches_nothing_but_what_was_asked_for(self):
+        """Unpacked apart from what the destination holds, with no link
+        taken, a link the archive plants and a file it then writes
+        through it reach nothing outside."""
+        self._create()
+        out = self.home.parent / "out"
+        (out / ".ssh").mkdir(parents=True)
+        keys = out / ".ssh" / "authorized_keys"
+        keys.write_text("mine\n")
+        sent = _archive(("made", tarfile.DIRTYPE, None),
+                        ("made/x", tarfile.SYMTYPE, "../.ssh/authorized_keys"),
+                        ("made/x", tarfile.REGTYPE, b"theirs\n"))
+        # The premise: unpacked where it lands, under tarfile's data
+        # filter alone, the archive writes through its link.
+        premise = self.home.parent / "premise"
+        shutil.copytree(out, premise)
+        with tarfile.open(fileobj=io.BytesIO(sent)) as archive:
+            archive.extractall(premise, filter="data")
+        self.assertEqual((premise / ".ssh" / "authorized_keys").read_text(),
+                         "theirs\n")
+        warned = []
+        self._cp(["agent:made"], str(out), tar=FakeTar(sends=sent),
+                 warn=warned.append)
+        self.assertEqual(keys.read_text(), "mine\n")
+        self.assertEqual((out / "made" / "x").read_text(), "theirs\n")
+        self.assertFalse((out / "made" / "x").is_symlink())
+        self.assertEqual(warned, ["hut agent sent 'made/x', a link; not "
+                                  "taken"])
+
+    def test_an_archive_that_holds_more_than_was_asked_for_is_not_taken(
+            self):
+        self._create()
+        out = self.home.parent / "out"
+        out.mkdir()
+        made = ("made", tarfile.DIRTYPE, None)
+        for sent, said in (
+                (_archive(("other", tarfile.REGTYPE, b"x")),
+                 "'other', which is not under 'made'"),
+                (_archive(("/made", tarfile.REGTYPE, b"x")),
+                 "not under 'made'"),
+                (_archive(made, ("made/../loose", tarfile.REGTYPE, b"x")),
+                 "not under 'made'"),
+                (_archive(made, ("made/h", tarfile.LNKTYPE, "elsewhere")),
+                 "a link to 'elsewhere', which is not under 'made'"),
+                (_archive(("made", tarfile.FIFOTYPE, None)),
+                 "it sent no 'made'"),
+                (_archive(), "it sent no 'made'"),
+                (b"\xff" * 1024, "")):
+            with self.subTest(said):
+                with self.assertRaisesRegex(
+                        commands.HutError,
+                        f"{self.home / 'made'} in hut agent is not copied: "
+                        ".*" + re.escape(said)):
+                    self._cp(["agent:made"], str(out),
+                             tar=FakeTar(sends=sent), warn=lambda said: None)
+                self.assertEqual(list(out.iterdir()), [])
+
+    def test_cp_puts_what_a_hut_sends_in_place_of_nothing(self):
+        self._create()
+        out = self.home.parent / "out"
+        (out / "made").mkdir(parents=True)
+        tar = FakeTar()
+        with self.assertRaisesRegex(commands.HutError,
+                                    f"{out / 'made'} exists"):
+            self._cp(["agent:made"], str(out), tar=tar)
+        self.assertEqual(tar.calls, [])
+
+    def test_cp_refuses_what_it_cannot_copy(self):
+        self._create()
+        src = self._host_files()
+        notes = str(src / "notes")
+        for sources, destination, said in (
+                ([notes], str(src), "with the hut's side NAME:PATH"),
+                (["agent:a"], "agent:b", "NAME:PATH"),
+                (["agent:a", notes], str(src), "NAME:PATH"),
+                (["agent:a", "other:b"], str(src), "NAME:PATH"),
+                ([str(src / "absent")], "agent:", "absent: no such file"),
+                (["/"], "agent:", "not /"),
+                (["agent:/"], str(src), "not /"),
+                ([notes, notes], "agent:", "two sources named notes"),
+                ([notes, str(src / "dir")], "agent:absent",
+                 f"hut agent has no directory {self.home / 'absent'}"),
+                ([notes], "agent:absent/", "no directory"),
+                (["agent:a", "agent:b"], str(src / "absent"),
+                 "absent: no such directory"),
+                (["agent:a"], str(src / "absent" / "b"),
+                 "absent: no such directory"),
+                (["nohut:a"], str(src), "no hut nohut")):
+            tar = FakeTar()
+            with self.subTest(sources=sources, destination=destination):
+                with self.assertRaisesRegex(commands.HutError, said):
+                    self._cp(sources, destination, tar=tar)
+                self.assertEqual(tar.calls, [])
+
+    def test_cp_says_why_the_huts_tar_failed(self):
+        self._create()
+        src = self._host_files()
+        (self.home / "made").write_text("hut's\n")
+        out = self.home.parent / "out"
+        out.mkdir()
+        for call, said in (
+                (lambda: self._cp([str(src / "notes")], "agent:",
+                                  tar=FakeTar(code=127)),
+                 "hut agent's image has no tar, which cp runs in it"),
+                (lambda: self._cp(["agent:made"], str(out),
+                                  tar=FakeTar(code=2)),
+                 f"hut agent's tar exited 2; what it sent is at "
+                 f"{out / 'made'}"),
+                (lambda: self._cp(["agent:absent"], str(out),
+                                  tar=FakeTar(sends=_archive(), code=127)),
+                 "it sent no 'absent'; hut agent's image has no tar")):
+            with self.subTest(said), self.assertRaisesRegex(
+                    commands.HutError, re.escape(said)):
+                call()
+
+    def test_cp_refuses_a_hut_without_its_rules_as_enter_does(self):
+        """Either way: it starts the hut as enter does first."""
+        self._create()
+        out = self.home.parent / "out"
+        out.mkdir()
+        for sources, destination in (
+                ([str(self._host_files() / "notes")], "agent:"),
+                (["agent:made"], str(out))):
+            tar = FakeTar()
+            with self.subTest(destination), self.assertRaisesRegex(
+                    commands.HutError, "no moatery rules"):
+                self._cp(sources, destination,
+                         host=FakeHost(self.home, rules=False), tar=tar)
+            self.assertEqual(tar.calls, [])
+
+    def test_cp_copies_into_a_hut_with_no_network_policy(self):
+        self._uninspected()
+        self._cp([str(self._host_files() / "notes")], "agent:",
+                 host=FakeHost(self.home, rules=False, listeners=False,
+                               listener_state="inactive"))
+        self.assertTrue((self.home / "notes").exists())
+
+    @unittest.skipUnless(shutil.which("tar"), "needs tar")
+    def test_the_words_cp_gives_tar_are_a_real_tars(self):
+        """In and out through the system's tar, run by the words cp gives
+        podman exec, past podman's own."""
+        self._create()
+        src = self._host_files()
+
+        def spawn(argv, **kwargs):
+            return subprocess.Popen(argv[argv.index("tar"):], **kwargs)
+
+        self._cp([str(src / "dir")], "agent:", tar=spawn)
+        self.assertEqual(os.readlink(self.home / "dir" / "link"), "file")
+        out = self.home.parent / "out"
+        out.mkdir()
+        self._cp(["agent:dir"], str(out), tar=spawn)
+        self.assertEqual((out / "dir" / "link").read_text(), "deep\n")
+        self.assertFalse((out / "dir" / "link").is_symlink())
+        # A name tar would read as an option, but for the -- before it.
+        (self.home / "-x").write_text("dashed\n")
+        self._cp(["agent:-x"], str(out), tar=spawn)
+        self.assertEqual((out / "-x").read_text(), "dashed\n")
+
+    def test_cp_refuses_a_place_a_hut_can_write(self):
+        """A writable mount, a hut's home on the host, or a path reached
+        through either: the hut could swap a link in on the way. Its link
+        in a shared project, named like an output directory, would
+        otherwise send what cp writes into a directory of bash's own."""
+        (self.home / "ro").mkdir()
+        hut, _ = self._create(mounts=["projects/p", "ro:/srv/ro:ro"])
+        shared = self.home / "projects" / "p"
+        (shared / "f").write_text("shared\n")
+        bashrc_d = self.home.parent / "bashrc.d"
+        bashrc_d.mkdir()
+        (shared / "out").symlink_to(bashrc_d)
+        via = self.home.parent / "via"
+        via.symlink_to(shared / "out")
+        (self.home / "report.txt").write_text("hut's\n")
+        for sources, destination in (
+                (["agent:report.txt"], f"{shared / 'out'}/"),
+                (["agent:report.txt"], str(shared)),
+                (["agent:report.txt"], str(shared / "new")),
+                (["agent:report.txt"], str(via)),
+                (["agent:report.txt"], str(hut.home)),
+                ([str(shared / "f")], "agent:"),
+                ([str(self.home / "projects")], "agent:"),
+                ([str(hut.home / ".bashrc")], "agent:")):
+            tar = FakeTar()
+            with self.subTest(sources=sources, destination=destination):
+                with self.assertRaisesRegex(commands.HutError,
+                                            "where a hut can write"):
+                    self._cp(sources, destination, tar=tar)
+                self.assertEqual(tar.calls, [])
+        self.assertEqual(list(bashrc_d.iterdir()), [])
+        self._cp(["agent:report.txt"], str(self.home / "ro"))
+        self.assertEqual((self.home / "ro" / "report.txt").read_text(),
+                         "hut's\n")
+
+    def test_what_the_huts_tar_says_is_shown_with_nothing_a_terminal_acts_on(
+            self):
+        self._create()
+        (self.home / "made").write_text("hut's\n")
+        out = self.home.parent / "out"
+        out.mkdir()
+        says = b"tar: \x1b]52;c;ZXZpbA==\x07done\n\xe2\x80\xaeevil\n"
+        for sources, destination in ((["agent:made"], str(out)),
+                                     ([str(out / "made")], "agent:x")):
+            warned = []
+            self._cp(sources, destination, tar=FakeTar(says=says),
+                     warn=warned.append)
+            self.assertEqual(warned, [
+                "hut agent's tar: tar: \\x1b]52;c;ZXZpbA==\\x07done",
+                "hut agent's tar: \\u202eevil"])
+
+    def test_the_command_line_hands_cp_its_sources_and_destination(self):
+        from moathut import cli
+        with mock.patch.object(cli, "cp") as cp:
+            cli.run_command(parse(["cp", "a", "b", "agent:x"]), tool=(),
+                            environ=self.env, cwd=self.home, isatty=False)
+        self.assertEqual(cp.call_args.args, (["a", "b"], "agent:x"))
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            parse(["cp", "a"])
+
 
 
 if __name__ == "__main__":

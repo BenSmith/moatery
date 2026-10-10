@@ -50,6 +50,7 @@ moathut create NAME (--network-policy FILE | --like HUT)
                    [--image IMAGE] [--mount SRC[:DST][:ro]]...
                    [--seccomp PROFILE] [--autostart] [--dry-run]
 moathut enter NAME [--root] [-- COMMAND...]
+moathut cp SRC... DEST
 moathut log NAME [--refused]
 moathut allow NAME HOST [--method M]... [--path P]...
 moathut network-policy NAME
@@ -104,6 +105,37 @@ refused, without the responder its names do not resolve, and without the
 broker a request with its credentials is refused, not sent without. The
 working directory is the host's current one if that is inside a mount,
 and the hut's home otherwise.
+
+**cp** copies files between the host and a hut. The hut's side is
+`NAME:PATH`, where a relative PATH, or one starting `~/`, is from the
+hut's home; a host path with a colon in it is written `./PATH`. If DEST
+is a directory the sources go into it; otherwise it is the new name of
+the one source.
+
+`cp` starts the hut as `enter` does, then runs `tar` inside it with
+`podman exec`, as the hut's user. Paths in the hut are resolved by the
+hut, under its SELinux level and seccomp profile, so a link the hut
+left in its home leads only where the hut could write anyway. The image
+needs `tar`.
+
+- Into a hut: a source that is a link is copied as the file it points
+  to; links inside a copied directory stay links. A file already in the
+  hut is replaced.
+- Out of a hut: the hut's `tar` follows links and sends files. What
+  arrives is untrusted: it is unpacked into a new, empty directory next
+  to DEST, any link is skipped, anything outside the path asked for is
+  refused, and only then is it moved into place. `cp` never replaces a
+  file or directory with what a hut sends.
+
+On the host, `cp` refuses a source or destination that is in, or is
+reached through, a place a hut can write: any hut's home, a removed
+hut's kept home too, and any mount a hut has that is not read-only. A
+hut could leave or swap a link there and send the copy, or take what is
+read, anywhere you can reach. A source holding such a place is refused
+too. What the hut's `tar` prints is shown with every control character
+written out, so it cannot act on the terminal. Nothing limits what a
+hut sends out: it can fill the filesystem it is copied to. Ctrl-C stops
+it, and removes the copy it was unpacking.
 
 **stop** stops the namespace's unit, and the broker's; everything bound
 to it stops too, and the namespace goes.

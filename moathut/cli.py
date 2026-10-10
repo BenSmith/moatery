@@ -7,7 +7,7 @@ import signal
 import sys
 from pathlib import Path
 
-from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, HutError, allow,
+from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, HutError, allow, cp,
                        create, credential_add, credential_ls, credential_rm,
                        edit_policy, enter, log, ls, ptyxis_add,
                        ptyxis_remove, refused, rm, stop, unit_exec,
@@ -16,7 +16,7 @@ from .netns import NetnsError
 from .paths import user_dirs
 from .process import CommandFailed
 
-PUBLIC = ("{create,enter,log,allow,network-policy,stop,rm,ls,"
+PUBLIC = ("{create,enter,cp,log,allow,network-policy,stop,rm,ls,"
           "credential,ptyxis}")
 
 # The release's VERSION, which the RPM installs beside the package.
@@ -62,6 +62,12 @@ def build_parser():
                             "command in it, a shell by default")
     p.add_argument("name")
     p.add_argument("--root", action="store_true", help="as uid 0")
+    p = sub.add_parser("cp", usage="%(prog)s SRC... DEST",
+                       help="copy host files into a hut, or a hut's out "
+                            "of it, by its own tar; the hut's side is "
+                            "NAME:PATH, from its home")
+    p.add_argument("source", nargs="+", metavar="SRC")
+    p.add_argument("destination", metavar="DEST")
     p = sub.add_parser("log", help="follow a hut's record")
     p.add_argument("name")
     p.add_argument("--refused", action="store_true",
@@ -224,6 +230,8 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
     elif args.command == "enter":
         enter(args.name, args.argv, root=args.root, dirs=dirs,
               cwd=cwd, environ=environ, isatty=isatty)
+    elif args.command == "cp":
+        cp(args.source, args.destination, dirs=dirs)
     elif args.command == "log" and args.refused:
         print_refused(args.name, *refused(args.name, dirs=dirs))
     elif args.command == "log":
