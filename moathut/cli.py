@@ -35,7 +35,8 @@ def build_parser():
     p = sub.add_parser("create", help="lay out a hut; nothing starts")
     p.add_argument("name")
     p.add_argument("--network-policy", metavar="FILE",
-                   help="the inspector's policy document, copied in")
+                   help="the inspector's policy document, copied in; or "
+                        "none, for a hut whose network is not inspected")
     p.add_argument("--image",
                    help=f"default {DEFAULT_IMAGE}, or the --like hut's")
     p.add_argument("--mount", action="append", default=[],

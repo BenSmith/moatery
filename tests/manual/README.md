@@ -295,10 +295,11 @@ python3 tests/manual/hut_rig.py --listeners-required  # must go red
 python3 tests/manual/hut_rig.py --without-reload    # must go red
 python3 tests/manual/hut_rig.py --without-reopen    # must go red
 python3 tests/manual/hut_rig.py --without-autostart  # must go red
+python3 tests/manual/hut_rig.py --uninspected-ruled  # must go red
 python3 tests/manual/hut_rig.py --restarts 10       # more restarts of each
 ```
 
-The fixture is riglib's, and seven drop-ins beside the units `create`
+The fixture is riglib's, and eight drop-ins beside the units `create`
 writes, removed before `rm`: the inspector and the broker trust the
 stub's certificate, and under `--without-reload` the inspector's unit
 has no `ExecReload=`; the broker's interpreter sleeps 3 s before it runs,
@@ -307,7 +308,9 @@ Type=simple; the namespace's unit finds an nft that fails ahead of the
 system's, for two rows, or one that loads nothing, under
 `--without-rules`; the pod's unit keeps the pod at its stop, for one
 row; under `--without-held-netns` the pod makes its own namespace, and
-loads the rules into it at its start; and the workload's `Exec=` is a
+loads the rules into it at its start, and under `--uninspected-ruled`
+the pod of a hut made `--network-policy none` loads them into its
+namespace; and the workload's `Exec=` is a
 script whose
 first act at every start is a request to the provider, with a nonce in
 its path, recorded in the hut's home, and under `--listeners-required`
@@ -383,8 +386,13 @@ and `enter` serves it; with a table deleted from the host, `ls` marks
 the hut unprotected and `enter` refuses it, and `stop` then `enter`
 serves it again; a container run by hand from the hut's image, prompt
 and mark warns; a pod the hut left does not start while the namespace's
-unit is stopped. `credential
-rm` is refused while the hut names the credential. `rm` leaves no unit,
+unit is stopped. A hut made `--network-policy none` has no policy,
+bundle or listener, and `ls` marks it; entered, its namespace holds no
+moatery table and its prompt says uninspected; a TCP connect from it to
+a port on the host's address arrives, the listener reading what it
+sent, and the same connect from the rig's hut times out, the listener
+reading nothing more; `allow`, `log` and `network-policy` refuse it.
+`credential rm` is refused while the hut names the credential. `rm` leaves no unit,
 pod or container, nor the broker's socket, and keeps the home and the
 record; `create`, with a policy naming no credential, finds the home
 again and writes no broker; `rm --home` removes it; then `credential rm`

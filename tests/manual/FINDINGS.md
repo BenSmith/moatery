@@ -543,3 +543,12 @@ bytes; recovery after a flush restarts the netns unit through `moathut
 stop` and `enter` instead of the pod's; a new outside row holds the
 first request after `podman pod restart` to have been inspected or
 refused and never to have reached the provider. 132/132.
+
+**A hut with no network policy, 2026-10-10.** 139/139. A hut made
+`--network-policy none` had no table in its namespace, and its TCP
+connect to a port on the host's address, through pasta's map, reached
+the rig's listener; the rig's hut, beside it, timed out on the same
+port and the listener read nothing from it. `--uninspected-ruled`
+137/139, red on that hut's table and connect rows alone;
+`--without-rules` 78/139, the rig's hut's connect reaching the listener
+(`'sent'`) and the other uninspected rows green.

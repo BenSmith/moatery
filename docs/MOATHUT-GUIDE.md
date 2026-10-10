@@ -209,6 +209,25 @@ another gets its profile. `moathut ls` names a hut's profile if it isn't
 the default.
 [MOATHUT.md](MOATHUT.md), "Seccomp", lists what is refused.
 
+## A hut without the moat
+
+Sometimes you want a hut's home, mounts and seccomp profile, but not
+its network rules: a toolchain that needs ssh, or hosts you can't list
+ahead of time. Make it with no network policy:
+
+```
+moathut create scratch --network-policy none --mount ~/src/project
+```
+
+It still sees only its home and what you mount, at its own SELinux
+level, under its seccomp profile. Its network is open: it reaches any
+address and port the host does, your local network included, and
+nothing is recorded. It has no broker, so an API key you give it is the
+real one. Its prompt reads `⬢ scratch uninspected`, and `moathut ls`
+marks it `network-policy:none`. `log`, `allow` and `network-policy`
+don't apply to it; for a hut with the moat again, make another
+`--like` it with `--network-policy FILE` (it gets a home of its own).
+
 ## When the moat doesn't cover you
 
 The hut's network belongs to moathut, not to the hut, so nothing in

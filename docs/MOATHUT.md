@@ -22,6 +22,27 @@ provider's key would be; and it shares with the host only the
 directories `create` was told to mount. Every other port is dropped,
 so git over ssh cannot leave a hut, and git over https can.
 
+## A hut with no network policy
+
+`create NAME --network-policy none` makes a hut whose network is not
+inspected. It keeps its own home, only the mounts it was given, its
+SELinux level and its seccomp profile, and has no rules, inspector,
+responder, broker, CA or record. The namespace's unit connects the
+namespace with pasta and loads nothing into it; the pod and the
+workload join it as in any hut. What runs in the hut reaches any
+address and port the host's network reaches, the local network
+included, and resolves names with the host's resolver, through pasta.
+A provider's key in it is the real one: there is no broker to hold it.
+
+`ls` marks such a hut `network-policy:none`, and never `unprotected`;
+its prompt reads `⬢ NAME uninspected`, and warns of no rules. `enter`
+neither looks for the rules nor starts listeners. `log`, `allow` and
+`network-policy` refuse it, and no credential is its. A hut made
+`--like` it has no network policy either, unless given
+`--network-policy FILE`, and `--network-policy none` with `--like` a
+hut that has one makes a hut without. A hut's network policy is
+decided at `create`: to add or drop one, make another hut `--like` it.
+
 ## Commands
 
 ```
@@ -57,6 +78,8 @@ the git, Python, ssh client and manual pages `fedora:44` leaves out.
 - `--dry-run`: it prints each file it would write, its path first, and
   writes none and mints nothing. It still refuses what `create` would
   refuse, and pulls the image to find its trust store.
+- `--network-policy none`: a hut with no network policy ("A hut with
+  no network policy", above).
 - `--seccomp`: the workload's seccomp profile ("Seccomp", below):
   `strict`, the default, `debug`, or a file, copied in.
 - `--like HUT`: it starts from another hut's policy, as edited since,
@@ -72,9 +95,10 @@ order, the namespace's unit, which loads the rules, the pod, the broker
 and the listeners, and the workload. A stopped hut whose files this
 moathut would write otherwise has them written again first (The units,
 below). It then checks that the namespace holds both moatery tables,
-and refuses if it does not, before `podman exec -it` as the user (or
-uid 0 with `--root`). A listener that is not running is started
-again, and so is a hut's broker. If one does not start, `enter` says so
+and refuses if it does not, unless the hut has no network policy,
+before `podman exec -it` as the user (or uid 0 with `--root`). A
+listener that is not running is started again, and so is a hut's
+broker. If one does not start, `enter` says so
 and enters anyway: without the inspector the workload's connections are
 refused, without the responder its names do not resolve, and without the
 broker a request with its credentials is refused, not sent without. The
@@ -86,8 +110,9 @@ to it stops too, and the namespace goes.
 
 **ls** lists each hut, whether its workload is active, its image, its
 seccomp profile if not `strict` (`seccomp:debug`, or `seccomp:own` for a
-file), `autostart` if it has it, and `unprotected` if its pod runs in a
-namespace without the rules, with a warning on stderr.
+file), `autostart` if it has it, `network-policy:none` if it has no
+network policy, and `unprotected` if its pod runs in a namespace
+without the rules it should have, with a warning on stderr.
 
 **rm** stops the hut and removes its units and what podman made from
 them; its home and its record stay unless `--home`. With `--home`, a
@@ -218,6 +243,9 @@ For hut NAME, credential ID:
 | broker's socket | `$XDG_RUNTIME_DIR/moathut/NAME/broker.sock` |
 | credential | `~/.config/moatery/credentials/ID.{cred,json}` |
 
+A hut with no network policy has no policy, bundle, CA, status file or
+record, and no inspector, responder, broker or rotation units.
+
 The container is named NAME, and so is its pod, so `podman` commands
 take the hut's name; `create` refuses a name podman already uses. The
 credentials are beside the huts, not among them, where they would be a
@@ -242,11 +270,11 @@ units differ from the example's in these ways:
   `$XDG_RUNTIME_DIR/moathut-netns/NAME` in podman's mount namespace; a
   path outside the broker's runtime directory, which the manager removes
   when the broker stops. It connects the namespace with pasta, given the
-  arguments podman gives a pod's, loads the rules, writes the
-  namespace's name (below), then forks a holder and names it the unit's
-  main process (`MAINPID=`), so that podman exits and the holder, the
-  manager's child then, is one whose end the manager sees: the unit
-  fails, and the pod with it. Stopped, the holder unmounts the namespace
+  arguments podman gives a pod's, loads the rules (unless the hut has no
+  network policy), writes the namespace's name (below), then forks a
+  holder and names it the unit's main process (`MAINPID=`), so that
+  podman exits and the holder, the manager's child then, is one whose
+  end the manager sees: the unit fails, and the pod with it. Stopped, the holder unmounts the namespace
   and removes the file, at which pasta exits. A holder killed leaves
   them, and the next start lets them go first.
 - The pod joins that namespace (`Network=ns:%t/moathut-netns/NAME`),
@@ -586,7 +614,10 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
 - `log` follows a request as it is made;
 - the rotation's timer runs with the pod's unit, and a record
   past its size is moved aside and the next request's line is in a new
-  one.
+  one;
+- a hut made `--network-policy none` has no table in its namespace, and
+  reaches a port on the host's address that the rig's hut, beside it,
+  is dropped on.
 
 Unit tests hold the generated units' dependencies to the chain above,
 each one broken on purpose once, and the refusals.

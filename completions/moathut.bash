@@ -61,7 +61,10 @@ _moathut() {
     done
 
     case $prev in
-        --network-policy) _filedir; return ;;
+        --network-policy)
+            _filedir
+            COMPREPLY+=($(compgen -W "none" -- "$cur"))
+            return ;;
         --mount) _filedir -d; return ;;
         --seccomp)
             _filedir

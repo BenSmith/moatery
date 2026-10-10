@@ -7,10 +7,11 @@ Each hut is a network namespace held in the user's own user namespace,
 the moatery rules loaded into it at every start, a quadlet pod joining
 it, the inspector's and the responder's listeners bound in it, and a
 workload started after them, with a home of its own; and, if its policy
-names credentials, a broker holding them. The units run the programs
-from $MOATERY_LIBEXEC, /usr/libexec/moatery by default, and call back
-into this command (`moathut unit ...`) for what they cannot say
-themselves.
+names credentials, a broker holding them. A hut made with
+`--network-policy none` has the namespace, the pod and the workload
+alone, uninspected. The units run the programs from $MOATERY_LIBEXEC,
+/usr/libexec/moatery by default, and call back into this command
+(`moathut unit ...`) for what they cannot say themselves.
 
 Usage:
   moathut create NAME (--network-policy FILE | --like HUT)

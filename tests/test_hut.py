@@ -36,8 +36,8 @@ from moathut.credentials import (Broker, Credential, CredentialError,
 from moathut.mounts import Mount, MountRefused, parse_mount, refuse
 from moathut.paths import (Hut, huts_root, credentials_root, described,
                                protected, sealed, user_dirs, valid_name)
-from moathut.units import (ALL_CAPABILITIES, ANSWER, CAPABILITIES,
-                               MARK_PATH, PROMPT_PATH, Settings,
+from moathut.units import (ALL_CAPABILITIES, ANSWER, CA_VARIABLES,
+                               CAPABILITIES, MARK_PATH, PROMPT_PATH, Settings,
                                container_unit, containers_conf, interpreter,
                                prompt, render)
 
@@ -188,6 +188,29 @@ class TestUnits(unittest.TestCase):
                 for unit in _keys(text, key):
                     with self.subTest(file=name, key=key, unit=unit):
                         self.assertIn(unit, self.hut.services)
+
+    def test_a_hut_with_no_network_policy_has_no_listeners_or_ca(self):
+        """The namespace's unit, the pod and the workload, which name no
+        unit the hut does not have: systemd drops a dependency on one
+        without a word."""
+        settings = self.settings._replace(inspected=False, trust_path=None)
+        units = render(self.hut, settings, None)
+        self.assertEqual(set(units), {self.hut.netns_file, self.hut.pod_file,
+                                      self.hut.container_file})
+        own = {self.hut.netns_service, self.hut.pod_service,
+               self.hut.service}
+        for path, text in units.items():
+            for key in DEPENDENCIES:
+                for unit in _keys(text, key):
+                    with self.subTest(file=path.name, key=key, unit=unit):
+                        self.assertIn(unit, own)
+        work = units[self.hut.container_file]
+        self.assertFalse([v for v in _keys(work, "Volume")
+                          if v.startswith(str(self.hut.bundle))])
+        self.assertFalse([e for e in _keys(work, "Environment")
+                          if e.startswith(CA_VARIABLES)])
+        self.assertEqual(_exec_words(units[self.hut.netns_file], "ExecStart"),
+                         _exec_words(self.netns, "ExecStart"))
 
     def test_the_pod_starts_the_listeners_and_the_workload_waits(self):
         """Wants=, not Requires=: a new policy restarts the listeners, and
@@ -380,7 +403,7 @@ class TestUnits(unittest.TestCase):
         self.assertIn(f"{self.hut.netns_mark}:{MARK_PATH}:ro,Z",
                       _keys(self.work, "Volume"))
 
-    def _interactive(self, mark=None, times=1):
+    def _interactive(self, mark=None, times=1, inspected=True):
         """An interactive bash reading the prompt `times` times, with the
         mark given: (stderr, PS1)."""
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -388,7 +411,8 @@ class TestUnits(unittest.TestCase):
         if mark is not None:
             mark_file.write_text(mark and mark + "\n")
         script = tmp / "prompt.sh"
-        script.write_text(prompt(self.hut).replace(MARK_PATH, str(mark_file)))
+        script.write_text(prompt(self.hut, inspected).replace(
+            MARK_PATH, str(mark_file)))
         reads = f'. "{script}"; ' * times
         done = subprocess.run(
             ["bash", "--norc", "--noprofile", "-i", "-c",
@@ -421,6 +445,15 @@ class TestUnits(unittest.TestCase):
         self.assertIn("moathut stop agent", said)
         self.assertIn("\u2b22 agent UNPROTECTED", ps1)
         self.assertEqual(ps1.count("\u2b22"), 1)
+
+    def test_a_hut_with_no_network_policy_says_so_and_warns_of_nothing(
+            self):
+        """It has no rules for another namespace to lack."""
+        said, ps1 = self._interactive("net:[1]", inspected=False)
+        self.assertNotIn("not protected", said)
+        self.assertNotIn("UNPROTECTED", ps1)
+        self.assertIn("\u2b22 agent uninspected", ps1)
+        self.assertNotIn("uninspected", self._interactive("net:[1]")[1])
 
     def test_a_shell_not_interactive_is_not_warned(self):
         """`bash -c`, `podman exec NAME CMD`: a script's stderr is not
@@ -2371,6 +2404,127 @@ with mock.patch.object(cli, "unit_netns", held):
         said = "".join(c.args[0] for c in out.write.call_args_list)
         self.assertIn("evil.example  (not allowlisted)", said)
         self.assertIn("moathut allow agent HOST", said)
+
+    def _uninspected(self, name="agent", **kwargs):
+        return self._create(name, policy=commands.NO_POLICY, **kwargs)
+
+    def test_a_hut_with_no_network_policy_is_laid_out_without_one(self):
+        """No policy, CA, bundle or trust store; the image is still
+        pulled, and the hut has its namespace's unit, its pod and its
+        workload alone."""
+        hut, host = self._uninspected()
+        settings = Settings.from_json(hut.settings.read_text())
+        self.assertFalse(settings.inspected)
+        self.assertIsNone(settings.trust_path)
+        self.assertFalse(hut.policy.exists())
+        self.assertFalse(hut.bundle.exists())
+        self.assertEqual({p for p in hut.unit_files if p.exists()},
+                         {hut.netns_file, hut.pod_file, hut.container_file})
+        self.assertIn(["podman", "image", "exists", "img"], host.calls)
+        self.assertFalse([c for c in host.calls if "moat-mint-ca" in
+                          " ".join(c) or c[:3] == ["podman", "run", "--rm"]])
+        self.assertEqual(hut.prompt.read_text(), prompt(hut, False))
+
+    def test_the_namespace_of_a_hut_with_no_network_policy_has_no_rules(
+            self):
+        """The namespace's unit reads the hut's settings: connected, and
+        its mark written, but no rules loaded."""
+        hut, _ = self._uninspected()
+        runner, calls = self._holder_runner(hut)
+        commands.unit_netns("agent", dirs=self.dirs, runner=runner,
+                            ready=lambda **kw: None, wait=self.fail,
+                            fork=lambda: 4242)
+        held = str(hut.namespace)
+        self.assertEqual(calls, [
+            ["umount", "-l", held],
+            ["unshare", f"--net={held}", "true"],
+            [*netns.PASTA, "--netns", held],
+            ["nsenter", f"--net={held}", "readlink", "/proc/self/ns/net"]])
+        self.assertEqual(hut.netns_mark.read_text(), "net:[4026532424]\n")
+
+    def test_enter_asks_a_hut_with_no_network_policy_for_no_rules(self):
+        """Nor starts listeners it does not have, nor warns of them."""
+        self._uninspected()
+        host, ran = FakeHost(self.home, rules=False, listeners=False,
+                             listener_state="inactive"), []
+        commands.enter("agent", ["id"], root=False, dirs=self.dirs,
+                       cwd=self.home, environ=self.env, isatty=False,
+                       runner=host, execvp=lambda f, argv: ran.append(argv),
+                       warn=self.fail)
+        self.assertEqual(ran[0][-2:], ["agent", "id"])
+        self.assertFalse([c for c in host.calls if "nft" in c or c[-1]
+                          .endswith(("-inspect.service", "-resolve.service"))])
+
+    def test_ls_marks_a_hut_with_no_network_policy_and_not_unprotected(
+            self):
+        self._uninspected()
+        (row,) = commands.ls(dirs=self.dirs, runner=FakeHost(
+            self.home, pod=True, rules=False))
+        self.assertEqual(row[3:], ("network-policy:none",))
+
+    def test_what_needs_a_network_policy_refuses_a_hut_without_one(self):
+        self._uninspected()
+        host = self._host()
+        for what, call in (
+                ("log", lambda: commands.log(
+                    "agent", dirs=self.dirs, write=self.fail,
+                    pause=self.fail)),
+                ("log --refused", lambda: commands.refused(
+                    "agent", dirs=self.dirs)),
+                ("allow", lambda: commands.allow(
+                    "agent", "example.com", methods=[], paths=[],
+                    dirs=self.dirs, runner=host, pause=self.fail)),
+                ("network-policy", lambda: commands.edit_policy(
+                    "agent", dirs=self.dirs, environ=self.env,
+                    isatty=False, runner=host, edit=self.fail))):
+            with self.subTest(what), self.assertRaisesRegex(
+                    commands.HutError,
+                    "hut agent has no network policy: it was created with "
+                    "--network-policy none"):
+                call()
+        self.assertEqual(host.calls, [])
+
+    def test_credentials_pass_a_hut_with_no_network_policy_by(self):
+        """It names none, and has no policy to read for them."""
+        self._uninspected()
+        (huts, _), _ = self._add()
+        self.assertEqual(huts, [])
+        self.assertEqual(commands.credential_ls(dirs=self.dirs),
+                         [("k", "K", "api.x", "-")])
+        commands.credential_rm("k", dirs=self.dirs)
+
+    def test_a_hut_like_one_with_no_network_policy_has_none_unless_given(
+            self):
+        self._uninspected()
+
+        def like(name, other, policy=None):
+            made = commands.create(
+                name, policy, None, [], dirs=self.dirs, tool=("/py", "/cb"),
+                python="/py", libexec="/lx", pythonpath=None, uid=1000,
+                gid=1000, cwd=self.home, environ=self.env, like=other,
+                runner=FakeHost(self.home))
+            return (Settings.from_json(made.settings.read_text()).inspected,
+                    made.policy.exists())
+
+        self.assertEqual(like("twin", "agent"), (False, False))
+        self.assertEqual(like("ward", "agent", str(self.policy)),
+                         (True, True))
+        self.assertEqual(like("open", "ward", commands.NO_POLICY),
+                         (False, False))
+
+    def test_none_is_the_word_and_a_file_so_named_is_a_policy(self):
+        from moathut import cli
+        with mock.patch.object(cli, "create") as create, \
+                mock.patch("builtins.print"):
+            cli.run_command(parse(["create", "x", "--network-policy",
+                                   "none"]), tool=(), environ=self.env,
+                            cwd=self.home, isatty=False)
+        self.assertEqual(create.call_args.args[1], commands.NO_POLICY)
+        named = self.policy.with_name("none")
+        named.write_text(self.policy.read_text())
+        hut, _ = self._create(policy=str(named))
+        self.assertTrue(Settings.from_json(hut.settings.read_text())
+                        .inspected)
 
 
 if __name__ == "__main__":

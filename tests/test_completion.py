@@ -162,6 +162,10 @@ class TestTheCompletion(unittest.TestCase):
         self.assertLessEqual({"strict", "debug"},
                              self.complete("moathut create x --seccomp "))
 
+    def test_none_is_offered_beside_policy_files(self):
+        self.assertIn("none",
+                      self.complete("moathut create x --network-policy "))
+
     def test_huts_are_read_where_moathut_keeps_them(self):
         """XDG_CONFIG_HOME as paths.user_dirs reads it: honoured when
         absolute, ignored when not."""

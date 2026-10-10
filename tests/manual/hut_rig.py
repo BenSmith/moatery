@@ -14,13 +14,14 @@ on the proving host as an ordinary user, from a checkout:
                                     [--listeners-required]
                                     [--without-reload] [--without-reopen]
                                     [--without-autostart]
+                                    [--uninspected-ruled]
                                     [--restarts N]
 
 The tool is the checkout's bin/moathut running the checkout's
 programs, or, with MOATERY_LIBEXEC=/usr/libexec/moatery, the installed
 moathut. riglib's two host facts need sudo and are undone at teardown.
 
-Beside the units `create` writes, the rig writes seven drop-ins, and
+Beside the units `create` writes, the rig writes eight drop-ins, and
 removes them before `rm`:
 
   inspector SSL_CERT_FILE names the stub's certificate, which no system
@@ -45,6 +46,9 @@ removes them before `rm`:
             namespace and writes its name where the hut reads it.
   rotate    with --without-reopen, for the record's row only, its
             ExecStart= moves the record aside and signals nothing.
+  open pod  with --uninspected-ruled, on the pod of the hut made
+            --network-policy none, an ExecStartPost= that loads the
+            rules into its namespace.
 
 The stub is on the host's 127.0.0.1, which the pod cannot reach, so
 anything the stub answers came by the inspector's dial. The provider is
@@ -191,6 +195,15 @@ THE ROWS
             ptrace
             reaches the kernel and a namespace is refused still; rm
             --home leaves nothing of it.
+  uninspected  create --network-policy none writes no policy, bundle
+            or listener, and ls marks the hut network-policy:none;
+            entered, its namespace holds no moatery table, and a
+            shell's prompt says uninspected and warns of nothing. A TCP
+            connect from it to a port on the host's address, through
+            pasta's map, arrives and the listener reads what it sent;
+            the same connect from the rig's hut times out, and the
+            listener reads nothing more. allow, log and network-policy
+            refuse it; rm --home leaves nothing of it.
   rm        credential rm is refused while the hut names it; no unit, pod
             or container is left, nor the broker's socket; the home and the
             record stay, and create, with a policy naming no credential,
@@ -206,11 +219,12 @@ placeholder among them), held's nft row (no rules to keep), dns,
 silent, quic, ssh, listed, unlisted, root, the broker's requests,
 rotate, the loop's rows that make a request or read one back, the
 record's rotation, the killed inspector's, and enter's, restart,
-stop's enter and its first request, autostart's, and outside's rows
-that enter serves the hut, with its ls, must go red. (The killed
+stop's enter and its first request, autostart's, outside's rows that
+enter serves the hut, with its ls, and uninspected's that the rig's
+hut's connect times out, must go red. (The killed
 inspector's row is red because an enter refused left the broker
-stopped, and the inspector's restart starts it: Wants=.) The like and
-rm rows enter other huts, which the drop-in is not on.
+stopped, and the inspector's restart starts it: Wants=.) The like,
+uninspected and rm rows enter other huts, which the drop-in is not on.
 
 `--without-held-netns` lets the pod make its own namespace, as
 Network=pasta does, which its keep-id user namespace owns, and loads
@@ -248,6 +262,11 @@ logrotate configuration without its `postrotate` would: the record's
 row that the next request's line is in the new record must go red,
 since the inspector writes on into the file it has open.
 
+`--uninspected-ruled` loads the rules into the namespace of the hut
+made --network-policy none, from its pod's ExecStartPost=:
+uninspected's rows that its namespace holds no moatery table and that
+its connect to the host's port arrives must go red.
+
 `--without-autostart` makes the hut without --autostart: the create
 row's ls, and the autostart rows, must go red, and outside's first,
 which restarts the pod the autostart row started.
@@ -269,8 +288,10 @@ import re
 import select
 import shutil
 import signal
+import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -321,6 +342,13 @@ TWIN = "moatery-rig-twin"
 TWIN_CONFIG = CONFIG.parent / TWIN
 TWIN_SHARE = SHARE.parent / TWIN
 TWIN_LOGS = LOGS.parent / TWIN
+# A hut made --network-policy none, beside the rig's.
+OPEN = "moatery-rig-open"
+OPEN_UNIT = f"moathut-{OPEN}"
+OPEN_CONFIG = CONFIG.parent / OPEN
+OPEN_STATE = STATE.parent / OPEN
+OPEN_SHARE = SHARE.parent / OPEN
+OPEN_LOGS = LOGS.parent / OPEN
 QUADLET = HOME / ".config" / "containers" / "systemd"
 UNITS = HOME / ".config" / "systemd" / "user"
 UNIT_FILES = (UNITS / NETNS_SERVICE, QUADLET / f"{UNIT}.pod",
@@ -354,7 +382,8 @@ DROP_INS = {"inspect": UNITS / f"{INSPECT_SERVICE}.d" / "rig.conf",
             "netns": UNITS / f"{NETNS_SERVICE}.d" / "rig.conf",
             "pod": UNITS / f"{POD_SERVICE}.d" / "rig.conf",
             "quadlet pod": QUADLET / f"{UNIT}.pod.d" / "rig.conf",
-            "rotate": UNITS / f"{ROTATE_SERVICE}.d" / "rig.conf"}
+            "rotate": UNITS / f"{ROTATE_SERVICE}.d" / "rig.conf",
+            "open pod": QUADLET / f"{OPEN_UNIT}.pod.d" / "rig.conf"}
 # An nft ahead of the system's on the holder's PATH: one that fails, and
 # one that loads nothing and says it did.
 NFT_FAILS = RIG / "hut-nft-fails"
@@ -366,6 +395,9 @@ NO_RULES = f"[Service]\nEnvironment=PATH={NFT_LOADS_NOTHING}:{HOLDER_PATH}\n"
 # user namespace owns, and this loads the rules into it and names it
 # where the hut reads it, as a pod's own start once did.
 OLD_RULES = RIG / "hut-old-rules"
+# With --uninspected-ruled, this loads them into the namespace of the
+# hut with no network policy, from its pod's ExecStartPost=.
+OPEN_RULES = RIG / "hut-open-rules"
 # The pod's unit removes the pod when it stops; emptied, a stop leaves
 # the pod, as a crash of the manager can.
 POD_LEFT = "[Service]\nExecStopPost=\n"
@@ -461,6 +493,24 @@ FILTERED_UDP = ("192.0.2.1", "9")
 QUIC_UDP = ("192.0.2.1", "443")
 SSH = "192.0.2.1:22"
 
+# The host as pasta maps it into a namespace (netns.PASTA's
+# --map-guest-addr): the host's own address, from the pod.
+HOST_MAPPED = "169.254.1.2"
+
+SEND = """
+import socket, sys
+host, port = sys.argv[1].rsplit(":", 1)
+s = socket.socket()
+s.settimeout(5)
+try:
+    s.connect((host, int(port)))
+    s.sendall(sys.argv[2].encode() + b"\\n")
+except OSError as exc:
+    print(type(exc).__name__)
+else:
+    print("sent")
+"""
+
 RULES = {"table inet moatery", "table netdev moatery"}
 
 OLD_RULES_SCRIPT = f"""\
@@ -472,6 +522,14 @@ held = Path(f"/proc/{{pod_pid('{HUT}')}}/ns/net")
 load_rules(held)
 with open("{MARK}", "w") as mark:
     mark.write(netns_id(held) + "\\n")
+"""
+
+OPEN_RULES_SCRIPT = f"""\
+# written by tests/manual/hut_rig.py: under podman unshare, the rules
+# into the namespace of the hut with no network policy.
+from pathlib import Path
+from moathut.netns import load_rules, pod_pid
+load_rules(Path(f"/proc/{{pod_pid('{OPEN}')}}/ns/net"))
 """
 
 # Each call with an argument the kernel itself rejects, so the errno says
@@ -577,10 +635,10 @@ SHELL_PS1 = ["bash", "-ic", 'printf "%s\\n" "$PS1"']
 NOT_PROTECTED = "not protected by the moat"
 
 
-def interactive(*podman_exec):
+def interactive(*podman_exec, name=HUT):
     """An interactive bash opened by `podman exec`, as a terminal would:
     (its stderr, its prompt)."""
-    got = run(["podman", "exec", *podman_exec, HUT, *SHELL_PS1],
+    got = run(["podman", "exec", *podman_exec, name, *SHELL_PS1],
               check=False, timeout=30)
     return got.stderr, got.stdout.strip()
 
@@ -600,8 +658,8 @@ def states():
     return {short(s): state for s, state in zip(SERVICES, out)}
 
 
-def exists(kind):
-    return run(["podman", kind, "exists", HUT], check=False).returncode == 0
+def exists(kind, name=HUT):
+    return run(["podman", kind, "exists", name], check=False).returncode == 0
 
 
 def listed(name=HUT):
@@ -667,8 +725,8 @@ def remove_drop_ins():
     reload()
 
 
-def infra_pid():
-    infra = run(["podman", "pod", "inspect", HUT, "--format",
+def infra_pid(name=HUT):
+    infra = run(["podman", "pod", "inspect", name, "--format",
                  "{{.InfraContainerID}}"], check=False).stdout.strip()
     if not infra:
         return None
@@ -2136,6 +2194,108 @@ def like_rows(tag):
         f"{TWIN_SHARE.exists()}")
 
 
+def host_listener():
+    """A TCP port on every host address, which no rule admits: the
+    socket, and what each connection to it sent, as it arrives."""
+    server = socket.create_server(("0.0.0.0", 0))
+    got = []
+
+    def serve():
+        while True:
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                return
+            with conn:
+                conn.settimeout(5)
+                try:
+                    got.append(conn.recv(256).decode(errors="replace")
+                               .strip())
+                except OSError:
+                    pass
+
+    threading.Thread(target=serve, daemon=True).start()
+    return server, got
+
+
+def uninspected_rows(tag, ruled):
+    say("uninspected")
+    made = hut("create", OPEN, "--network-policy", "none", timeout=300)
+    services = [f"{OPEN_UNIT}-{s}" for s in ("inspect.service",
+                                             "resolve.service",
+                                             "rotate.timer")]
+    files = [p.name for p in (OPEN_CONFIG / "policy.json",
+                              OPEN_CONFIG / "bundle.pem",
+                              *(UNITS / s for s in services))
+             if p.exists()]
+    loads = {s: load_state(s) for s in services}
+    entry = listed(OPEN)
+    row("uninspected: create --network-policy none writes no policy, "
+        "bundle or listener, and ls marks it network-policy:none",
+        made.returncode == 0 and not files
+        and set(loads.values()) == {"not-found"}
+        and entry == [OPEN, "inactive", IMAGE, "network-policy:none"],
+        f"rc={made.returncode} {made.stderr.strip()[-200:]}; files {files}; "
+        f"{loads}; ls: {entry}")
+    if ruled:
+        pythonpath = "".join(f"Environment=PYTHONPATH={v}\n"
+                             for v in PROGRAM_ENV.values())
+        write_drop_in("open pod", (
+            "[Service]\n" + pythonpath
+            + f"ExecStartPost=podman unshare {sys.executable} -s "
+              f"{OPEN_RULES}\n"))
+        say("  the rules loaded into its namespace, as asked")
+    entered = hut("enter", OPEN, "--", "true", timeout=300)
+    found = tables(infra_pid(OPEN)) & RULES
+    row("uninspected: entered, its namespace holds no moatery table",
+        entered.returncode == 0 and not found,
+        f"rc={entered.returncode} {entered.stderr.strip()[-200:]}; tables "
+        f"{sorted(found)}")
+    said, ps1 = interactive("--user", USER, name=OPEN)
+    row("uninspected: an interactive shell's prompt says uninspected, and "
+        "warns of nothing",
+        f"\u2b22 {OPEN} uninspected" in ps1 and NOT_PROTECTED not in said,
+        f"prompt {ps1!r}; stderr {said.strip()[-160:]!r}")
+    server, got = host_listener()
+    try:
+        target = f"{HOST_MAPPED}:{server.getsockname()[1]}"
+        sent = run(["podman", "exec", "--user", USER, OPEN, "python3", "-c",
+                    SEND, target, tag], check=False,
+                   timeout=30).stdout.strip()
+        arrived = await_(lambda: tag in got, 10)
+        row("uninspected: a TCP connect to a host port no rule admits "
+            "arrives, and the listener reads what the hut sent",
+            sent == "sent" and arrived,
+            f"{target}: {sent!r}; the listener read {got}")
+        before = len(got)
+        hut("enter", HUT, "--", "true", timeout=300)
+        blocked = exec_in(["python3", "-c", SEND, target,
+                           "inspected"]).stdout.strip()
+        row("uninspected: from the rig's hut, the same connect times out, "
+            "and the listener reads nothing from it",
+            blocked == "TimeoutError" and len(got) == before,
+            f"{target}: {blocked!r}; the listener read {got[before:]}")
+    finally:
+        server.close()
+    refused = [hut(*words) for words in (("allow", OPEN, "example.com"),
+                                         ("log", OPEN),
+                                         ("network-policy", OPEN))]
+    row("uninspected: allow, log and network-policy refuse it, naming "
+        "--network-policy none",
+        all(r.returncode == 1 and "--network-policy none" in r.stderr
+            for r in refused),
+        "; ".join(f"rc={r.returncode} {r.stderr.strip()[-120:]}"
+                  for r in refused))
+    remove_drop_in("open pod")
+    removed = hut("rm", OPEN, "--home")
+    row("uninspected: rm --home leaves nothing of it",
+        removed.returncode == 0 and not OPEN_CONFIG.exists()
+        and not OPEN_SHARE.exists() and listed(OPEN) is None
+        and not exists("pod", OPEN),
+        f"rc={removed.returncode}; config {OPEN_CONFIG.exists()}, share "
+        f"{OPEN_SHARE.exists()}, pod {exists('pod', OPEN)}")
+
+
 def rm_rows(tag):
     say("rm")
     refused = hut("credential", "rm", CREDENTIAL)
@@ -2253,6 +2413,7 @@ def probe(args, tag, secret):
     autostart_rows()
     outside_rows()
     like_rows(tag)
+    uninspected_rows(tag, args.uninspected_ruled)
     rm_rows(tag)
 
 
@@ -2262,7 +2423,8 @@ def clear_leftovers():
     """The rig's own hut, by name, as a run with --keep or one cut short
     left it."""
     remove_drop_ins()
-    for name, config in ((HUT, CONFIG), (TWIN, TWIN_CONFIG)):
+    for name, config in ((HUT, CONFIG), (TWIN, TWIN_CONFIG),
+                         (OPEN, OPEN_CONFIG)):
         if (config / "hut.json").exists():
             hut("rm", name, "--home")
     run(["systemctl", "--user", "stop", BROKER_SERVICE], check=False)
@@ -2271,13 +2433,16 @@ def clear_leftovers():
     # The hut's root writes in its home, as a uid the user is not.
     run(["podman", "unshare", "rm", "-rf", "--", str(CONFIG), str(STATE),
          str(LOGS), str(SHARE), str(PROJECT), str(READONLY),
-         str(TWIN_CONFIG), str(TWIN_LOGS), str(TWIN_SHARE)], check=False)
+         str(TWIN_CONFIG), str(TWIN_LOGS), str(TWIN_SHARE),
+         str(OPEN_CONFIG), str(OPEN_STATE), str(OPEN_LOGS), str(OPEN_SHARE)],
+        check=False)
     for path in (MARKER, HOME / WRITTEN, SEALED, DESCRIBED):
         path.unlink(missing_ok=True)
     shutil.rmtree(SLOW, ignore_errors=True)
     for path in (NFT_FAILS, NFT_LOADS_NOTHING):
         shutil.rmtree(path, ignore_errors=True)
     OLD_RULES.unlink(missing_ok=True)
+    OPEN_RULES.unlink(missing_ok=True)
     run(["podman", "pod", "rm", "-f", "-i", "moatery-rig-stock"],
         check=False)
 
@@ -2313,6 +2478,7 @@ def material():
             "#!/bin/sh\n# written by tests/manual/hut_rig.py\n" + body)
         (directory / "nft").chmod(0o755)
     OLD_RULES.write_text(OLD_RULES_SCRIPT)
+    OPEN_RULES.write_text(OPEN_RULES_SCRIPT)
     tag = os.urandom(4).hex()
     SUBDIR.mkdir(parents=True)
     READONLY.mkdir(parents=True)
@@ -2328,13 +2494,15 @@ def teardown(keep):
     say("teardown")
     if not keep:
         remove_drop_ins()
-        for name, config in ((HUT, CONFIG), (TWIN, TWIN_CONFIG)):
+        for name, config in ((HUT, CONFIG), (TWIN, TWIN_CONFIG),
+                             (OPEN, OPEN_CONFIG)):
             if (config / "hut.json").exists():
                 hut("rm", name, "--home")
-        for path in (PROJECT, READONLY, SLOW, TWIN_LOGS, NFT_FAILS,
-                     NFT_LOADS_NOTHING):
+        for path in (PROJECT, READONLY, SLOW, TWIN_LOGS, OPEN_LOGS,
+                     NFT_FAILS, NFT_LOADS_NOTHING):
             shutil.rmtree(path, ignore_errors=True)
         OLD_RULES.unlink(missing_ok=True)
+        OPEN_RULES.unlink(missing_ok=True)
         for path in (MARKER, SEALED, DESCRIBED):
             path.unlink(missing_ok=True)
     riglib.stop_children()
@@ -2377,6 +2545,11 @@ def main():
     ap.add_argument("--without-autostart", action="store_true",
                     help="make the hut without --autostart; the create "
                          "row's ls and the autostart rows must go red")
+    ap.add_argument("--uninspected-ruled", action="store_true",
+                    help="load the rules into the namespace of the hut "
+                         "with no network policy; uninspected's rows that "
+                         "its namespace has no table and its connect "
+                         "arrives must go red")
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
     args = ap.parse_args()
@@ -2419,8 +2592,9 @@ def main():
             "quic, ssh, listed, unlisted, root, the broker's requests, "
             "rotate, the loop's that make a request or read one back, the "
             "record's rotation, the killed inspector's and enter's, "
-            "restart, stop's enter, autostart's, and outside's that enter "
-            "serves the hut, with its ls, are expected red")
+            "restart, stop's enter, autostart's, outside's that enter "
+            "serves the hut, with its ls, and uninspected's that the rig's "
+            "hut's connect times out are expected red")
     if args.without_held_netns:
         expected.append(
             "--without-held-netns: held's refusals, premise's held "
@@ -2452,6 +2626,11 @@ def main():
         expected.append(
             "--without-reopen: the record's row that the next request's "
             "line is in a new record is expected red")
+    if args.uninspected_ruled:
+        expected.append(
+            "--uninspected-ruled: uninspected's rows that its namespace "
+            "holds no moatery table and that its connect arrives are "
+            "expected red")
     if args.without_autostart:
         expected.append(
             "--without-autostart: create's ls, the autostart rows and "

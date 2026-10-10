@@ -19,6 +19,10 @@ a listener that fails is restarted, and not the workload. Without them
 the rules send the workload's connections to ports nothing listens on,
 which refuse them. A new policy reloads the listeners, which restarts
 nothing.
+
+A hut made with `--network-policy none` has the namespace's unit, the
+pod and the workload alone: no rules, no listeners and no CA, and pasta
+forwards what it sends.
 """
 
 import json
@@ -72,7 +76,8 @@ LOCALTIME = Path("/etc/localtime")
 class Settings(NamedTuple):
     """What `create` decided, kept in hut.json for the other commands."""
     image: str
-    trust_path: str
+    # None for a hut with no network policy, which has no bundle.
+    trust_path: str | None
     home_path: str
     uid: int
     gid: int
@@ -88,6 +93,8 @@ class Settings(NamedTuple):
     # are labelled with: two categories no other hut's has. None, podman
     # picks one at each start.
     level: str | None = None
+    # False for `--network-policy none`.
+    inspected: bool = True
 
     def to_json(self):
         doc = self._asdict()
@@ -159,16 +166,25 @@ def _tool(settings, *args):
 
 
 def netns_unit(hut, settings):
+    if settings.inspected:
+        what, held = "network namespace and rules", """\
+pasta connects it and the rules go in before
+# the pod joins it. Type=notify: started once they are in, when the
+# process that holds it is named the main one. Stopped, it lets the
+# namespace go, and pasta with it."""
+    else:
+        what, held = "network namespace", """\
+pasta connects it before the pod joins it;
+# the hut has no network policy, and no rules go in. Type=notify:
+# started once it is connected, when the process that holds it is named
+# the main one. Stopped, it lets the namespace go, and pasta with it."""
     return f"""\
 # moatery hut {hut.name}: its network namespace, made in the user
 # namespace `podman unshare` is root in, of which the hut's is a child,
-# and held while this runs. pasta connects it and the rules go in before
-# the pod joins it. Type=notify: started once they are in, when the
-# process that holds it is named the main one. Stopped, it lets the
-# namespace go, and pasta with it.
+# and held while this runs. {held}
 
 [Unit]
-Description=moatery hut {hut.name}: network namespace and rules
+Description=moatery hut {hut.name}: {what}
 
 [Service]
 Type=notify
@@ -179,17 +195,18 @@ NotifyAccess=all
 
 
 def pod_unit(hut, settings):
+    after = ("listeners and the workload start" if settings.inspected
+             else "workload starts")
     return f"""\
 # moatery hut {hut.name}: the pod, in the network namespace the hut's
 # netns unit holds, which the pod's user namespace does not own. The
-# listeners and the workload start after it.
+# {after} after it.
 
 [Unit]
 Description=moatery hut {hut.name}: pod
 BindsTo={hut.netns_service}
 After={hut.netns_service}
-Wants={hut.inspect_service} {hut.resolve_service} {hut.rotate_timer}
-
+{_wants(hut, settings, hut.rotate_timer)}
 [Pod]
 PodName={hut.name}
 Network=ns:%t/{NETNS_DIR}/{hut.name}
@@ -201,6 +218,14 @@ PodmanArgs=--hosts-file=image --share-parent=false{_pod_level(settings)}
 [Service]
 Environment={_quoted(f"CONTAINERS_CONF_OVERRIDE={hut.containers_conf}")}
 """
+
+
+def _wants(hut, settings, *more):
+    """The listeners, and `more`, for a hut that has them."""
+    if not settings.inspected:
+        return ""
+    units = (hut.inspect_service, hut.resolve_service, *more)
+    return f"Wants={' '.join(units)}\n"
 
 
 def _pod_level(settings):
@@ -225,9 +250,10 @@ def container_unit(hut, settings, broker):
     # The hut's own files are labelled with its level, which no other
     # hut's runs at; a mount is the user's, which huts may share.
     volumes = [f"{hut.home}:{settings.home_path}:Z",
-               f"{hut.bundle}:{settings.trust_path}:ro,Z",
                f"{hut.prompt}:{PROMPT_PATH}:ro,Z",
                f"{hut.netns_mark}:{MARK_PATH}:ro,Z"]
+    if settings.inspected:
+        volumes.insert(1, f"{hut.bundle}:{settings.trust_path}:ro,Z")
     for mount in settings.mounts:
         volumes.append(f"{mount.source}:{mount.target}:"
                        + ("ro,z" if mount.readonly else "z"))
@@ -237,7 +263,7 @@ def container_unit(hut, settings, broker):
         lines.append(f"SecurityLabelLevel={settings.level}")
     lines += [f"Volume={_value(v)}" for v in volumes]
     lines += [f"Environment={_quoted(f'{v}={settings.trust_path}')}"
-              for v in CA_VARIABLES]
+              for v in (CA_VARIABLES if settings.inspected else ())]
     lines += [f"Environment={_quoted(f'{c.env}={c.placeholder}')}"
               for c in (broker.credentials if broker else ())]
     body = "\n".join(lines)
@@ -251,9 +277,7 @@ def container_unit(hut, settings, broker):
 
 [Unit]
 Description=moatery hut {hut.name}
-Wants={hut.inspect_service} {hut.resolve_service}
-After={hut.inspect_service} {hut.resolve_service}
-
+{_wants(hut, settings)}{_after(hut, settings)}
 [Container]
 ContainerName={hut.name}
 Pod={hut.unit}.pod
@@ -272,6 +296,12 @@ SeccompProfile={_value(hut.seccomp)}
     _tool(settings, "sudoers", hut.name))}
 SuccessExitStatus=143
 """ + (_AUTOSTART if settings.autostart else "")
+
+
+def _after(hut, settings):
+    if not settings.inspected:
+        return ""
+    return f"After={hut.inspect_service} {hut.resolve_service}\n"
 
 
 def _timezone():
@@ -410,16 +440,25 @@ OnUnitActiveSec=10min
 """
 
 
-def prompt(hut):
-    """Read by every shell in the hut. An interactive one in another
-    namespace than the rules were loaded into, as a container started
-    from the hut's files by hand is, says the moat does not cover it.
-    Then bash's prompt, the hut's name first: magenta, red as root,
-    white on red when not covered. Fedora's /etc/bashrc and the home's
-    .bashrc both read it, and the second changes nothing."""
+def prompt(hut, inspected=True):
+    """Read by every shell in the hut. In a hut with a network policy, an
+    interactive one in another namespace than the rules were loaded
+    into, as a container started from the hut's files by hand is, says
+    the moat does not cover it. Then bash's prompt, the hut's name
+    first: magenta, red as root, white on red when not covered, and
+    marked uninspected in a hut with no network policy. Fedora's
+    /etc/bashrc and the home's .bashrc both read it, and the second
+    changes nothing."""
     name = hut.name
     warn = r"printf '\033[1;31m%s\033[0m\n  %s\n  %s\n  %s\n  %s\n'"
-    return f"""\
+    if not inspected:
+        head, tag = f"""\
+# moatery hut {name}: the hut's name before bash's prompt; the hut has
+# no network policy, and no rules to warn of.
+_moathut_unprotected=
+""", "' uninspected'"
+    else:
+        head, tag = f"""\
 # moatery hut {name}: a warning in a shell the moat does not cover, and
 # the hut's name before bash's prompt.
 _moathut_unprotected=
@@ -440,13 +479,15 @@ case $- in
         fi
     fi ;;
 esac
+""", ""
+    return head + f"""\
 if [ -n "${{BASH_VERSION:-}}" ] && [ -n "${{PS1:-}}" ]; then
     case $PS1 in
     *'⬢ {name}'*) ;;
     *) if [ -n "$_moathut_unprotected" ]; then
            _moathut='1;37;41'; _moathut_tag=' UNPROTECTED'
-       elif [ "$EUID" = 0 ]; then _moathut='1;31'; _moathut_tag=
-       else _moathut='35'; _moathut_tag=
+       elif [ "$EUID" = 0 ]; then _moathut='1;31'; _moathut_tag={tag}
+       else _moathut='35'; _moathut_tag={tag}
        fi
        _moathut="\\[\\e[${{_moathut}}m\\]⬢ {name}${{_moathut_tag}}"
        PS1="$_moathut\\[\\e[0m\\] $PS1"
@@ -458,15 +499,18 @@ unset _moathut_unprotected
 
 
 def render(hut, settings, broker):
-    """Unit file path to text, for every unit the hut has: the broker's
+    """Unit file path to text, for every unit the hut has: the listeners'
+    and the record's only if it has a network policy, and the broker's
     only if it has a broker."""
     units = {hut.netns_file: netns_unit(hut, settings),
              hut.pod_file: pod_unit(hut, settings),
-             hut.container_file: container_unit(hut, settings, broker),
-             hut.inspect_file: inspect_unit(hut, settings, broker),
-             hut.resolve_file: resolve_unit(hut, settings),
-             hut.rotate_file: rotate_unit(hut, settings),
-             hut.rotate_timer_file: rotate_timer(hut)}
+             hut.container_file: container_unit(hut, settings, broker)}
+    if settings.inspected:
+        units.update({
+            hut.inspect_file: inspect_unit(hut, settings, broker),
+            hut.resolve_file: resolve_unit(hut, settings),
+            hut.rotate_file: rotate_unit(hut, settings),
+            hut.rotate_timer_file: rotate_timer(hut)})
     if broker:
         units[hut.broker_file] = broker_unit(hut, settings, broker)
     return units

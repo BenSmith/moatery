@@ -35,6 +35,10 @@ from .units import (CA_VARIABLES, MARK_PATH, PROMPT_PATH, Settings,
 DEFAULT_IMAGE = "registry.fedoraproject.org/fedora-toolbox:44"
 DEFAULT_LIBEXEC = "/usr/libexec/moatery"
 
+# What `--network-policy` takes for a hut whose network is not inspected.
+# A file of that name is given as ./none.
+NO_POLICY = "none"
+
 # The system bundles this knows, Fedora's first. The hut's is mounted
 # over the first of these its image has.
 TRUST_PATHS = ("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
@@ -123,6 +127,16 @@ def _policy(path):
         raise HutError(f"policy: {exc}") from None
 
 
+def _inspected(name, dirs):
+    """The hut and its settings, for a command that needs its network
+    policy."""
+    hut, settings = _existing(name, dirs)
+    if not settings.inspected:
+        raise HutError(f"hut {name} has no network policy: it was created "
+                       f"with --network-policy {NO_POLICY}")
+    return hut, settings
+
+
 def _broker(policy, dirs, load=None):
     """The hut's broker, from its policy and the credentials it names."""
     try:
@@ -158,7 +172,8 @@ def _written(hut, settings, broker):
     """Path to text, for each file the units are and each they read
     that is written with them: a hut's own seccomp profile is not, and
     stays as it was copied in."""
-    written = {**render(hut, settings, broker), hut.prompt: prompt(hut),
+    written = {**render(hut, settings, broker),
+               hut.prompt: prompt(hut, settings.inspected),
                hut.containers_conf: containers_conf(hut)}
     if settings.seccomp is not None:
         try:
@@ -200,10 +215,14 @@ def _write_units(hut, settings, broker, runner):
     hut.netns_mark.touch()
 
 
-def _trust_path(image, runner):
+def _pull(image, runner):
     if runner(["podman", "image", "exists", image],
               check=False).returncode != 0:
         runner(["podman", "pull", "-q", image])
+
+
+def _trust_path(image, runner):
+    _pull(image, runner)
     found = runner(["podman", "run", "--rm", "--network", "none",
                     "--entrypoint", "/bin/sh", image, "-c", _FIRST_FILE,
                     "sh", *TRUST_PATHS], check=False)
@@ -246,7 +265,10 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
     nothing is. A hut `like` another starts from its policy, image,
     mounts and seccomp profile: a policy, image or profile given
     replaces its, and a mount given joins its, replacing one at the same
-    target. `profile` names one of seccomp's or a file, copied in."""
+    target. `profile` names one of seccomp's or a file, copied in.
+    `policy_path` NO_POLICY makes a hut with no network policy, which has
+    neither rules nor listeners; one like it is one too, unless given a
+    policy."""
     hut = _hut(name, dirs)
     if hut.config.exists() or any(p.exists() for p in hut.unit_files):
         raise HutError(f"hut {name} exists")
@@ -268,7 +290,9 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
             profile = other_settings.seccomp
             if profile is None:
                 own = other.seccomp.read_text()
-        policy_path = policy_path or other.policy
+        if policy_path is None:
+            policy_path = (other.policy if other_settings.inspected
+                           else NO_POLICY)
         image = image or other_settings.image
         targets = {mount.target for mount, _ in given}
         inherited = [(mount, f"hut {like}'s mount")
@@ -281,14 +305,20 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
     elif profile is None:
         profile = seccomp.DEFAULT
     image = image or DEFAULT_IMAGE
-    broker = _broker(_policy(policy_path), dirs)
-    host_bundle = _host_bundle()
-    trust_path = _trust_path(image, runner)
+    inspected = policy_path != NO_POLICY
+    if inspected:
+        broker = _broker(_policy(policy_path), dirs)
+        host_bundle = _host_bundle()
+        trust_path = _trust_path(image, runner)
+    else:
+        broker = host_bundle = trust_path = None
+        _pull(image, runner)
     home_path = str(dirs.home)
+    covered = tuple(path for path in (home_path, trust_path, PROMPT_PATH,
+                                      MARK_PATH) if path is not None)
     for mount, origin in inherited + given:
         try:
-            refuse(mount, dirs,
-                   (home_path, trust_path, PROMPT_PATH, MARK_PATH))
+            refuse(mount, dirs, covered)
         except MountRefused as exc:
             raise HutError(f"{origin} {exc}") from None
     mounts = tuple(mount for mount, _ in inherited + given)
@@ -297,7 +327,7 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
                         mounts=mounts, tool=tuple(tool), python=python,
                         libexec=str(libexec), pythonpath=pythonpath,
                         autostart=autostart, seccomp=profile,
-                        level=_free_level(dirs))
+                        level=_free_level(dirs), inspected=inspected)
     if dry_run:
         return {**_written(hut, settings, broker),
                 **({hut.seccomp: own} if own is not None else {})}
@@ -325,15 +355,16 @@ def _lay_out(hut, settings, broker, policy_path, host_bundle, environ,
     for name, text in ((".bashrc", _BASHRC),
                        (".bash_profile", _BASH_PROFILE)):
         _home_file(hut.home / name, text)
-    hut.policy.write_bytes(Path(policy_path).read_bytes())
-    hut.policy.chmod(0o600)
-    minted = runner([*interpreter(settings),
-                     str(Path(settings.libexec) / "moat-mint-ca"),
-                     "--name", hut.name, "--state-dir", str(hut.state)],
-                    env=_program_env(environ, settings.pythonpath))
-    ca = Path(minted.stdout.strip())
-    hut.bundle.write_text(ca.read_text() + host_bundle.read_text())
-    hut.bundle.chmod(0o644)
+    if settings.inspected:
+        hut.policy.write_bytes(Path(policy_path).read_bytes())
+        hut.policy.chmod(0o600)
+        minted = runner([*interpreter(settings),
+                         str(Path(settings.libexec) / "moat-mint-ca"),
+                         "--name", hut.name, "--state-dir", str(hut.state)],
+                        env=_program_env(environ, settings.pythonpath))
+        ca = Path(minted.stdout.strip())
+        hut.bundle.write_text(ca.read_text() + host_bundle.read_text())
+        hut.bundle.chmod(0o644)
     if own_profile is not None:
         hut.seccomp.write_text(own_profile)
     _write_units(hut, settings, broker, runner)
@@ -479,7 +510,8 @@ def _clear_broker(hut, runner):
 def _refresh(hut, settings, dirs, runner):
     """A stopped hut's files written again if this moathut would write
     them otherwise, so its start is one this moathut made."""
-    broker = _broker(_policy(hut.policy), dirs)
+    broker = (_broker(_policy(hut.policy), dirs) if settings.inspected
+              else None)
     units = _written(hut, settings, broker)
     if any(not path.exists() or path.read_text() != text
            for path, text in units.items()) or any(
@@ -500,11 +532,12 @@ def enter(name, command, *, root, dirs, cwd, environ, isatty,
     except CommandFailed as exc:
         raise HutError(f"hut {name} did not start ({exc}); see "
                        f"journalctl --user -u '{hut.unit}*'") from None
-    if not rules_loaded(pod_pid(name, runner), runner):
+    if settings.inspected and not rules_loaded(pod_pid(name, runner),
+                                               runner):
         raise HutError(f"hut {name}'s namespace has no moatery rules. "
                        f"moathut stop {name}, then enter it again")
     # Nothing requires them, so the workload starts without them.
-    for unit, what, effect in _listeners(hut):
+    for unit, what, effect in _listeners(hut) if settings.inspected else ():
         if _state(unit, runner) == "active":
             continue
         runner(["systemctl", "--user", "reset-failed", unit], check=False)
@@ -634,20 +667,22 @@ def ls(*, dirs, runner=run):
                     + ((f"seccomp:{settings.seccomp or 'own'}",)
                        if settings.seccomp != seccomp.DEFAULT else ())
                     + (("autostart",) if settings.autostart else ())
-                    + (("unprotected",) if _unprotected(hut, runner)
-                       else ()))
+                    + (() if settings.inspected
+                       else (f"network-policy:{NO_POLICY}",))
+                    + (("unprotected",) if settings.inspected
+                       and _unprotected(hut, runner) else ()))
     return rows
 
 
 def log(name, *, dirs, write=print, pause=time.sleep):
-    hut, _settings = _existing(name, dirs)
+    hut, _settings = _inspected(name, dirs)
     record.follow(hut.record, write, pause=pause)
 
 
 def refused(name, *, dirs):
     """The refusals in the hut's record its policy would still make, and
     the names its workload asked for that no list admits."""
-    hut, _settings = _existing(name, dirs)
+    hut, _settings = _inspected(name, dirs)
     policy = _policy(hut.policy)
     docs = (doc for path in record.records(hut.record)
             for doc in record.lines(path))
@@ -659,7 +694,7 @@ def allow(name, host, *, methods, paths, dirs, runner=run,
           pause=time.sleep):
     """Widen the hut's policy for HOST and apply it. None if the policy
     allows it already."""
-    hut, settings = _existing(name, dirs)
+    hut, settings = _inspected(name, dirs)
     policy = _policy(hut.policy)
     try:
         doc = document.allow(json.loads(hut.policy.read_text()), policy,
@@ -677,7 +712,7 @@ def edit_policy(name, *, dirs, environ, isatty, runner=run,
     """Open a copy of the hut's policy in the user's editor, and apply it
     once it loads. A copy that does not is opened again, if there is a
     terminal to ask on. None if it came back unchanged."""
-    hut, settings = _existing(name, dirs)
+    hut, settings = _inspected(name, dirs)
     editor = shlex.split(environ.get("VISUAL") or environ.get("EDITOR")
                          or "vi")
     original = hut.policy.read_text()
@@ -843,6 +878,8 @@ def _naming(credential, dirs):
     """The huts whose policies name the credential, with their settings
     and policies."""
     for hut, settings in _huts(dirs):
+        if not settings.inspected:
+            continue
         policy = _policy(hut.policy)
         if any(e.credential == credential for e in policy.policy):
             yield hut, settings, policy
@@ -926,7 +963,9 @@ def credential_add(credential, secret, *, hosts, env, auth_header,
 
 def credential_ls(*, dirs):
     named = {}
-    for hut, _settings in _huts(dirs):
+    for hut, settings in _huts(dirs):
+        if not settings.inspected:
+            continue
         for entry in _policy(hut.policy).policy:
             if entry.credential:
                 named.setdefault(entry.credential, set()).add(hut.name)
@@ -959,15 +998,15 @@ def unit_netns(name, *, dirs, runner=run, ready=notify_ready,
                wait=_until_stopped, fork=os.fork):
     """The hut's network namespace, made in the user namespace `podman
     unshare` is root in, as the netns unit runs it: connected by pasta,
-    the rules in, and its name where the hut reads it, written in place,
-    since the hut mounts the file and not the directory. What a holder
-    killed left is let go first.
+    the rules in unless the hut has no network policy, and its name where
+    the hut reads it, written in place, since the hut mounts the file and
+    not the directory. What a holder killed left is let go first.
 
     Then a fork holds it, until `wait` returns or raises, and lets go;
     this process tells the manager the holder is the unit's main process
     and returns. podman exits with it, and the holder, the manager's
     child then, is one whose end the manager sees."""
-    hut = _hut(name, dirs)
+    hut, settings = _existing(name, dirs)
     if dirs.runtime is None:
         raise HutError("XDG_RUNTIME_DIR is not set, and a hut's network "
                        "namespace is held in it")
@@ -976,7 +1015,8 @@ def unit_netns(name, *, dirs, runner=run, ready=notify_ready,
     try:
         make(path, runner)
         connect(path, runner)
-        load_rules(path, runner)
+        if settings.inspected:
+            load_rules(path, runner)
         with open(hut.netns_mark, "w") as mark:
             mark.write(netns_id(path, runner) + "\n")
         holder = fork()
