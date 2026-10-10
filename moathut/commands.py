@@ -685,7 +685,11 @@ def edit_policy(name, *, dirs, environ, isatty, runner=run,
     _private(draft, original)
     try:
         while True:
-            done = edit([*editor, str(draft)])
+            try:
+                done = edit([*editor, str(draft)])
+            except FileNotFoundError:
+                raise HutError(f"no editor {editor[0]}: set VISUAL or "
+                               "EDITOR; the policy is unchanged") from None
             if done.returncode != 0:
                 raise HutError(f"{editor[0]} exited {done.returncode}; the "
                                "policy is unchanged")

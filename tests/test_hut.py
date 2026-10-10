@@ -2216,6 +2216,22 @@ with mock.patch.object(cli, "unit_netns", held):
             self._edit(failing)
         self.assertEqual(hut.policy.read_text(), before)
 
+    def test_an_editor_that_is_not_installed_is_named(self):
+        """A host with no vi and neither variable set, which subprocess
+        reports as FileNotFoundError: a refusal naming the editor, not a
+        traceback, and nothing left beside the policy."""
+        hut, _ = self._create()
+        before = hut.policy.read_text()
+
+        def missing(argv):
+            raise FileNotFoundError(2, "No such file or directory", argv[0])
+        with self.assertRaisesRegex(commands.HutError,
+                                    "no editor vi: set VISUAL or EDITOR"):
+            self._edit(missing)
+        self.assertEqual(hut.policy.read_text(), before)
+        self.assertNotIn(".policy.json.edit",
+                         [p.name for p in hut.config.iterdir()])
+
     def test_at_a_terminal_a_policy_that_does_not_load_is_edited_again(self):
         hut, _ = self._create()
         asked = []
