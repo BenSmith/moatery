@@ -1231,7 +1231,7 @@ class TestCommands(unittest.TestCase):
     def test_the_command_line_hands_the_profile_on(self):
         from moathut import cli
         for words, want in ((["--seccomp", "debug"], "debug"), ([], None)):
-            args = parse(["create", "agent", "--policy", "p", *words])
+            args = parse(["create", "agent", "--network-policy", "p", *words])
             with mock.patch.object(cli, "create") as create, \
                     mock.patch("sys.stdout"):
                 cli.run_command(args, tool=(), environ=self.env,
@@ -1283,9 +1283,9 @@ class TestCommands(unittest.TestCase):
                                "SecurityLabelLevel"), ["s0:c4,c8"])
 
     def test_autostart_is_kept_and_rendered(self):
-        """Kept in hut.json, since `policy` and `credential add` write the
-        units again; a hut.json from before it was a setting reads as
-        off."""
+        """Kept in hut.json, since `network-policy` and `credential add`
+        write the units again; a hut.json from before it was a setting
+        reads as off."""
         hut, _ = self._create(autostart=True)
         self.assertTrue(
             Settings.from_json(hut.settings.read_text()).autostart)
@@ -1315,7 +1315,7 @@ class TestCommands(unittest.TestCase):
     def test_the_command_line_hands_autostart_on(self):
         from moathut import cli
         for words, want in ((["--autostart"], True), ([], False)):
-            args = parse(["create", "agent", "--policy", "p", *words])
+            args = parse(["create", "agent", "--network-policy", "p", *words])
             with mock.patch.object(cli, "create") as create, \
                     mock.patch("sys.stdout"):
                 cli.run_command(args, tool=(), environ=self.env,
@@ -1430,7 +1430,7 @@ class TestCommands(unittest.TestCase):
 
     def test_the_command_line_prints_a_dry_run(self):
         from moathut import cli
-        args = parse(["create", "agent", "--policy", "p", "--dry-run"])
+        args = parse(["create", "agent", "--network-policy", "p", "--dry-run"])
         files = {Path("/u/a.pod"): "[Pod]\n", Path("/u/p.sh"): "x\n"}
         with mock.patch.object(cli, "create", return_value=files) as create, \
                 mock.patch("builtins.print") as printed:
@@ -1489,7 +1489,7 @@ class TestCommands(unittest.TestCase):
         gone.mkdir()
         self._create(mounts=["projects/gone"])
         gone.rmdir()
-        cases = {"--policy FILE or --like HUT": dict(like=None),
+        cases = {"--network-policy FILE or --like HUT": dict(like=None),
                  "no hut nosuch": dict(like="nosuch"),
                  "hut agent's mount .*gone: not a directory": dict(
                      like="agent")}
@@ -1507,7 +1507,7 @@ class TestCommands(unittest.TestCase):
         from moathut import cli
         for words, like, policy in (
                 (["--like", "agent"], "agent", None),
-                (["--policy", "p"], None, "p")):
+                (["--network-policy", "p"], None, "p")):
             args = parse(["create", "twin", *words])
             with mock.patch.object(cli, "create") as create, \
                     mock.patch("builtins.print"):

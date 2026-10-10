@@ -279,8 +279,8 @@ another port at the answered address times out. The counters.
 ## hut_rig.py — a moathut hut, through its command line
 
 `docs/MOATHUT.md`: `moathut credential add`, `create`, `enter`, `log`,
-`allow`, `policy`, `stop` and `rm`, the hut's units run by the user's
-manager and quadlet, the namespace its netns unit holds, the netns
+`allow`, `network-policy`, `stop` and `rm`, the hut's units run by the
+user's manager and quadlet, the namespace its netns unit holds, the netns
 placement's rules and listeners in it, and the hut's broker.
 The tool is the checkout's `bin/moathut`, or with
 `MOATERY_LIBEXEC=/usr/libexec/moatery` the installed one.
@@ -360,13 +360,13 @@ inspector's status file names the new document; the host is then
 dialled and not refused, and `log --refused` stops listing it; a
 download through the inspector, begun before an `allow` and still
 running when it returns, finishes whole, every byte in order; a
-`policy` edit the loader refuses exits 1 and restarts nothing, and at a
-terminal (a pty) asks, opens the editor again, and applies the second
-document, reloading the listeners; one dropping the credential stops
-the broker and removes its unit, and the provider is reached unbrokered
-(the stub's 401), and one naming it again brings the broker back and
-the provider is served; the inspector killed is started again, and
-nothing else is; stopped, the workload runs on in its container, and
+`network-policy` edit the loader refuses exits 1 and restarts nothing,
+and at a terminal (a pty) asks, opens the editor again, and applies the
+second document, reloading the listeners; one dropping the credential
+stops the broker and removes its unit, and the provider is reached
+unbrokered (the stub's 401), and one naming it again brings the broker
+back and the provider is served; the inspector killed is started again,
+and nothing else is; stopped, the workload runs on in its container, and
 `enter` starts it again; `log` follows a request just made, and SIGINT,
 which is Ctrl-C, ends it with status 0 and no traceback. The record's
 rotation: its timer active with the pod and its run exited 0; the

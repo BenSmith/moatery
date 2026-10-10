@@ -2,10 +2,10 @@
 """hut_rig.py — a moathut hut, made and run through its command line.
 
 docs/MOATHUT.md: `moathut credential add`, `create`, `enter`, `log`,
-`allow`, `policy`, `stop` and `rm`, the hut's units run by the user's
-manager and quadlet, the namespace its netns unit holds, the netns
-placement's rules and listeners in it, and the hut's broker. Run on the
-proving host as an ordinary user, from a checkout:
+`allow`, `network-policy`, `stop` and `rm`, the hut's units run by the
+user's manager and quadlet, the namespace its netns unit holds, the
+netns placement's rules and listeners in it, and the hut's broker. Run
+on the proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/hut_rig.py [--keep] [--without-rules]
                                     [--without-held-netns]
@@ -380,7 +380,7 @@ MARKER = HOME / ".moatery-rig-marker"
 
 POLICY = RIG / "hut-policy.json"
 PLAIN_POLICY = RIG / "hut-plain-policy.json"
-# $EDITOR for `moathut policy`: writes a document the loader refuses.
+# $EDITOR for `moathut network-policy`: writes a document the loader refuses.
 BAD_EDITOR = RIG / "hut-bad-editor"
 # And two that write the rig's plain and brokered documents.
 PLAIN_EDITOR = RIG / "hut-plain-editor"
@@ -854,7 +854,7 @@ def unlevelled(text):
 
 def create_rows(autostart):
     say("create")
-    words = ("create", HUT, "--policy", str(POLICY),
+    words = ("create", HUT, "--network-policy", str(POLICY),
              "--mount", str(PROJECT),
              "--mount", f"{READONLY}:{READONLY_AT}:ro",
              *(["--autostart"] if autostart else []))
@@ -1597,13 +1597,14 @@ def terminal_rows():
     TTY_POLICY.write_text(json.dumps(doc, indent=2) + "\n")
     TTY_RUNS.unlink(missing_ok=True)
     code, said = at_terminal(
-        [*TOOL, "policy", HUT],
+        [*TOOL, "network-policy", HUT],
         {**TOOL_ENV, "EDITOR": str(TTY_EDITOR), "VISUAL": ""},
         "y\n", "edit it again? [Y/n]")
     runs = len(TTY_RUNS.read_text().split()) if TTY_RUNS.exists() else 0
     lines = [x for x in said.splitlines() if x.strip()]
-    row("loop: policy at a terminal: the refused document is named and "
-        "the editor opened again on asking, and the second is applied",
+    row("loop: network-policy at a terminal: the refused document is "
+        "named and the editor opened again on asking, and the second is "
+        "applied",
         code == 0 and "'hosts'" in said and runs == 2
         and (CONFIG / "policy.json").read_text() == TTY_POLICY.read_text(),
         f"status {code}; editor ran {runs} time(s); {lines[-3:]}")
@@ -1670,10 +1671,10 @@ def loop_rows():
     say("loop: a policy that does not load")
     text = (CONFIG / "policy.json").read_text()
     before = loop_invocations()
-    edited = hut("policy", HUT, env={"EDITOR": str(BAD_EDITOR),
-                                     "VISUAL": ""})
-    row("loop: policy refuses a document the loader refuses, at the "
-        "command, and the hut's policy is unchanged",
+    edited = hut("network-policy", HUT,
+                 env={"EDITOR": str(BAD_EDITOR), "VISUAL": ""})
+    row("loop: network-policy refuses a document the loader refuses, at "
+        "the command, and the hut's policy is unchanged",
         edited.returncode == 1 and "'hosts'" in edited.stderr
         and (CONFIG / "policy.json").read_text() == text,
         f"rc={edited.returncode} {edited.stderr.strip()[-200:]!r}")
@@ -1756,12 +1757,13 @@ def loop_rows():
 
     say("loop: policy drops the credential, then names it again")
     started = container_started()
-    edited = hut("policy", HUT, env={"EDITOR": str(PLAIN_EDITOR),
-                                     "VISUAL": ""})
+    edited = hut("network-policy", HUT,
+                 env={"EDITOR": str(PLAIN_EDITOR), "VISUAL": ""})
     broker = show(BROKER_SERVICE, "ActiveState")
     inspect = show(INSPECT_SERVICE, "ExecStart")
-    row("loop: policy without the credential: the broker is stopped and its "
-        "unit gone, and the inspector restarted without it",
+    row("loop: network-policy without the credential: the broker is "
+        "stopped and its unit gone, and the inspector restarted without "
+        "it",
         edited.returncode == 0 and broker == "inactive"
         and not (UNITS / BROKER_SERVICE).exists() and "--broker" not in inspect
         and show(INSPECT_SERVICE, "ActiveState") == "active",
@@ -1780,12 +1782,13 @@ def loop_rows():
         f"http={got.stdout.strip()!r}; record: "
         + (f"{rec.get('decision')} {rec.get('status')} "
            f"{rec.get('credential')}" if rec else "none"))
-    edited = hut("policy", HUT, env={"EDITOR": str(BROKERED_EDITOR),
-                                     "VISUAL": ""})
+    edited = hut("network-policy", HUT,
+                 env={"EDITOR": str(BROKERED_EDITOR), "VISUAL": ""})
     ok, detail = provider_served("loop-brokered")
     same = container_started() == started
-    row("loop: policy naming it again: the broker is back, and the provider "
-        "is served; the workload ran on in the same container throughout",
+    row("loop: network-policy naming it again: the broker is back, and the "
+        "provider is served; the workload ran on in the same container "
+        "throughout",
         edited.returncode == 0 and ok and same
         and show(BROKER_SERVICE, "ActiveState") == "active",
         f"rc={edited.returncode} {edited.stdout.strip()!r} "
@@ -2160,7 +2163,7 @@ def rm_rows(tag):
         and RECORD.exists() == recorded,
         f"{KEPT} in the home: {(HUT_HOME / KEPT).exists()}; record: "
         f"{recorded} -> {RECORD.exists()}; said {removed.stdout.split()}")
-    made = hut("create", HUT, "--policy", str(PLAIN_POLICY))
+    made = hut("create", HUT, "--network-policy", str(PLAIN_POLICY))
     run(["systemctl", "--user", "start", "default.target"], check=False,
         timeout=180)
     now = states()

@@ -126,7 +126,8 @@ class TestTheCompletion(unittest.TestCase):
         (self.home / ".config" / "moatery" / "hut" / "half").mkdir()
         huts = {"work", "play"}
         for line in ("moathut enter ", "moathut log ", "moathut allow ",
-                     "moathut policy ", "moathut stop ", "moathut rm ",
+                     "moathut network-policy ", "moathut stop ",
+                     "moathut rm ",
                      "moathut ptyxis ", "moathut ptyxis --remove ",
                      "moathut create x --like ",
                      "moathut create x --like=",

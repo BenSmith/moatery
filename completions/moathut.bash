@@ -33,8 +33,9 @@ _moathut_credentials() {
 
 _moathut_takes_value() {
     case $1 in
-        --policy | --image | --mount | --seccomp | --like | --method | \
-            --path | --host | --env | --auth-header | --auth-format)
+        --network-policy | --image | --mount | --seccomp | --like | \
+            --method | --path | --host | --env | --auth-header | \
+            --auth-format)
             return 0 ;;
     esac
     return 1
@@ -60,7 +61,7 @@ _moathut() {
     done
 
     case $prev in
-        --policy) _filedir; return ;;
+        --network-policy) _filedir; return ;;
         --mount) _filedir -d; return ;;
         --seccomp)
             _filedir
@@ -81,11 +82,11 @@ _moathut() {
     case $command in
         "")
             options="--version"
-            names="create enter log allow policy stop rm ls credential
-                ptyxis" ;;
+            names="create enter log allow network-policy stop rm ls
+                credential ptyxis" ;;
         create)
-            options="--policy --image --mount --autostart --seccomp --like
-                --dry-run" ;;
+            options="--network-policy --image --mount --autostart --seccomp
+                --like --dry-run" ;;
         enter)
             options="--root"
             ((n == 0)) && names=$(_moathut_huts) ;;
@@ -95,7 +96,7 @@ _moathut() {
         allow)
             options="--method --path"
             ((n == 0)) && names=$(_moathut_huts) ;;
-        policy | stop)
+        network-policy | stop)
             ((n == 0)) && names=$(_moathut_huts) ;;
         rm)
             options="--home"

@@ -16,8 +16,8 @@ from .netns import NetnsError
 from .paths import user_dirs
 from .process import CommandFailed
 
-PUBLIC = ("{create,enter,log,allow,policy,stop,rm,ls,credential,"
-          "ptyxis}")
+PUBLIC = ("{create,enter,log,allow,network-policy,stop,rm,ls,"
+          "credential,ptyxis}")
 
 # The release's VERSION, which the RPM installs beside the package.
 VERSION = Path(__file__).with_name("VERSION")
@@ -34,7 +34,7 @@ def build_parser():
                                 metavar=PUBLIC)
     p = sub.add_parser("create", help="lay out a hut; nothing starts")
     p.add_argument("name")
-    p.add_argument("--policy",
+    p.add_argument("--network-policy", metavar="FILE",
                    help="the inspector's policy document, copied in")
     p.add_argument("--image",
                    help=f"default {DEFAULT_IMAGE}, or the --like hut's")
@@ -49,8 +49,9 @@ def build_parser():
                         "ptrace; or a seccomp profile file, copied in")
     p.add_argument("--like", metavar="HUT",
                    help="start from another hut's policy, image, mounts "
-                        "and seccomp profile; --policy, --image and "
-                        "--seccomp replace its, and --mount adds to them")
+                        "and seccomp profile; --network-policy, --image "
+                        "and --seccomp replace its, and --mount adds to "
+                        "them")
     p.add_argument("--dry-run", action="store_true",
                    help="print the files it would write, and write none; "
                         "the image is pulled, to find its trust store")
@@ -76,8 +77,9 @@ def build_parser():
                    metavar="PATTERN",
                    help="a path pattern the host is allowed, where * "
                         "matches / too; repeatable")
-    p = sub.add_parser("policy", help="edit a hut's policy in $EDITOR; its "
-                                      "listeners reload")
+    p = sub.add_parser("network-policy",
+                       help="edit a hut's policy in $EDITOR; its "
+                            "listeners reload")
     p.add_argument("name")
     p = sub.add_parser("stop", help="stop a hut")
     p.add_argument("name")
@@ -204,7 +206,7 @@ def _stopped(signum, frame):
 def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
     dirs = user_dirs(environ)
     if args.command == "create":
-        hut = create(args.name, args.policy, args.image, args.mount,
+        hut = create(args.name, args.network_policy, args.image, args.mount,
                      dirs=dirs, tool=tool, python=sys.executable,
                      libexec=environ.get("MOATERY_LIBEXEC")
                      or DEFAULT_LIBEXEC,
@@ -234,7 +236,7 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
                  "its policy allows that already",
                  allow(args.name, args.host, methods=args.method,
                        paths=args.path, dirs=dirs))
-    elif args.command == "policy":
+    elif args.command == "network-policy":
         _applied(args.name, "policy replaced", "policy unchanged",
                  edit_policy(args.name, dirs=dirs, environ=environ,
                              isatty=isatty))

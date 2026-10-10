@@ -275,7 +275,7 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
                      for mount in other_settings.mounts
                      if mount.target not in targets]
     if policy_path is None:
-        raise HutError("create needs --policy FILE or --like HUT")
+        raise HutError("create needs --network-policy FILE or --like HUT")
     if own is not None:
         profile = None
     elif profile is None:

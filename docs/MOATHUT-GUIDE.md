@@ -54,7 +54,7 @@ every key; the ones you need most are shown in this guide.
 **2. Create the hut.**
 
 ```
-moathut create work --policy ~/policy.json --mount ~/src/project
+moathut create work --network-policy ~/policy.json --mount ~/src/project
 ```
 
 Hut names use lowercase letters, digits and `-`. `create` pulls the
@@ -142,7 +142,7 @@ kept apart from your desktop, and what it sends out is checked.
 
 | toolbx / distrobox | moathut |
 |---|---|
-| `toolbox create` / `distrobox create` | `moathut create NAME --policy FILE` |
+| `toolbox create` / `distrobox create` | `moathut create NAME --network-policy FILE` |
 | `distrobox create --clone` | `moathut create NAME --like HUT` (not its home) |
 | `toolbox enter` / `distrobox enter` | `moathut enter NAME` |
 | `toolbox run CMD` / `distrobox enter -- CMD` | `moathut enter NAME -- CMD` |
@@ -180,7 +180,8 @@ FROM registry.fedoraproject.org/fedora-toolbox:44
 RUN dnf -y install ripgrep nodejs && dnf clean all
 EOF
 podman build -t localhost/work .
-moathut create work --policy ~/policy.json --image localhost/work
+moathut create work --network-policy ~/policy.json \
+    --image localhost/work
 ```
 
 The build runs on the host, so it doesn't need the hut's policy.
@@ -321,7 +322,7 @@ ever adds. It takes a host name; to allow a pattern such as
 **Edit the policy.**
 
 ```
-moathut policy work
+moathut network-policy work
 ```
 
 This opens the hut's policy in `$VISUAL`, `$EDITOR` or `vi`. When you
@@ -363,8 +364,8 @@ hosts. By default the key goes in an `x-api-key` header. For a provider
 that wants `Authorization: Bearer KEY`, add
 `--auth-header Authorization --auth-format 'Bearer {secret}'`.
 
-**2. Name it in the hut's policy.** Use `moathut policy work` and
-add an entry:
+**2. Name it in the hut's policy.** Use `moathut network-policy work`
+and add an entry:
 
 ```json
 {
@@ -489,6 +490,6 @@ For a hut named `work`:
 | its seccomp profile | `~/.config/moatery/hut/work/seccomp.json` |
 | its units | `systemctl --user status 'moathut-work*'` |
 
-Edit the policy with `moathut policy`, not in place: the command
-checks it first and applies it. [MOATHUT.md](MOATHUT.md), "Files",
-lists the rest.
+Edit the policy with `moathut network-policy`, not in place: the
+command checks it first and applies it. [MOATHUT.md](MOATHUT.md),
+"Files", lists the rest.

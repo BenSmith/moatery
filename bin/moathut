@@ -13,13 +13,13 @@ into this command (`moathut unit ...`) for what they cannot say
 themselves.
 
 Usage:
-  moathut create NAME (--policy FILE | --like HUT) [--image IMAGE]
-                     [--mount SRC[:DST][:ro]]... [--seccomp PROFILE]
-                     [--autostart] [--dry-run]
+  moathut create NAME (--network-policy FILE | --like HUT)
+                     [--image IMAGE] [--mount SRC[:DST][:ro]]...
+                     [--seccomp PROFILE] [--autostart] [--dry-run]
   moathut enter NAME [--root] [-- COMMAND...]
   moathut log NAME [--refused]
   moathut allow NAME HOST [--method M]... [--path P]...
-  moathut policy NAME
+  moathut network-policy NAME
   moathut stop NAME
   moathut rm NAME [--home]
   moathut ptyxis NAME [--remove]

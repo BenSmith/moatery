@@ -43,7 +43,7 @@ Two put them in place:
   them over.
 
 And **moathut** puts them all together for command-line work:
-`moathut create NAME --policy FILE` makes a long-lived rootless
+`moathut create NAME --network-policy FILE` makes a long-lived rootless
 container with its own home, inspector and responder, and a broker
 once its policy names a credential; `moathut enter NAME` runs a
 shell or a command in it. A lot like toolbx or distrobox, but a hut

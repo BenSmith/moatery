@@ -1,7 +1,8 @@
 # moathut
 
 moathut makes long-lived, inspected containers, called huts:
-`moathut create NAME --policy FILE`, then `moathut enter NAME`.
+`moathut create NAME --network-policy FILE`, then
+`moathut enter NAME`.
 Each hut is the netns placement ([DESIGN.md](DESIGN.md)) laid out
 much as [examples/quadlet/](../examples/quadlet/) is: a unit that makes
 the network namespace in the user's own user namespace, holds it, and
@@ -24,13 +25,13 @@ so git over ssh cannot leave a hut, and git over https can.
 ## Commands
 
 ```
-moathut create NAME (--policy FILE | --like HUT) [--image IMAGE]
-                   [--mount SRC[:DST][:ro]]... [--seccomp PROFILE]
-                   [--autostart] [--dry-run]
+moathut create NAME (--network-policy FILE | --like HUT)
+                   [--image IMAGE] [--mount SRC[:DST][:ro]]...
+                   [--seccomp PROFILE] [--autostart] [--dry-run]
 moathut enter NAME [--root] [-- COMMAND...]
 moathut log NAME [--refused]
 moathut allow NAME HOST [--method M]... [--path P]...
-moathut policy NAME
+moathut network-policy NAME
 moathut credential add ID [--host HOST]... [--env VARIABLE]
                    [--auth-header FIELD] [--auth-format FORMAT]
 moathut credential ls
@@ -59,11 +60,12 @@ the git, Python, ssh client and manual pages `fedora:44` leaves out.
 - `--seccomp`: the workload's seccomp profile ("Seccomp", below):
   `strict`, the default, `debug`, or a file, copied in.
 - `--like HUT`: it starts from another hut's policy, as edited since,
-  its image, its mounts and its seccomp profile. `--policy`, `--image`
-  and `--seccomp` replace its, and a `--mount` joins its, replacing one
-  at the same target. The new hut gets a home and an SELinux level of
-  its own, and is not autostarted without `--autostart`. A mount whose
-  source has gone since is refused, naming the hut it came from.
+  its image, its mounts and its seccomp profile. `--network-policy`,
+  `--image` and `--seccomp` replace its, and a `--mount` joins its,
+  replacing one at the same target. The new hut gets a home and an
+  SELinux level of its own, and is not autostarted without
+  `--autostart`. A mount whose source has gone since is refused, naming
+  the hut it came from.
 
 **enter** starts the workload's unit if it is inactive, which starts, in
 order, the namespace's unit, which loads the rules, the pod, the broker
@@ -124,11 +126,11 @@ host the workload reaches has to be listed.
   host entries govern takes another entry, since `hosts` is not
   consulted for it, and so needs `--method` or `--path`; if it is
   brokered, `--path`, or its key would go with every request. HOST is a
-  name; a pattern is written with `policy`.
-- **policy** opens a copy of the document in `$VISUAL`, `$EDITOR` or
-  `vi`. A copy that comes back unchanged changes nothing; one that does
-  not load is refused, and opened again if there is a terminal to ask
-  on.
+  name; a pattern is written with `network-policy`.
+- **network-policy** opens a copy of the document in `$VISUAL`,
+  `$EDITOR` or `vi`. A copy that comes back unchanged changes nothing;
+  one that does not load is refused, and opened again if there is a
+  terminal to ask on.
 - Either checks the edited document with the inspector's own loader
   (`moatery.inspect_policy.load_policy`), and its credentials as
   `create` does, before it replaces the file, so a mistake is an error
@@ -360,7 +362,7 @@ units differ from the example's in these ways:
   knowing. A mount may not cover it. A shell `podman exec --privileged`
   opens is not warned: it is in the namespace with the rules, and
   cannot change them.
-- Units written while the hut's pod runs, by `allow`, `policy` or
+- Units written while the hut's pod runs, by `allow`, `network-policy` or
   `credential add`, leave the namespace's, the pod's, the override and
   the prompt as they are: after a reload, the manager stops a running
   unit that has gained a `BindsTo=` on one that is not running. `enter`
@@ -577,7 +579,8 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
 - `log --refused` names a host the hut was refused; `allow` lists it and
   reloads the listeners, a download running through it finishing whole,
   and the host is dialled after;
-- a `policy` edit the loader refuses changes and restarts nothing;
+- a `network-policy` edit the loader refuses changes and restarts
+  nothing;
 - a killed inspector is started again, and a stopped one leaves the
   workload running until `enter` starts it;
 - `log` follows a request as it is made;

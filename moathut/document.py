@@ -19,11 +19,11 @@ class AllowRefused(ValueError):
 
 def host_name(text):
     """A host name as the lists match it, or raise: a pattern is the
-    document's to hold, written with `moathut policy`."""
+    document's to hold, written with `moathut network-policy`."""
     host = normalize_hostname(text)
     if not host or hostname_bad_character(host):
         raise AllowRefused(f"{text!r} is not a host name; a pattern is "
-                           "written with moathut policy NAME")
+                           "written with moathut network-policy NAME")
     return host
 
 
