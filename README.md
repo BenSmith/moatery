@@ -85,6 +85,8 @@ every placement.
 
 - [docs/MOATHUT-GUIDE.md](docs/MOATHUT-GUIDE.md): moathut, as a user's
   guide; [docs/MOATHUT.md](docs/MOATHUT.md) is its reference.
+- [docs/MOATHUT-CLAUDE-CODE.md](docs/MOATHUT-CLAUDE-CODE.md): Claude
+  Code in a hut, with your subscription's token sealed on the host.
 - [docs/POLICY.md](docs/POLICY.md): the policy document the inspector
   reads.
 - [docs/DESIGN.md](docs/DESIGN.md): placing moatery, the rules it
