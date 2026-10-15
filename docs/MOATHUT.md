@@ -499,6 +499,7 @@ refuses more:
 | `ptrace`, `process_vm_readv`, `process_vm_writev`, `pidfd_getfd` | EPERM | `debug` allows them |
 | `keyctl`, `add_key`, `request_key`, `io_uring_*`, `socketcall` | ENOSYS | programs do without a keyring or io_uring a kernel lacks; io_uring's and socketcall's operations are out of the filter's sight |
 | `socket(AF_VSOCK, ...)`, however the family is written | ENOSYS | a vsock reaches the host, or a VM's hypervisor, around the network namespace |
+| `socket(AF_NETLINK, ...)` with `NETLINK_GENERIC` or `NETLINK_SOCK_DIAG` | ENOSYS | a generic netlink family lookup and a sock_diag request make the kernel load the module they name, and the name is in the message, out of the filter's sight; `wg` and `iw` need generic netlink, `ss` sock_diag |
 
 It changes when moathut does, not when podman's default does: a call
 a later default allows is refused in a hut until moathut allows it,
@@ -609,9 +610,9 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
   the namespace the namespace's unit holds, whose pasta has the
   arguments podman gives a pod's;
 - the hut's user, and root in a privileged exec, are refused by the
-  profile a namespace, a mount, ptrace, the keyring and a vsock however
-  its family is written, while a thread, an inet and a netlink socket
-  reach the kernel; in a stock container the same calls reach the
+  profile a namespace, a mount, ptrace, the keyring, a vsock however
+  its family is written and netlink's generic and sock_diag sockets,
+  while a thread, an inet and a netlink route socket reach the kernel; in a stock container the same calls reach the
   kernel; under `debug`, ptrace does;
 - the workload runs at the hut's level, and its home, bundle, prompt and
   mark are labelled at it; its `/dev/shm` is writable; a container at

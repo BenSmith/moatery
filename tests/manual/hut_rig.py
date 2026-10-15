@@ -106,9 +106,10 @@ THE ROWS
             rejects: in a stock container every one reaches the kernel,
             a vsock with an upper bit in its family among them; in the
             hut, the profile refuses the user, and root in a privileged
-            exec, a namespace, a mount, ptrace, the keyring and a vsock
-            however written, and lets a thread, an unshare of nothing
-            new and an inet and a netlink socket through. Before the
+            exec, a namespace, a mount, ptrace, the keyring, a vsock
+            however written and netlink's generic and sock_diag
+            sockets, and lets a thread, an unshare of nothing new and an
+            inet and a netlink route socket through. Before the
             rows, a report, not a row: the calls the host's podman
             default and strict allow differently, beyond what strict
             narrows and widens.
@@ -614,6 +615,8 @@ print(json.dumps({
     "socket inet": call(41, 2, 99, 0),
     "socket netlink route": call(41, 16, 3, 0),
     "socket netlink audit": call(41, 16, 3, 9),
+    "socket netlink generic": call(41, 16, 3, 16),
+    "socket netlink sock_diag": call(41, 16, 3, 4),
     "io_uring_setup": call(425, 1, 0),
     "open_by_handle_at": call(304, -1, 0, 0),
 }))
@@ -625,14 +628,16 @@ SECCOMP_REFUSED = {
     "mount": "EPERM", "ptrace": "EPERM", "process_vm_readv": "EPERM",
     "pidfd_getfd": "EPERM", "keyctl": "ENOSYS", "vsock": "ENOSYS",
     "vsock, upper bit": "ENOSYS", "io_uring_setup": "ENOSYS",
-    "open_by_handle_at": "EPERM"}
+    "open_by_handle_at": "EPERM", "socket netlink generic": "ENOSYS",
+    "socket netlink sock_diag": "ENOSYS"}
 # What the kernel answers them with, under podman's default profile; a
 # vsock is refused by it, but not one with an upper bit set.
 SECCOMP_KERNEL = {
     "clone NEWUSER": "EINVAL", "clone NEWNET": "EINVAL",
     "unshare NEWUSER": "EINVAL", "clone3": "EINVAL", "setns": "EBADF",
     "mount": "ENOENT", "ptrace": "ESRCH", "process_vm_readv": "0",
-    "pidfd_getfd": "EBADF", "keyctl": "ENOTSUP"}
+    "pidfd_getfd": "EBADF", "keyctl": "ENOTSUP",
+    "socket netlink generic": "0", "socket netlink sock_diag": "0"}
 # What the kernel answers the calls podman's default refuses as well,
 # with no filter at all: a fault on the null pointer each is given.
 SECCOMP_UNFILTERED = {"io_uring_setup": "EFAULT",
@@ -1396,12 +1401,13 @@ def seccomp_rows():
         f"differing: {differing(bare, SECCOMP_UNFILTERED)}")
     mine = seccomp_probe("--user", USER)
     row("seccomp: the hut's user is refused, by the profile, a namespace, "
-        "a mount, ptrace, the keyring, io_uring, a handle open and a vsock "
-        "however its family is written",
+        "a mount, ptrace, the keyring, io_uring, a handle open, a vsock "
+        "however its family is written, and a generic netlink and a "
+        "sock_diag socket",
         not differing(mine, SECCOMP_REFUSED),
         f"differing: {differing(mine, SECCOMP_REFUSED)}")
     row("seccomp: and what a hut does reaches the kernel: a thread, an "
-        "unshare of nothing new, an inet and a netlink socket",
+        "unshare of nothing new, an inet and a netlink route socket",
         not differing(mine, SECCOMP_ALLOWED),
         f"differing: {differing(mine, SECCOMP_ALLOWED)}")
     root = seccomp_probe("--privileged", "--user", "0")

@@ -25,7 +25,7 @@ import unittest
 from moathut import seccomp
 from moathut.seccomp import (AF_NETLINK, AF_VSOCK, CLONE_NEW, CLONE_NEWTIME,
                              DEBUG, EINVAL, ENOSYS, EPERM, NETLINK_AUDIT,
-                             profile)
+                             NETLINK_GENERIC, NETLINK_SOCK_DIAG, profile)
 from moathut.units import CAPABILITIES
 
 ALLOW = "allow"
@@ -266,6 +266,25 @@ class TestWhatTheProfilesRefuse(unittest.TestCase):
         self.assertEqual(
             decide(profile("strict", (*CAPABILITIES, "AUDIT_WRITE")),
                    "socket", AF_NETLINK, 3, NETLINK_AUDIT), ALLOW)
+
+    def test_generic_netlink_and_sock_diag_are_refused(self):
+        """Their requests load the module they name, from a name in the
+        message; the rest of netlink stays as it was, with the audit
+        socket or without it."""
+        audit = profile("strict", (*CAPABILITIES, "AUDIT_WRITE"))
+        for doc, audit_gets in ((self.strict, EINVAL), (self.debug, EINVAL),
+                                (audit, ALLOW)):
+            for protocol in range(seccomp.NETLINKS):
+                want = (ENOSYS if protocol in (NETLINK_GENERIC,
+                                               NETLINK_SOCK_DIAG)
+                        else audit_gets if protocol == NETLINK_AUDIT
+                        else ALLOW)
+                self.assertEqual(
+                    decide(doc, "socket", AF_NETLINK, 3, protocol), want,
+                    protocol)
+                self.assertEqual(
+                    decide(doc, "socket", AF_NETLINK, 3,
+                           (1 << 32) | protocol), ENOSYS, protocol)
 
     def test_an_unknown_name_is_refused(self):
         with self.assertRaises(ValueError):

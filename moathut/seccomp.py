@@ -3,7 +3,8 @@ them. They are moathut's own, taken from podman's default as
 containers-common 0.67.2 ships it, its capability conditions resolved
 against the hut's, refusing more: making a namespace, in which the hut's
 user would be root, the mount calls and the kernel's log; the keyring, a
-vsock, and io_uring. `strict`, the default, refuses as well the calls
+vsock, io_uring, and netlink's generic and sock_diag sockets. `strict`,
+the default, refuses as well the calls
 that reach into another process, which `debug` allows. They change when
 this module does, not when podman's default does.
 
@@ -17,8 +18,8 @@ naming it: a vsock is refused by being in no entry.
 What is refused on purpose fails with EPERM, but for clone3, which
 fails with ENOSYS so glibc falls back to clone, whose flags can be
 filtered, and the keyring and io_uring, which programs do without when
-they are not implemented. A call or a family no entry names fails with
-ENOSYS as well.
+they are not implemented. A call, a family or a netlink protocol no
+entry names fails with ENOSYS as well.
 """
 
 import json
@@ -187,6 +188,11 @@ FAMILIES = 64
 NETLINKS = 32
 AF_NETLINK = 16
 NETLINK_AUDIT = 9
+# A generic netlink family lookup and a sock_diag request make the
+# kernel load the module they name, and the name is in the message, out
+# of the filter's sight.
+NETLINK_SOCK_DIAG = 4
+NETLINK_GENERIC = 16
 AF_VSOCK = 40
 
 MASK64 = 0xffffffffffffffff
@@ -279,16 +285,15 @@ def profile(name, capabilities=CAPABILITIES):
         *(_allow(["socket"], [arg]) for arg in _among(
             0, set(range(FAMILIES)) - {AF_NETLINK, AF_VSOCK})),
     ]
-    if "AUDIT_WRITE" in held:
-        entries.append(_allow(["socket"], [_cmp(0, "EQ", AF_NETLINK)]))
-    else:
+    netlinks = set(range(NETLINKS)) - {NETLINK_SOCK_DIAG, NETLINK_GENERIC}
+    if "AUDIT_WRITE" not in held:
         # The audit socket's EINVAL is what tells sudo there is no audit.
-        entries += [
-            _refuse(["socket"], EINVAL, [_cmp(0, "EQ", AF_NETLINK),
-                                         _cmp(2, "EQ", NETLINK_AUDIT)]),
-            *(_allow(["socket"], [_cmp(0, "EQ", AF_NETLINK), arg])
-              for arg in _among(2, set(range(NETLINKS)) - {NETLINK_AUDIT})),
-        ]
+        entries.append(_refuse(["socket"], EINVAL,
+                               [_cmp(0, "EQ", AF_NETLINK),
+                                _cmp(2, "EQ", NETLINK_AUDIT)]))
+        netlinks.discard(NETLINK_AUDIT)
+    entries += [_allow(["socket"], [_cmp(0, "EQ", AF_NETLINK), arg])
+                for arg in _among(2, netlinks)]
     entries += [
         _refuse([*refused, *OBSOLETE, *MOUNTS, *KERNEL_LOG]),
         _refuse(NOT_IMPLEMENTED, ENOSYS),
