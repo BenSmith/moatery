@@ -3,10 +3,10 @@ them. They are moathut's own, taken from podman's default as
 containers-common 0.67.2 ships it, its capability conditions resolved
 against the hut's, refusing more: making a namespace, in which the hut's
 user would be root, the mount calls and the kernel's log; the keyring, a
-vsock, io_uring, and netlink's generic and sock_diag sockets. `strict`,
-the default, refuses as well the calls
-that reach into another process, which `debug` allows. They change when
-this module does, not when podman's default does.
+vsock, io_uring, and the sockets whose families and protocols make the
+kernel load a module few programs use. `strict`, the default, refuses as
+well the calls that reach into another process, which `debug` allows.
+They change when this module does, not when podman's default does.
 
 libseccomp reads a rule naming one argument twice as matching anything,
 lets the overlapping rule with fewer conditions win whatever the order,
@@ -18,8 +18,8 @@ naming it: a vsock is refused by being in no entry.
 What is refused on purpose fails with EPERM, but for clone3, which
 fails with ENOSYS so glibc falls back to clone, whose flags can be
 filtered, and the keyring and io_uring, which programs do without when
-they are not implemented. A call, a family or a netlink protocol no
-entry names fails with ENOSYS as well.
+they are not implemented. A call, a family or a protocol no entry names
+fails with ENOSYS as well.
 """
 
 import json
@@ -181,19 +181,35 @@ CLONE_NEWTIME = 0x00000080
 # s390's clone takes the flags second.
 S390 = ("s390", "s390x")
 
-# socket's families, and netlink's protocols, below these. A vsock is
-# refused: it reaches the host, or a VM's hypervisor, around the
-# network namespace.
+# socket's families, netlink's protocols and inet's, below these; the
+# kernel refuses an inet protocol from IPPROTO_MAX. A vsock is refused:
+# it reaches the host, or a VM's hypervisor, around the network
+# namespace.
 FAMILIES = 64
 NETLINKS = 32
+IPPROTOS = 263
+AF_INET = 2
+AF_INET6 = 10
 AF_NETLINK = 16
 NETLINK_AUDIT = 9
-# A generic netlink family lookup and a sock_diag request make the
-# kernel load the module they name, and the name is in the message, out
-# of the filter's sight.
+AF_VSOCK = 40
+
+# The kernel loads a family's module, or an inet protocol's, before it
+# checks a capability. Refused: the families few programs use and the
+# kernel's record of bugs is long in (AF_ALG, X.25, AX.25, NET/ROM,
+# ROSE, ATM, PPPoX, 802.15.4, NFC, CAIF, Phonet, ISDN, RDS, TIPC, LLC,
+# KCM, RxRPC, Qualcomm IPC, SMC, MCTP), inet's L2TP, SCTP and SMC, and
+# netlink's xfrm, crypto, RDMA, iSCSI and SCSI transport. And netlink's
+# generic and sock_diag: a generic netlink family lookup and a sock_diag
+# request make the kernel load the module they name, and the name is in
+# the message, out of the filter's sight.
+REFUSED_FAMILIES = frozenset({38, 9, 3, 6, 11, 8, 20, 24, 36, 39, 37, 35,
+                              34, 21, 30, 26, 41, 33, 42, 43, 45})
+REFUSED_IPPROTOS = frozenset({115, 132, 256})
 NETLINK_SOCK_DIAG = 4
 NETLINK_GENERIC = 16
-AF_VSOCK = 40
+REFUSED_NETLINKS = frozenset({6, 21, 20, 8, 18, NETLINK_SOCK_DIAG,
+                              NETLINK_GENERIC})
 
 MASK64 = 0xffffffffffffffff
 
@@ -283,9 +299,13 @@ def profile(name, capabilities=CAPABILITIES):
         *_no_namespace("clone", CLONE_NEW, 1, includes={"arches": [*S390]}),
         *_no_namespace("unshare", (*CLONE_NEW, CLONE_NEWTIME), 0),
         *(_allow(["socket"], [arg]) for arg in _among(
-            0, set(range(FAMILIES)) - {AF_NETLINK, AF_VSOCK})),
+            0, set(range(FAMILIES)) - REFUSED_FAMILIES
+            - {AF_INET, AF_INET6, AF_NETLINK, AF_VSOCK})),
+        *(_allow(["socket"], [_cmp(0, "EQ", family), arg])
+          for family in (AF_INET, AF_INET6)
+          for arg in _among(2, set(range(IPPROTOS)) - REFUSED_IPPROTOS)),
     ]
-    netlinks = set(range(NETLINKS)) - {NETLINK_SOCK_DIAG, NETLINK_GENERIC}
+    netlinks = set(range(NETLINKS)) - REFUSED_NETLINKS
     if "AUDIT_WRITE" not in held:
         # The audit socket's EINVAL is what tells sudo there is no audit.
         entries.append(_refuse(["socket"], EINVAL,

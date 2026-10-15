@@ -25,7 +25,7 @@ import unittest
 from moathut import seccomp
 from moathut.seccomp import (AF_NETLINK, AF_VSOCK, CLONE_NEW, CLONE_NEWTIME,
                              DEBUG, EINVAL, ENOSYS, EPERM, NETLINK_AUDIT,
-                             NETLINK_GENERIC, NETLINK_SOCK_DIAG, profile)
+                             profile)
 from moathut.units import CAPABILITIES
 
 ALLOW = "allow"
@@ -91,7 +91,22 @@ def _clone_flags():
 
 FAMILIES = [*range(0, 70), (1 << 32) | AF_VSOCK, (1 << 32) | 2,
             (1 << 63) | 1, MASK64]
-PROTOCOLS = [*range(0, 34), (1 << 32) | NETLINK_AUDIT, MASK64]
+PROTOCOLS = [*range(0, 34), 115, 132, 255, 256, 262, 263,
+             (1 << 32) | NETLINK_AUDIT, (1 << 32) | 6, MASK64]
+
+# What each tier holds, written out here rather than read from the
+# module, so a value dropped there fails here.
+AF_INET, AF_INET6 = 2, 10
+REFUSED_FAMILIES = {
+    38,                                           # AF_ALG
+    9, 3, 6, 11, 8, 20, 24, 36, 39, 37, 35, 34,   # X.25 .. ISDN
+    21, 30, 26, 41, 33, 42, 43, 45,               # RDS .. MCTP
+    AF_VSOCK,
+}
+# L2TP, SCTP, SMC.
+REFUSED_IPPROTOS = {115, 132, 256}
+# xfrm, crypto, rdma, iscsi, scsitransport, sock_diag, generic.
+REFUSED_NETLINKS = {6, 21, 20, 8, 18, 4, 16}
 
 
 class TestTheRulesAreOnesLibseccompReadsAsWritten(unittest.TestCase):
@@ -247,12 +262,31 @@ class TestWhatTheProfilesRefuse(unittest.TestCase):
                 decide(self.strict, "socket", (1 << 32) | family, 1, 0),
                 ENOSYS)
 
-    def test_the_other_families_are_allowed(self):
-        for family in range(seccomp.FAMILIES):
-            if family != AF_VSOCK:
-                self.assertEqual(
-                    decide(self.strict, "socket", family, 1, 0), ALLOW,
-                    family)
+    def test_each_family_is_allowed_or_refused(self):
+        """The kernel loads a family's module before it checks a
+        capability, so a refusal is the filter's or none."""
+        for doc in (self.strict, self.debug):
+            for family in range(seccomp.FAMILIES):
+                want = ENOSYS if family in REFUSED_FAMILIES else ALLOW
+                self.assertEqual(decide(doc, "socket", family, 1, 0), want,
+                                 family)
+
+    def test_each_inet_protocol_is_allowed_or_refused(self):
+        """L2TP, SCTP and SMC load a module of their own; MPTCP, the
+        last the kernel takes, is built in."""
+        for doc in (self.strict, self.debug):
+            for family in (AF_INET, AF_INET6):
+                for protocol in range(seccomp.IPPROTOS + 3):
+                    want = (ENOSYS if protocol in REFUSED_IPPROTOS
+                            or protocol >= seccomp.IPPROTOS else ALLOW)
+                    self.assertEqual(
+                        decide(doc, "socket", family, 1, protocol), want,
+                        (family, protocol))
+                    self.assertEqual(
+                        decide(doc, "socket", family, 1,
+                               (1 << 32) | protocol), ENOSYS,
+                        (family, protocol))
+            self.assertEqual(decide(doc, "socket", AF_INET, 1, 262), ALLOW)
 
     def test_the_audit_socket_fails_as_on_a_kernel_without_audit(self):
         """EINVAL, which sudo takes as no audit; the hut holds no
@@ -267,16 +301,15 @@ class TestWhatTheProfilesRefuse(unittest.TestCase):
             decide(profile("strict", (*CAPABILITIES, "AUDIT_WRITE")),
                    "socket", AF_NETLINK, 3, NETLINK_AUDIT), ALLOW)
 
-    def test_generic_netlink_and_sock_diag_are_refused(self):
-        """Their requests load the module they name, from a name in the
-        message; the rest of netlink stays as it was, with the audit
-        socket or without it."""
+    def test_each_netlink_protocol_is_allowed_or_refused(self):
+        """Generic netlink and sock_diag among the refused: their requests
+        load the module they name, from a name in the message. The same
+        with the audit socket or without it."""
         audit = profile("strict", (*CAPABILITIES, "AUDIT_WRITE"))
         for doc, audit_gets in ((self.strict, EINVAL), (self.debug, EINVAL),
                                 (audit, ALLOW)):
             for protocol in range(seccomp.NETLINKS):
-                want = (ENOSYS if protocol in (NETLINK_GENERIC,
-                                               NETLINK_SOCK_DIAG)
+                want = (ENOSYS if protocol in REFUSED_NETLINKS
                         else audit_gets if protocol == NETLINK_AUDIT
                         else ALLOW)
                 self.assertEqual(
