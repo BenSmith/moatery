@@ -3,8 +3,9 @@ them. They are moathut's own, taken from podman's default as
 containers-common 0.67.2 ships it, its capability conditions resolved
 against the hut's, refusing more: making a namespace, in which the hut's
 user would be root, the mount calls and the kernel's log; the keyring, a
-vsock, io_uring, and the sockets whose families and protocols make the
-kernel load a module few programs use. `strict`, the default, refuses as
+vsock, io_uring, the sockets whose families and protocols make the
+kernel load a module few programs use, and setting a tty's line
+discipline, which loads one as well. `strict`, the default, refuses as
 well the calls that reach into another process, which `debug` allows.
 They change when this module does, not when podman's default does.
 
@@ -18,8 +19,8 @@ naming it: a vsock is refused by being in no entry.
 What is refused on purpose fails with EPERM, but for clone3, which
 fails with ENOSYS so glibc falls back to clone, whose flags can be
 filtered, and the keyring and io_uring, which programs do without when
-they are not implemented. A call, a family or a protocol no entry names
-fails with ENOSYS as well.
+they are not implemented. A call, a family, a protocol or an ioctl no
+entry names fails with ENOSYS as well.
 """
 
 import json
@@ -61,7 +62,7 @@ ALLOWED = (
     "getrusage", "getsid", "getsockname", "getsockopt", "gettid",
     "gettimeofday", "getuid", "getuid32", "getxattr", "inotify_add_watch",
     "inotify_init", "inotify_init1", "inotify_rm_watch", "io_cancel",
-    "io_destroy", "io_getevents", "io_setup", "io_submit", "ioctl",
+    "io_destroy", "io_getevents", "io_setup", "io_submit",
     "ioprio_get", "ioprio_set", "ipc", "kill", "landlock_add_rule",
     "landlock_create_ruleset", "landlock_restrict_self", "lchown",
     "lchown32", "lgetxattr", "link", "linkat", "listen", "listxattr",
@@ -212,6 +213,15 @@ REFUSED_NETLINKS = frozenset({6, 21, 20, 8, 18, NETLINK_SOCK_DIAG,
                               NETLINK_GENERIC})
 
 MASK64 = 0xffffffffffffffff
+MASK32 = 0xffffffff
+
+# The ioctl that sets a tty's line discipline, a pty's among them, makes
+# the kernel load the discipline's module, with no capability where the
+# host leaves dev.tty.ldisc_autoload at 1. MIPS numbers it its own way.
+TIOCSETD = 0x5423
+TIOCSETD_MIPS = 0x7401
+MIPS = ("mips", "mips64", "mips64n32", "mipsel", "mipsel64",
+        "mipsel64n32")
 
 # The personalities podman allows: Linux, Linux with UNAME26, with
 # ADDR_NO_RANDOMIZE, with both, and a query.
@@ -271,6 +281,20 @@ def _among(index, values):
     return out
 
 
+def _all_but(index, value):
+    """Argument `index` anything but `value` in the register's lower
+    half, one block for each bit: the values that agree with `value`
+    above it and differ at it. The upper half is not compared, since the
+    kernel reads a command from the lower, and a program on a libc whose
+    ioctl takes an int passes one with the top bit set sign-extended."""
+    out = []
+    for bit in range(32):
+        size = 1 << bit
+        out.append(_cmp(index, "MASKED_EQ", MASK32 & ~(size - 1),
+                        (value ^ size) & MASK32 & ~(size - 1)))
+    return out
+
+
 def _gated(held):
     allowed, refused = [], []
     for caps, names in GATED:
@@ -304,6 +328,10 @@ def profile(name, capabilities=CAPABILITIES):
         *(_allow(["socket"], [_cmp(0, "EQ", family), arg])
           for family in (AF_INET, AF_INET6)
           for arg in _among(2, set(range(IPPROTOS)) - REFUSED_IPPROTOS)),
+        *(_allow(["ioctl"], [arg], excludes={"arches": list(MIPS)})
+          for arg in _all_but(1, TIOCSETD)),
+        *(_allow(["ioctl"], [arg], includes={"arches": list(MIPS)})
+          for arg in _all_but(1, TIOCSETD_MIPS)),
     ]
     netlinks = set(range(NETLINKS)) - REFUSED_NETLINKS
     if "AUDIT_WRITE" not in held:

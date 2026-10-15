@@ -107,11 +107,13 @@ THE ROWS
             a vsock with an upper bit in its family among them; in the
             hut, the profile refuses the user, and root in a privileged
             exec, a namespace, a mount, ptrace, the keyring, a vsock
-            however written, an RDS, an SCTP and an xfrm socket and
-            netlink's generic and sock_diag, and lets a thread, an
-            unshare of nothing new and an inet and a netlink route
-            socket through. A refused socket's type is one the kernel
-            rejects before it loads a family's module. Before the
+            however written, an RDS, an SCTP and an xfrm socket,
+            netlink's generic and sock_diag and a line discipline's
+            ioctl however written, and lets a thread, an unshare of
+            nothing new, an inet and a netlink route socket and an
+            ioctl, sign-extended as well, through. A refused socket's
+            type is one the kernel rejects before it loads a family's
+            module, and the ioctls' descriptor is none. Before the
             rows, a report, not a row: the calls the host's podman
             default and strict allow differently, beyond what strict
             narrows and widens.
@@ -622,6 +624,10 @@ print(json.dumps({
     "socket rds": call(41, 21, 99, 0),
     "socket inet sctp": call(41, 2, 99, 132),
     "socket netlink xfrm": call(41, 16, 99, 6),
+    "ioctl TIOCSETD": call(16, -1, 0x5423, 0),
+    "ioctl TIOCSETD, upper bit": call(16, -1, (1 << 32) | 0x5423, 0),
+    "ioctl": call(16, -1, 0x5401, 0),
+    "ioctl, sign-extended": call(16, -1, 0x80045430 - (1 << 32), 0),
     "io_uring_setup": call(425, 1, 0),
     "open_by_handle_at": call(304, -1, 0, 0),
 }))
@@ -635,7 +641,8 @@ SECCOMP_REFUSED = {
     "vsock, upper bit": "ENOSYS", "io_uring_setup": "ENOSYS",
     "open_by_handle_at": "EPERM", "socket netlink generic": "ENOSYS",
     "socket netlink sock_diag": "ENOSYS", "socket rds": "ENOSYS",
-    "socket inet sctp": "ENOSYS", "socket netlink xfrm": "ENOSYS"}
+    "socket inet sctp": "ENOSYS", "socket netlink xfrm": "ENOSYS",
+    "ioctl TIOCSETD": "ENOSYS", "ioctl TIOCSETD, upper bit": "ENOSYS"}
 # What the kernel answers them with, under podman's default profile; a
 # vsock is refused by it, but not one with an upper bit set.
 SECCOMP_KERNEL = {
@@ -645,7 +652,8 @@ SECCOMP_KERNEL = {
     "pidfd_getfd": "EBADF", "keyctl": "ENOTSUP",
     "socket netlink generic": "0", "socket netlink sock_diag": "0",
     "socket rds": "EINVAL", "socket inet sctp": "EINVAL",
-    "socket netlink xfrm": "EINVAL"}
+    "socket netlink xfrm": "EINVAL", "ioctl TIOCSETD": "EBADF",
+    "ioctl TIOCSETD, upper bit": "EBADF"}
 # What the kernel answers the calls podman's default refuses as well,
 # with no filter at all: a fault on the null pointer each is given.
 SECCOMP_UNFILTERED = {"io_uring_setup": "EFAULT",
@@ -654,7 +662,8 @@ SECCOMP_UNFILTERED = {"io_uring_setup": "EFAULT",
 SECCOMP_ALLOWED = {
     "clone THREAD": "EINVAL", "unshare nothing new": "EINVAL",
     "socket inet": "EINVAL", "socket netlink route": "0",
-    "socket netlink audit": "EINVAL"}
+    "socket netlink audit": "EINVAL", "ioctl": "EBADF",
+    "ioctl, sign-extended": "EBADF"}
 # The ptrace calls under debug.
 SECCOMP_DEBUG = {"ptrace": "ESRCH", "process_vm_readv": "0",
                  "pidfd_getfd": "EBADF", "unshare NEWUSER": "EPERM",
@@ -664,8 +673,8 @@ PODMAN_SECCOMP = "/usr/share/containers/seccomp.json"
 # it was taken from (containers-common 0.67.2's) allows outright, and
 # what it allows that the default does not name: the drift report
 # leaves these out.
-NARROWED = {"clone", "clone3", "keyctl", "setns", "socketcall", "unshare",
-            *MOUNTS, *DEBUG, *KERNEL_LOG} - {"open_tree_attr"}
+NARROWED = {"clone", "clone3", "ioctl", "keyctl", "setns", "socketcall",
+            "unshare", *MOUNTS, *DEBUG, *KERNEL_LOG} - {"open_tree_attr"}
 WIDENED = {"futex_requeue", "futex_wait", "futex_waitv", "futex_wake"}
 SECCOMP_ARCH = {"x86_64": "amd64", "aarch64": "arm64"}.get(
     os.uname().machine, os.uname().machine)
@@ -1410,12 +1419,14 @@ def seccomp_rows():
     mine = seccomp_probe("--user", USER)
     row("seccomp: the hut's user is refused, by the profile, a namespace, "
         "a mount, ptrace, the keyring, io_uring, a handle open, a vsock "
-        "however its family is written, and an RDS, an SCTP, an xfrm, a "
-        "generic netlink and a sock_diag socket",
+        "however its family is written, an RDS, an SCTP, an xfrm, a "
+        "generic netlink and a sock_diag socket, and a line discipline "
+        "however its ioctl is written",
         not differing(mine, SECCOMP_REFUSED),
         f"differing: {differing(mine, SECCOMP_REFUSED)}")
     row("seccomp: and what a hut does reaches the kernel: a thread, an "
-        "unshare of nothing new, an inet and a netlink route socket",
+        "unshare of nothing new, an inet and a netlink route socket, and "
+        "an ioctl, sign-extended as well",
         not differing(mine, SECCOMP_ALLOWED),
         f"differing: {differing(mine, SECCOMP_ALLOWED)}")
     root = seccomp_probe("--privileged", "--user", "0")

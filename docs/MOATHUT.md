@@ -501,6 +501,7 @@ refuses more:
 | `socket(AF_VSOCK, ...)`, however the family is written | ENOSYS | a vsock reaches the host, or a VM's hypervisor, around the network namespace |
 | `socket` with `AF_ALG` and the other uncommon families (X.25, AX.25, NET/ROM, ROSE, ATM, PPPoX, IEEE 802.15.4, NFC, CAIF, Phonet, ISDN, RDS, TIPC, LLC, KCM, RxRPC, Qualcomm IPC, SMC, MCTP), inet's and inet6's L2TP, SCTP and SMC protocols, or netlink's xfrm, crypto, RDMA, iSCSI and SCSI transport | ENOSYS | the kernel loads a family's module, or a protocol's, before it checks a capability, and these are rarely used and have a record of kernel bugs |
 | `socket(AF_NETLINK, ...)` with `NETLINK_GENERIC` or `NETLINK_SOCK_DIAG` | ENOSYS | a generic netlink family lookup and a sock_diag request make the kernel load the module they name, and the name is in the message, out of the filter's sight; `wg` and `iw` need generic netlink, `ss` sock_diag |
+| `ioctl` with `TIOCSETD`, however the command is written | ENOSYS | setting a tty's line discipline, a pty's among them, makes the kernel load the discipline's module with no capability where the host leaves `dev.tty.ldisc_autoload` at 1, as Fedora does; `slattach`, `ldattach`, `pppd` on a serial line and `gpsd`'s PPS set one |
 
 It changes when moathut does, not when podman's default does: a call
 a later default allows is refused in a hut until moathut allows it,
@@ -569,11 +570,9 @@ What stays open, and is warned about:
   gives it a network of its own, without the rules. An interactive shell
   in one that mounts the hut's prompt and mark warns; one that mounts
   neither cannot know it is the hut's.
-- The profile refuses the sockets that load a module few programs use,
-  but a hut still makes the host load a tty line discipline's module by
-  setting it on its terminal, where the host leaves
-  `dev.tty.ldisc_autoload` at 1 (Fedora's default), and the modules
-  behind what the profile allows. Refusing modules host-wide
+- The profile refuses the sockets and the line disciplines that load a
+  module few programs use, but a hut still makes the host load the
+  modules behind what it allows. Refusing modules host-wide
   (`modprobe.d`) is the host's choice, and its root's.
 
 ## Where it lives
@@ -618,10 +617,12 @@ line ([tests/manual/README.md](../tests/manual/README.md)):
   arguments podman gives a pod's;
 - the hut's user, and root in a privileged exec, are refused by the
   profile a namespace, a mount, ptrace, the keyring, a vsock however
-  its family is written, an RDS, an SCTP and an xfrm socket and
-  netlink's generic and sock_diag, while a thread, an inet and a
-  netlink route socket reach the kernel; in a stock container the same
-  calls reach the kernel; under `debug`, ptrace does;
+  its family is written, an RDS, an SCTP and an xfrm socket,
+  netlink's generic and sock_diag and a line discipline's ioctl,
+  however its command is written, while a thread, an inet and a
+  netlink route socket and an ioctl, sign-extended as well, reach the
+  kernel; in a stock container the same calls reach the kernel; under
+  `debug`, ptrace does;
 - the workload runs at the hut's level, and its home, bundle, prompt and
   mark are labelled at it; its `/dev/shm` is writable; a container at
   podman's own level is refused the hut's home, and one at the hut's

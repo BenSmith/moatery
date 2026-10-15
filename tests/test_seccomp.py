@@ -107,6 +107,14 @@ REFUSED_FAMILIES = {
 REFUSED_IPPROTOS = {115, 132, 256}
 # xfrm, crypto, rdma, iscsi, scsitransport, sock_diag, generic.
 REFUSED_NETLINKS = {6, 21, 20, 8, 18, 4, 16}
+# TIOCSETD, and MIPS's.
+TIOCSETD = {"amd64": 0x5423, "arm64": 0x5423, "s390x": 0x5423,
+            "mips64": 0x7401, "mipsel": 0x7401}
+# Commands around TIOCSETD's, and TIOCGPTN as a libc taking an int
+# passes it, sign-extended.
+IOCTLS = [0, 0x5401, 0x5422, 0x5423, 0x5424, 0x7400, 0x7401, 0x7402,
+          0x80045430, MASK64 & ~0xffffffff | 0x80045430, (1 << 32) | 0x5423,
+          (1 << 32) | 0x7401, 0xffffffff, MASK64]
 
 
 class TestTheRulesAreOnesLibseccompReadsAsWritten(unittest.TestCase):
@@ -148,6 +156,9 @@ class TestTheRulesAreOnesLibseccompReadsAsWritten(unittest.TestCase):
                                arch=arch)
                 for persona in (0, 8, 0x20000, 0xffffffff, 0x0400000):
                     decide(doc, "personality", persona, arch=arch)
+            for arch in TIOCSETD:
+                for cmd in IOCTLS:
+                    decide(doc, "ioctl", 0, cmd, arch=arch)
 
     def test_socket_has_no_refusal_of_its_family_beside_its_allows(self):
         """The audit refusal names the protocol as well, and loads."""
@@ -318,6 +329,35 @@ class TestWhatTheProfilesRefuse(unittest.TestCase):
                 self.assertEqual(
                     decide(doc, "socket", AF_NETLINK, 3,
                            (1 << 32) | protocol), ENOSYS, protocol)
+
+    def test_a_line_discipline_is_not_set_however_its_command_is_written(
+            self):
+        """The kernel loads a discipline's module with no capability where
+        dev.tty.ldisc_autoload is 1, and reads the command from the
+        register's lower half."""
+        for doc in (self.strict, self.debug):
+            for arch, cmd in TIOCSETD.items():
+                for upper in (0, 1 << 32, 0xffffffff << 32):
+                    self.assertEqual(
+                        decide(doc, "ioctl", 0, upper | cmd, arch=arch),
+                        ENOSYS, (arch, hex(upper | cmd)))
+
+    def test_every_other_ioctl_is_allowed_with_any_upper_bits(self):
+        """A command one bit from TIOCSETD's, and a sample of the rest,
+        with the upper half clear, sign-extended or anything."""
+        import random
+        rng = random.Random(7)
+        for arch, tiocsetd in TIOCSETD.items():
+            cmds = [tiocsetd ^ (1 << bit) for bit in range(32)]
+            cmds += [rng.getrandbits(32) for _ in range(300)]
+            cmds += [0, 0x5423 ^ 0x7401 ^ tiocsetd, 0xffffffff]
+            for cmd in cmds:
+                if cmd == tiocsetd:
+                    continue
+                for upper in (0, 0xffffffff << 32, rng.getrandbits(32) << 32):
+                    self.assertEqual(
+                        decide(self.strict, "ioctl", 0, upper | cmd,
+                               arch=arch), ALLOW, (arch, hex(upper | cmd)))
 
     def test_an_unknown_name_is_refused(self):
         with self.assertRaises(ValueError):
