@@ -79,6 +79,11 @@ the git, Python, ssh client and manual pages `fedora:44` leaves out.
 - `--dry-run`: it prints each file it would write, its path first, and
   writes none and mints nothing. It still refuses what `create` would
   refuse, and pulls the image to find its trust store.
+- `--mount SRC[:DST][:ro]`, repeatable: a host directory the hut
+  shares at DST, read-only with `:ro`. Without DST it is at SRC with
+  its links resolved, and one under the home is at the same place
+  under `$HOME`, so `~/src` is `~/src` in the hut where `/home` is a
+  link, as on an ostree host.
 - `--network-policy none`: a hut with no network policy ("A hut with
   no network policy", above).
 - `--seccomp`: the workload's seccomp profile ("Seccomp", below):

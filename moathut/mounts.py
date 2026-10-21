@@ -28,7 +28,9 @@ class Mount(NamedTuple):
 
 def parse_mount(text, cwd, home):
     """`SRC[:DST][:ro]`. SRC is resolved, symlinks and all, since the
-    checks are on what is mounted; DST defaults to it."""
+    checks are on what is mounted; DST defaults to it, or for a SRC under
+    the home, to the same place under `home` as given, which the hut's
+    home is mounted at even where it is a link."""
     parts = text.split(":")
     readonly = False
     if len(parts) > 1 and parts[-1] in ("ro", "rw"):
@@ -39,7 +41,13 @@ def parse_mount(text, cwd, home):
     if source == "~" or source.startswith("~/"):
         source = str(home) + source[1:]
     source = (Path(cwd) / source).resolve()
-    target = parts[1] if len(parts) == 2 else str(source)
+    real_home = Path(home).resolve()
+    if len(parts) == 2:
+        target = parts[1]
+    elif source.is_relative_to(real_home):
+        target = str(Path(home) / source.relative_to(real_home))
+    else:
+        target = str(source)
     if not os.path.isabs(target):
         raise MountRefused(f"{text!r}: {target} is not an absolute path")
     return Mount(source, os.path.normpath(target), readonly)

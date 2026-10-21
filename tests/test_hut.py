@@ -146,6 +146,21 @@ class TestMounts(unittest.TestCase):
         self.assertTrue(parse_mount("projects/p:/w:ro", self.home,
                                     self.home).readonly)
 
+    def test_a_mount_under_a_linked_home_is_at_its_place_in_it(self):
+        """As on an ostree host, where /home is a link to /var/home: the
+        source is the resolved path, the target the one under HOME."""
+        linked = self.home.parent / "linked"
+        linked.symlink_to(self.home)
+        for spec, cwd in (("~/projects/p", self.home), ("projects/p", linked)):
+            with self.subTest(spec=spec):
+                mount = parse_mount(spec, cwd, linked)
+                self.assertEqual(mount.source, self.home / "projects" / "p")
+                self.assertEqual(mount.target, str(linked / "projects" / "p"))
+        outside = parse_mount(str(self.home.parent), self.home, linked)
+        self.assertEqual(outside.target, str(self.home.parent))
+        self.assertEqual(parse_mount("~/projects/p:/w", self.home,
+                                     linked).target, "/w")
+
     def test_home_and_what_contains_it_are_refused(self):
         for spec in (str(self.home), str(self.home.parent), "/"):
             self.assertIn("home directory", self._refused(spec))
@@ -1438,6 +1453,26 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(settings.mounts[0].source,
                          self.home / "projects" / "p")
         self.assertIn(["systemctl", "--user", "daemon-reload"], host.calls)
+
+    def test_a_hut_of_a_linked_home_has_its_mount_in_its_home(self):
+        """Its mount point is made in the hut's home, and enter from the
+        source starts there."""
+        linked = self.home.parent / "linked"
+        linked.symlink_to(self.home)
+        env = {**self.env, "HOME": str(linked)}
+        hut = commands.create(
+            "agent", self.policy, "img", ["~/projects/p"],
+            dirs=user_dirs(env), tool=("/py", "/cb"), python="/py",
+            libexec="/lx", pythonpath=None, uid=1000, gid=1000,
+            cwd=linked, environ=env, runner=FakeHost(self.home))
+        settings = Settings.from_json(hut.settings.read_text())
+        target = str(linked / "projects" / "p")
+        self.assertEqual(settings.mounts[0].target, target)
+        self.assertTrue((hut.home / "projects" / "p").is_dir())
+        self.assertIn(f"{self.home / 'projects' / 'p'}:{target}:z",
+                      hut.container_file.read_text())
+        self.assertEqual(commands._workdir(
+            settings, linked / "projects" / "p", root=False), target)
 
     def test_create_gives_a_new_home_a_bashrc_that_reads_the_prompt(self):
         hut, _ = self._create()
