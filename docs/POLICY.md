@@ -185,6 +185,22 @@ one is ignored. HTTP/2 without TLS is not relayed either: an
 `Upgrade: h2c` offer is withheld from the origin, and a connection that
 opens with the HTTP/2 preface is answered 400.
 
+## Encoded slashes
+
+A request whose path holds an encoded slash (`%2F`) is refused on every
+terminated host before any list is consulted, with the reason
+`unreadable request`, and the record has no host for it. Whether `%2F`
+separates two segments or sits inside one is a question origins answer
+differently, so the path has no one reading for `paths` to match or for
+the relay to send on.
+
+npm asks for every scoped package that way (`/@types%2fnode`). It goes
+on without an optional dependency it cannot fetch, so an install can
+finish with a package left out, a compiler's platform binary say, which
+fails only when run. Such a client's host goes in `splice`, with
+everything `splice` says above: `registry.npmjs.org` is on a shared
+CDN, which then decides alone what a request inside may reach.
+
 ## Upgrades
 
 A request with `Upgrade` (a WebSocket, say) is authorised like any other,
