@@ -297,6 +297,7 @@ python3 tests/manual/hut_rig.py --without-reopen    # must go red
 python3 tests/manual/hut_rig.py --without-autostart  # must go red
 python3 tests/manual/hut_rig.py --uninspected-ruled  # must go red
 python3 tests/manual/hut_rig.py --cp-unguarded      # must go red
+python3 tests/manual/hut_rig.py --rm-unguarded      # must go red
 python3 tests/manual/hut_rig.py --restarts 10       # more restarts of each
 ```
 
@@ -312,7 +313,9 @@ row; under `--without-held-netns` the pod makes its own namespace, and
 loads the rules into it at its start, and under `--uninspected-ruled`
 the pod of a hut made `--network-policy none` loads them into its
 namespace; under `--cp-unguarded` moathut runs a naive `cp` that
-copies on the host side; and the workload's `Exec=` is a
+copies on the host side; under `--rm-unguarded`, `rm` and the enter
+that races it run without `rm`'s lock, second stop and letting go;
+and the workload's `Exec=` is a
 script whose
 first act at every start is a request to the provider, with a nonce in
 its path, recorded in the hut's home, and under `--listeners-required`
@@ -409,4 +412,8 @@ it, is refused, and nothing lands or reaches the hut.
 pod or container, nor the broker's socket, and keeps the home and the
 record; `create`, with a policy naming no credential, finds the home
 again and writes no broker; `rm --home` removes it; then `credential rm`
-removes the credential.
+removes the credential. An `enter` made while `rm --home` stops the hut,
+its workload deactivating, waits and finds no hut, and after it no unit
+of the hut runs, no file of it is left, and its namespace is neither
+held nor served by a pasta. A holder killed leaves the namespace held,
+and `rm --home` lets it go.

@@ -1,6 +1,8 @@
 """What each command does. The command line is cli's; everything here
 takes its inputs as arguments, so the tests can hand them in."""
 
+import contextlib
+import fcntl
 import json
 import os
 import posixpath
@@ -77,6 +79,23 @@ def _hut(name, dirs):
         raise HutError(f"{name!r}: a hut's name is lowercase letters, "
                        "digits and inner dashes, 48 at most")
     return Hut(name, dirs)
+
+
+@contextlib.contextmanager
+def _held(hut):
+    """The hut's directory, locked: one start or removal of a hut at a
+    time, so a start that waited on a removal finds no hut. A hut with
+    no directory has nothing to start."""
+    try:
+        fd = os.open(hut.config, os.O_RDONLY | os.O_DIRECTORY)
+    except FileNotFoundError:
+        yield
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
 
 
 # How many categories podman picks a container's two from.
@@ -417,21 +436,50 @@ def _units_to_stop(hut):
         if path.exists()]
 
 
+def _up(hut, runner):
+    """The hut's units the manager runs, its files gone or not."""
+    states = runner(["systemctl", "--user", "is-active", *hut.services],
+                    check=False).stdout.split()
+    return [unit for unit, state in zip(hut.services, states)
+            if state in _UP]
+
+
 def _discard(hut, *, home, runner):
+    broker = hut.broker_file.exists()
     runner(["systemctl", "--user", "stop", *_units_to_stop(hut)],
            check=False)
-    if hut.broker_file.exists():
-        _clear_broker(hut, runner)
     for path in hut.unit_files:
         path.unlink(missing_ok=True)
     runner(["systemctl", "--user", "daemon-reload"], check=False)
+    # A start that is not an enter or a cp can cancel a stop the manager
+    # has queued, and with the files gone what it started can only be
+    # stopped.
+    up = _up(hut, runner)
+    if up:
+        runner(["systemctl", "--user", "stop", *up], check=False)
+    if broker:
+        _clear_broker(hut, runner)
     runner(["systemctl", "--user", "reset-failed", *hut.services],
            check=False)
     runner(["podman", "pod", "rm", "-f", "-i", hut.name], check=False)
+    if hut.dirs.runtime is not None:
+        _let_go(hut, runner)
     shutil.rmtree(hut.config, ignore_errors=True)
     shutil.rmtree(hut.state, ignore_errors=True)
     if home:
         _remove_home(hut, runner)
+
+
+def _let_go(hut, runner):
+    """What the netns unit's holder lets go of when it is stopped, for a
+    holder killed before it could: the bind, in podman's mount
+    namespace, and the file; and the broker's directory, which the
+    manager removes only for a unit it still has the file of."""
+    if hut.namespace.exists():
+        runner(["podman", "unshare", "umount", "-l", str(hut.namespace)],
+               check=False)
+        hut.namespace.unlink(missing_ok=True)
+    shutil.rmtree(hut.runtime, ignore_errors=True)
 
 
 def _remove_home(hut, runner):
@@ -562,8 +610,9 @@ def _start(hut, settings, dirs, runner, warn):
 
 def enter(name, command, *, root, dirs, cwd, environ, isatty,
           runner=run, execvp=os.execvp, warn=_warn):
-    hut, settings = _existing(name, dirs)
-    _start(hut, settings, dirs, runner, warn)
+    with _held(_hut(name, dirs)):
+        hut, settings = _existing(name, dirs)
+        _start(hut, settings, dirs, runner, warn)
     uid, gid = (0, 0) if root else (settings.uid, settings.gid)
     user = f"{uid}:{gid}"
     command = list(command)
@@ -729,7 +778,9 @@ def _cp_in(name, sources, path, *, dirs, runner, spawn, warn):
     roots = _hut_writable(dirs)
     for source in sources:
         _apart(source, roots, holding=True)
-    _start(hut, settings, dirs, runner, warn)
+    with _held(hut):
+        hut, settings = _existing(name, dirs)
+        _start(hut, settings, dirs, runner, warn)
     user = f"{settings.uid}:{settings.gid}"
     target = _inside(settings, path)
     if runner(["podman", "exec", "--user", user, name, "test", "-d",
@@ -815,12 +866,21 @@ def rm(name, *, home, dirs, runner=run):
     """Remove the hut, or with `home`, the home a hut removed without it
     left behind."""
     hut = _hut(name, dirs)
-    if hut.settings.exists():
-        _discard(hut, home=home, runner=runner)
-    elif home and hut.share.exists():
-        _remove_home(hut, runner)
-    else:
-        raise HutError(f"no hut {name}")
+    with _held(hut):
+        if hut.settings.exists():
+            _discard(hut, home=home, runner=runner)
+        elif home and hut.share.exists():
+            _remove_home(hut, runner)
+        else:
+            raise HutError(f"no hut {name}")
+    up = _up(hut, runner)
+    if up:
+        raise HutError(f"hut {name} is removed but its units still run: "
+                       f"systemctl --user stop {' '.join(up)}")
+    if hut.dirs.runtime is not None and hut.namespace.exists():
+        raise HutError(f"hut {name} is removed but its network namespace "
+                       f"is held: podman unshare umount -l {hut.namespace}"
+                       f"; rm {hut.namespace}")
     if home and hut.share.exists():
         raise HutError(f"hut {name} is removed but its home is not: "
                        f"podman unshare rm -rf {hut.share}")

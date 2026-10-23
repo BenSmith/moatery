@@ -15,7 +15,7 @@ on the proving host as an ordinary user, from a checkout:
                                     [--without-reload] [--without-reopen]
                                     [--without-autostart]
                                     [--uninspected-ruled] [--cp-unguarded]
-                                    [--restarts N]
+                                    [--rm-unguarded] [--restarts N]
 
 The tool is the checkout's bin/moathut running the checkout's
 programs, or, with MOATERY_LIBEXEC=/usr/libexec/moatery, the installed
@@ -54,6 +54,10 @@ With --cp-unguarded, the cp rows run moathut with a sitecustomize that
 swaps in a naive cp: copying in writes the hut's home directly from the
 host, copying out unpacks straight into the destination with only
 tarfile's data filter, and neither refuses a place a hut can write.
+
+With --rm-unguarded, rm and the enter that races it run moathut with a
+sitecustomize that takes away rm's lock, its second stop, its letting
+go of a killed holder's namespace and its word of units left running.
 
 The stub is on the host's 127.0.0.1, which the pod cannot reach, so
 anything the stub answers came by the inspector's dial. The provider is
@@ -242,7 +246,11 @@ THE ROWS
             record stay, and create, with a policy naming no credential,
             finds the home again and writes no broker; made without
             --autostart, default.target does not start it; rm --home removes
-            it; then credential rm removes the credential.
+            it; then credential rm removes the credential. An enter made
+            while rm --home stops the hut waits, and finds no hut; after
+            it no unit of the hut runs, no file of it is left, and its
+            namespace is not held, with no pasta serving it. A holder
+            killed leaves the namespace held, and rm --home lets it go.
 
 `--without-rules` puts an nft that loads nothing ahead of the system's
 for the holder, so the hut starts with no rules in its namespace: first,
@@ -306,6 +314,11 @@ unpacks straight into the destination with only tarfile's data filter,
 and neither refuses a place a hut can write. cp's five rows that the
 host file is left alone, the copy is the hut's and a writable mount is
 refused must go red.
+
+`--rm-unguarded` runs rm, and the enter that races it, without rm's
+lock, second stop and letting go: rm's rows that the racing enter
+finds no hut, that nothing of the hut is left after it, and that rm
+lets go of a killed holder's namespace must go red.
 
 `--without-autostart` makes the hut without --autostart: the create
 row's ls, and the autostart rows, must go red, and outside's first,
@@ -486,6 +499,7 @@ CP_SOURCE = RIG / "hut-cp-source"
 CP_VICTIM = RIG / "hut-cp-victim"
 CP_OUT = RIG / "hut-cp-out"
 CP_UNGUARDED = RIG / "hut-cp-unguarded"
+RM_UNGUARDED = RIG / "hut-rm-unguarded"
 CP_SENDING = RIG / "hut-cp-sending-tar"
 CP_STEERED = RIG / "hut-cp-steered"
 PLANTED = ".moatery-rig-planted"
@@ -707,6 +721,18 @@ def take(stream, into, base, name, warn):
 commands._cp_in = cp_in
 commands._hut_writable = lambda dirs: set()
 archive.take = take
+"""
+
+RM_UNGUARDED_SCRIPT = """\
+# written by tests/manual/hut_rig.py: --rm-unguarded. moathut rm with
+# no lock between it and a start, no second stop, nothing let go that a
+# killed holder held, and no word of units left running.
+import contextlib
+from moathut import commands
+
+commands._held = lambda hut: contextlib.nullcontext()
+commands._up = lambda hut, runner: []
+commands._let_go = lambda hut, runner: None
 """
 
 SENDING_TAR = f"""\
@@ -2530,7 +2556,102 @@ def uninspected_rows(tag, ruled):
         f"{OPEN_SHARE.exists()}, pod {exists('pod', OPEN)}")
 
 
-def rm_rows(tag):
+def let_go_of_what_rm_left():
+    """The rig's hut's units, by name, its files and its namespace, as an
+    rm that a start raced, or one --rm-unguarded, can leave them."""
+    run(["systemctl", "--user", "stop", *SERVICES], check=False)
+    for path in UNIT_FILES:
+        path.unlink(missing_ok=True)
+    run(["systemctl", "--user", "daemon-reload"], check=False)
+    run(["systemctl", "--user", "reset-failed", *SERVICES], check=False)
+    run(["podman", "unshare", "umount", "-l", str(NAMESPACE)], check=False)
+    NAMESPACE.unlink(missing_ok=True)
+    shutil.rmtree(BROKER_SOCKET.parent, ignore_errors=True)
+
+
+def nothing_left(removed):
+    """Whether rm left nothing of the rig's hut: no unit running, no file,
+    no pod, and the namespace not held, nor served by a pasta; and what
+    there was."""
+    up = {unit: state for unit, state in states().items()
+          if state != "inactive"}
+    files = [p.name for p in UNIT_FILES if p.exists()]
+    namespace = held()
+    pasta = pasta_words(NAMESPACE)
+    clear = (removed.returncode == 0 and not up and not files
+             and not exists("pod") and not NAMESPACE.exists()
+             and namespace is None and pasta is None
+             and not CONFIG.exists())
+    return clear, (
+        f"rm rc={removed.returncode} {removed.stderr.strip()[-200:]}; "
+        f"up {up}; files {files}; pod {exists('pod')}; namespace file "
+        f"{NAMESPACE.exists()}, held {namespace}; pasta "
+        f"{pasta is not None}; config {CONFIG.exists()}")
+
+
+def rm_left_rows(unguarded):
+    env = None
+    if unguarded:
+        env = {"PYTHONPATH": ":".join(filter(None, (
+            str(RM_UNGUARDED), TOOL_ENV.get("PYTHONPATH"))))}
+        say("  rm has no lock, stops nothing twice and lets nothing go, "
+            "as asked")
+    hut("create", HUT, "--network-policy", str(PLAIN_POLICY))
+    started = hut("enter", HUT, "--", "true")
+    removing = subprocess.Popen(
+        [*TOOL, "rm", HUT, "--home"], cwd=RIG,
+        env={**TOOL_ENV, **(env or {})}, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # The window is the stop: the workload's unit is deactivating, and
+    # the namespace's stop is queued behind it.
+    state = ""
+    deadline = time.monotonic() + 60
+    while removing.poll() is None and time.monotonic() < deadline:
+        state = run(["systemctl", "--user", "is-active", SERVICE],
+                    check=False).stdout.strip()
+        if state != "active":
+            break
+    stopping = removing.poll() is None and state == "deactivating"
+    entered = hut("enter", HUT, "--", "true", env=env)
+    out, err = removing.communicate(timeout=180)
+    removed = subprocess.CompletedProcess(removing.args, removing.returncode,
+                                          out, err)
+    row("rm: an enter is made while rm --home stops the hut",
+        started.returncode == 0 and stopping,
+        f"first enter rc={started.returncode} "
+        f"{started.stderr.strip()[-160:]}; the workload {state!r} with rm "
+        f"{'running' if stopping else 'done'}")
+    row("rm: that enter waits, and finds no hut",
+        entered.returncode != 0 and f"no hut {HUT}" in entered.stderr,
+        f"rc={entered.returncode} {entered.stderr.strip()[-200:]}")
+    clear, seen = nothing_left(removed)
+    row("rm: after it nothing of the hut runs, is held or is on disk",
+        clear, seen)
+    let_go_of_what_rm_left()
+    run(["podman", "unshare", "rm", "-rf", "--", str(CONFIG), str(STATE),
+         str(SHARE)], check=False)
+
+    hut("create", HUT, "--network-policy", str(PLAIN_POLICY))
+    started = hut("enter", HUT, "--", "true")
+    run(["systemctl", "--user", "kill", "-s", "KILL", "--kill-whom=main",
+         NETNS_SERVICE], check=False)
+    down = await_(lambda: show(NETNS_SERVICE, "ActiveState")
+                  in ("failed", "inactive"), 30)
+    namespace = held()
+    row("rm: a namespace's holder killed leaves it held",
+        started.returncode == 0 and down and NAMESPACE.exists()
+        and namespace is not None,
+        f"enter rc={started.returncode}; its unit "
+        f"{show(NETNS_SERVICE, 'ActiveState')}; file {NAMESPACE.exists()}, "
+        f"held {namespace}")
+    clear, seen = nothing_left(hut("rm", HUT, "--home", env=env))
+    row("rm: then rm --home lets it go", clear, seen)
+    let_go_of_what_rm_left()
+    run(["podman", "unshare", "rm", "-rf", "--", str(CONFIG), str(STATE),
+         str(SHARE)], check=False)
+
+
+def rm_rows(tag, unguarded):
     say("rm")
     refused = hut("credential", "rm", CREDENTIAL)
     row("rm: credential rm is refused while the hut names it",
@@ -2584,6 +2705,7 @@ def rm_rows(tag):
         and not DESCRIBED.exists() and credential_listed() is None,
         f"rc={gone.returncode} {gone.stderr.strip()[-160:]}; files "
         f"{SEALED.exists()}, {DESCRIBED.exists()}")
+    rm_left_rows(unguarded)
 
 
 def probe(args, tag, secret):
@@ -2649,7 +2771,7 @@ def probe(args, tag, secret):
     outside_rows()
     like_rows(tag)
     uninspected_rows(tag, args.uninspected_ruled)
-    rm_rows(tag)
+    rm_rows(tag, args.rm_unguarded)
 
 
 # --- material, leftovers, teardown -------------------------------------------
@@ -2662,7 +2784,7 @@ def clear_leftovers():
                          (OPEN, OPEN_CONFIG)):
         if (config / "hut.json").exists():
             hut("rm", name, "--home")
-    run(["systemctl", "--user", "stop", BROKER_SERVICE], check=False)
+    let_go_of_what_rm_left()
     run(["podman", "pod", "rm", "-f", "-i", HUT], check=False)
     run(["podman", "rm", "-f", "-i", HUT], check=False)
     # The hut's root writes in its home, as a uid the user is not.
@@ -2675,7 +2797,7 @@ def clear_leftovers():
         path.unlink(missing_ok=True)
     shutil.rmtree(SLOW, ignore_errors=True)
     for path in (NFT_FAILS, NFT_LOADS_NOTHING, CP_OUT, CP_UNGUARDED,
-                 CP_STEERED):
+                 RM_UNGUARDED, CP_STEERED):
         shutil.rmtree(path, ignore_errors=True)
     for path in (CP_SOURCE, CP_VICTIM, CP_SENDING):
         path.unlink(missing_ok=True)
@@ -2710,6 +2832,8 @@ def material():
     (SLOW / "sitecustomize.py").write_text(SITECUSTOMIZE)
     CP_UNGUARDED.mkdir(parents=True, exist_ok=True)
     (CP_UNGUARDED / "sitecustomize.py").write_text(CP_UNGUARDED_SCRIPT)
+    RM_UNGUARDED.mkdir(parents=True, exist_ok=True)
+    (RM_UNGUARDED / "sitecustomize.py").write_text(RM_UNGUARDED_SCRIPT)
     CP_SENDING.write_text(SENDING_TAR)
     for directory, body in ((NFT_FAILS, "echo 'hut_rig: nft fails, as "
                                         "asked' >&2\nexit 1\n"),
@@ -2741,7 +2865,7 @@ def teardown(keep):
                 hut("rm", name, "--home")
         for path in (PROJECT, READONLY, SLOW, TWIN_LOGS, OPEN_LOGS,
                      NFT_FAILS, NFT_LOADS_NOTHING, CP_OUT, CP_UNGUARDED,
-                     CP_STEERED):
+                     RM_UNGUARDED, CP_STEERED):
             shutil.rmtree(path, ignore_errors=True)
         for path in (CP_SOURCE, CP_VICTIM, CP_SENDING):
             path.unlink(missing_ok=True)
@@ -2799,6 +2923,12 @@ def main():
                          "side; cp's five rows that the host file is left "
                          "alone, the copy is the hut's and a writable "
                          "mount is refused must go red")
+    ap.add_argument("--rm-unguarded", action="store_true",
+                    help="run rm, and the enter that races it, without "
+                         "rm's lock, second stop and letting go; rm's "
+                         "rows that the enter finds no hut, that nothing "
+                         "is left and that a killed holder's namespace is "
+                         "let go must go red")
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
     args = ap.parse_args()
@@ -2885,6 +3015,11 @@ def main():
             "--cp-unguarded: cp's five rows that the host file is left "
             "alone, the copy is the hut's and a writable mount is refused "
             "are expected red")
+    if args.rm_unguarded:
+        expected.append(
+            "--rm-unguarded: rm's rows that the racing enter finds no hut, "
+            "that nothing of the hut is left after it, and that rm --home "
+            "lets go of a killed holder's namespace are expected red")
     if args.without_autostart:
         expected.append(
             "--without-autostart: create's ls, the autostart rows and "

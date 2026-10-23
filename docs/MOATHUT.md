@@ -158,6 +158,12 @@ workload's to write, so `create` makes nothing in it through a link: a
 mount point under a link there is refused. It removes the hut's
 Ptyxis profile too.
 
+An `enter` or a `cp` of the hut made while `rm` runs, such as an IDE
+retrying its connection, waits for it, and then finds no hut. A unit of
+the hut that another start brought back is stopped, and a namespace its
+holder was killed holding is let go. If a unit still runs, or the
+namespace is still held, `rm` says so and names what to run.
+
 **ptyxis** writes a Ptyxis profile, `moathut NAME`, whose tabs run
 `moathut enter NAME` on the host (`default-container` `session`) and
 whose new tabs do the same whatever the hut has printed

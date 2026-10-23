@@ -8,6 +8,7 @@ provides is one systemd drops without a word. The programs' flags are
 parsed by the programs' own parsers, so a flag renamed there fails here.
 """
 
+import fcntl
 import io
 import ipaddress
 import os
@@ -19,8 +20,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import tomllib
 import unittest
+from functools import partial
 from pathlib import Path
 from unittest import mock
 
@@ -1060,7 +1063,8 @@ class FakeHost:
     def __init__(self, state_root, rules=True, load_state="loaded",
                  unshare=True, broker=True, broker_state="active",
                  listeners=True, listener_state="active", dirs=None,
-                 reloads=True, pod=False, pod_state="inactive"):
+                 reloads=True, pod=False, pod_state="inactive", up=(),
+                 raced=False, stops=True):
         self.calls = []
         self.inputs = []
         self.state_root = state_root
@@ -1079,6 +1083,12 @@ class FakeHost:
         # unit's state is.
         self.pod = pod
         self.pod_state = pod_state
+        # The units an is-active of all a hut's reports up; with RACED, a
+        # start cancelled the first stop of them, and without STOPS no
+        # stop takes.
+        self.up = set(up)
+        self.raced = raced
+        self.stops = stops
 
     def __call__(self, argv, *, input=None, check=True, env=None):
         self.calls.append(argv)
@@ -1096,6 +1106,15 @@ class FakeHost:
         elif argv[:3] == ["systemctl", "--user", "start"] and \
                 argv[-1].endswith("-broker.service"):
             code = 0 if self.broker else 1
+        elif argv[:3] == ["systemctl", "--user", "is-active"] and \
+                len(argv) > 4:
+            out = "".join("active\n" if unit in self.up else "inactive\n"
+                          for unit in argv[3:])
+        elif argv[:3] == ["systemctl", "--user", "stop"]:
+            if self.raced:
+                self.raced = False
+            elif self.stops:
+                self.up -= set(argv[3:])
         elif argv[:3] == ["systemctl", "--user", "is-active"] and \
                 argv[-1].endswith("-broker.service"):
             out = self.broker_state + "\n"
@@ -1890,6 +1909,122 @@ with mock.patch.object(cli, "unit_netns", held):
         with self.assertRaisesRegex(commands.HutError, "home is not"):
             commands.rm("agent", home=True, dirs=self.dirs,
                         runner=FakeHost(self.home, unshare=False))
+
+    def test_rm_stops_what_a_start_that_raced_it_brought_back(self):
+        """The start pulled the namespace's unit in again, which cancelled
+        the stop the manager had queued for it; with the files gone,
+        nothing else stops it, and it holds the namespace with pasta in
+        it."""
+        hut, _ = self._create()
+        up = {hut.netns_service, hut.inspect_service}
+        host = FakeHost(self.home, up=up, raced=True)
+        commands.rm("agent", home=True, dirs=self.dirs, runner=host)
+        again = ["systemctl", "--user", "stop", hut.netns_service,
+                 hut.inspect_service]
+        self.assertIn(again, host.calls)
+        self.assertLess(
+            host.calls.index(["systemctl", "--user", "daemon-reload"]),
+            host.calls.index(again))
+        self.assertLess(
+            host.calls.index(again),
+            host.calls.index(["podman", "pod", "rm", "-f", "-i", "agent"]))
+        self.assertEqual(host.up, set())
+
+    def test_rm_names_the_units_it_could_not_stop(self):
+        hut, _ = self._create()
+        with self.assertRaisesRegex(
+                commands.HutError,
+                f"units still run: systemctl --user stop "
+                f"{hut.netns_service}$"):
+            commands.rm("agent", home=False, dirs=self.dirs,
+                        runner=FakeHost(self.home, up={hut.netns_service},
+                                        stops=False))
+
+    def test_rm_lets_go_of_what_a_killed_holder_held(self):
+        """The holder lets the namespace go when it is stopped; one killed
+        first leaves the bind and the file, which only a later start of
+        a hut of the same name would let go, and the broker's directory
+        too."""
+        hut, _ = self._create()
+        hut.namespace.parent.mkdir(parents=True)
+        hut.namespace.touch()
+        hut.runtime.mkdir(parents=True)
+        (hut.runtime / "broker.sock").touch()
+        host = FakeHost(self.home)
+        commands.rm("agent", home=False, dirs=self.dirs, runner=host)
+        umount = ["podman", "unshare", "umount", "-l", str(hut.namespace)]
+        self.assertIn(umount, host.calls)
+        self.assertLess(
+            host.calls.index(["systemctl", "--user", "daemon-reload"]),
+            host.calls.index(umount))
+        self.assertFalse(hut.namespace.exists())
+        self.assertFalse(hut.runtime.exists())
+        host = FakeHost(self.home)
+        self._create()
+        commands.rm("agent", home=False, dirs=self.dirs, runner=host)
+        self.assertNotIn(umount, host.calls)
+
+    def _locked(self, hut):
+        fd = os.open(hut.config, os.O_RDONLY | os.O_DIRECTORY)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+
+    def _behind(self, call):
+        """CALL in a thread, while the test holds the hut's lock: what
+        it raised, once it has run."""
+        raised = []
+
+        def run():
+            try:
+                call()
+            except commands.HutError as exc:
+                raised.append(exc)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(0.2)
+        self.assertTrue(thread.is_alive())
+        return thread, raised
+
+    def test_a_start_waits_on_a_removal_and_finds_no_hut(self):
+        """An IDE's connection, retried while rm stops the hut, is an
+        enter: had it run, its start would have brought the hut back. A
+        cp into a hut starts it too."""
+        source = self.home / "notes"
+        source.write_text("mine")
+        starts = {
+            "agent": lambda host: commands.enter(
+                "agent", ["id"], root=False, dirs=self.dirs, cwd=self.home,
+                environ=self.env, isatty=False, runner=host,
+                execvp=lambda *a: None),
+            "copied": lambda host: commands.cp(
+                [str(source)], "copied:~", dirs=self.dirs, runner=host,
+                spawn=FakeTar(), warn=self.fail)}
+        for name, start in starts.items():
+            with self.subTest(name):
+                hut, _ = self._create(name)
+                fd = self._locked(hut)
+                host = FakeHost(self.home)
+                thread, raised = self._behind(partial(start, host))
+                self.assertEqual(host.calls, [])
+                shutil.rmtree(hut.config)
+                os.close(fd)
+                thread.join(5)
+                self.assertEqual([str(e) for e in raised],
+                                 [f"no hut {name}"])
+                self.assertEqual(host.calls, [])
+
+    def test_a_removal_waits_on_a_start(self):
+        hut, _ = self._create()
+        fd = self._locked(hut)
+        host = FakeHost(self.home)
+        thread, raised = self._behind(lambda: commands.rm(
+            "agent", home=False, dirs=self.dirs, runner=host))
+        self.assertEqual(host.calls, [])
+        os.close(fd)
+        thread.join(5)
+        self.assertEqual(raised, [])
+        self.assertFalse(hut.config.exists())
 
     def test_rm_home_removes_the_home_a_removed_hut_left(self):
         """Without it, the home a plain rm keeps could be removed only
