@@ -105,6 +105,17 @@ TLS_DEFAULT = "inspect"
 
 # --- A policy entry, and how a set of them governs a request ---
 
+def path_readings(path):
+    """The paths an origin may serve for a normalised request path.
+
+    Origins split on whether `%2F` separates two segments or sits inside
+    one, so a path holding one has both readings, and the origin, not the
+    relay, picks.
+    """
+    split = path.replace("%2F", "/")
+    return (path,) if split == path else (path, split)
+
+
 class VmPolicyEntry(NamedTuple):
     """One policy entry, normalised: a host pattern and what it permits.
 

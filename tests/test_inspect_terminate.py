@@ -1164,11 +1164,14 @@ class TestARedirectOffTheAllowlistIsNamedWhereBothNamesAreKnown(
         self.assertEqual(redirect_target("/next"), (None, None))
 
     def test_a_path_that_cannot_be_normalised_predicts_nothing(self):
-        """None is not "no refusal": an encoded slash has two readings and the
-        request side declines to pick one, so there is no string to judge."""
-        host, path = redirect_target("https://h/a%2fb")
+        """None is not "no refusal": the request side refuses the head, so
+        there is no string to judge."""
+        host, path = redirect_target("https://h/a%2f..%2fb")
         self.assertEqual(host, "h")
         self.assertIsNone(path)
+
+    def test_an_encoded_slash_in_a_location_stays_encoded(self):
+        self.assertEqual(redirect_target("https://h/a%2fb"), ("h", "/a%2Fb"))
 
 
 class TestTheStartRefusesWhatItCannotDo(unittest.TestCase):

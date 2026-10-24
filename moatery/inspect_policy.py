@@ -15,6 +15,7 @@ from .inspect_document import (
     hostname_match,
     inspect_policy_digest,
     normalize_hostname,
+    path_readings,
     patterns_overlap,
     policy_governs,
     VmPolicyEntry,
@@ -63,11 +64,14 @@ class Policy(NamedTuple):
         A host any `policy` entry matches is governed by those entries alone,
         and `hosts` is not consulted for it, so a wildcard in `hosts` cannot
         widen a host an entry restricts. Among the governing entries it is
-        union, so the order of the file never changes what is allowed.
+        union, so the order of the file never changes what is allowed. Each
+        of the path's readings must be permitted, since the origin chooses
+        between them.
         """
         governing = policy_governs(host, self.policy)
         if governing:
-            return any(e.permits(method, path) for e in governing)
+            return all(any(e.permits(method, reading) for e in governing)
+                       for reading in path_readings(path))
         return hostname_match(host, self.hosts)
 
     def governs(self, host: str) -> bool:

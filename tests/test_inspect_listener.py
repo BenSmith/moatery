@@ -32,6 +32,7 @@ from moatery.inspect_document import (
     inspect_policy_digest,
     hostname_match,
     normalize_hostname,
+    path_readings,
     VmPolicyEntry,
 )
 from moatery.egress_plane import CLEARTEXT, TLS, plane_for_port
@@ -2619,6 +2620,39 @@ class TestPolicyEnforcement(_CleartextRig):
         self.assertIn(b"403", sent)
         self.assertEqual(dialled, [])
 
+    def test_an_encoded_slash_both_readings_permit_is_forwarded(self):
+        for paths in (None, ("/v2/*",)):
+            with self.subTest(paths=paths):
+                log, _, dialled = self._run(
+                    [], self._get("/v2/a%2Fb"), (_OK,),
+                    policy=self._policy([], ("a.example", ("GET",), paths)))
+                self.assertIn("forward", log)
+                self.assertEqual(len(dialled), 1)
+
+    def test_an_encoded_slash_one_reading_permits_is_a_403(self):
+        """The origin picks the reading, so an entry naming one spelling has
+        not authorised the other. The refusal names its host, which a
+        refusal of the head could not."""
+        for target, paths in (("/x%2Fy", ("/x%2Fy",)),
+                              ("/x%2Fy", ("/x/y",)),
+                              ("/@types%2Fnode", ("/@types/*",))):
+            with self.subTest(target=target, paths=paths):
+                log, sent, dialled = self._run(
+                    [], self._get(target),
+                    policy=self._policy([], ("a.example", ("GET",), paths)))
+                self.assertIn("not permitted by policy", log)
+                self.assertIn("host=a.example", log)
+                self.assertIn(b"403", sent)
+                self.assertEqual(dialled, [])
+
+    def test_entries_union_across_the_readings_of_an_encoded_slash(self):
+        log, _, dialled = self._run(
+            [], self._get("/x%2Fy"), (_OK,),
+            policy=self._policy([], ("a.example", ("GET",), ("/x%2Fy",)),
+                                ("a.example", ("GET",), ("/x/y",))))
+        self.assertIn("forward", log)
+        self.assertEqual(len(dialled), 1)
+
     def test_an_entry_with_neither_key_permits_anything_on_its_host(self):
         """The single-entry shorthand, which still enforces Host binding and
         the allowlist and nothing else."""
@@ -4787,15 +4821,40 @@ class TestTargetNormalisation(unittest.TestCase):
         self.assertEqual(self.norm("/a/%2e%2e/b"), "/b")
         self.assertEqual(self.norm("/a/%2E/b"), "/a/b")
 
-    def test_an_encoded_slash_is_refused(self):
-        """The case the whole unit turns on. Origins are split on whether
-        `%2f` separates two segments, so neither reading is one this listener
-        may pick on the guest's behalf."""
-        for target in ("/repos/myorg%2f..%2f..%2fsecret", "/a%2Fb",
-                       "/a/%2e%2e%2fb"):
+    def test_an_encoded_slash_stays_encoded_in_uppercase(self):
+        """npm asks for every scoped package this way. Refused, an install
+        went on without an optional dependency it could not fetch and failed
+        only when the missing binary was run (2026-10-22)."""
+        self.assertEqual(self.norm("/@types%2fnode"), "/@types%2Fnode")
+        self.assertEqual(self.norm("/a%2Fb/c"), "/a%2Fb/c")
+        self.assertEqual(self.norm("/a%2F"), "/a%2F")
+
+    def test_a_dot_segment_beside_an_encoded_slash_resolves_on_real_ones(self):
+        """What is sent is resolved, so the readings are of what the origin
+        gets."""
+        self.assertEqual(self.norm("/a%2Fb/../c"), "/c")
+
+    def test_an_encoded_slash_an_origin_would_resolve_further_is_refused(self):
+        """The case the whole unit turns on. At an origin that splits on
+        `%2f` these are dot or empty segments, and resolved there they reach
+        a path neither reading names: the first is `/secret`."""
+        for target in ("/repos/myorg%2f..%2f..%2fsecret", "/a/%2e%2e%2fb",
+                       "/v2/..%2Fadmin", "/a%2F.%2Fb", "/a%2F%2Fb", "/%2F",
+                       "/a%2F.."):
             with self.assertRaises(RequestUnreadable, msg=target) as caught:
                 self.norm(target)
             self.assertIn("encoded slash", str(caught.exception))
+
+    def test_a_dot_segment_with_params_behind_an_encoded_slash_is_refused(
+            self):
+        for target in ("/v1/files%2F..;%2Fadmin", "/a%2F.%3Bx/b"):
+            with self.assertRaises(RequestUnreadable, msg=target):
+                self.norm(target)
+
+    def test_a_path_with_an_encoded_slash_reads_both_ways(self):
+        self.assertEqual(path_readings("/@types%2Fnode"),
+                         ("/@types%2Fnode", "/@types/node"))
+        self.assertEqual(path_readings("/a/b"), ("/a/b",))
 
     def test_a_stray_percent_is_refused(self):
         for target in ("/a%", "/a%zz", "/a%2"):
@@ -4885,13 +4944,27 @@ class TestTheNormalisedFormIsWhatGoesUpstream(_CleartextRig):
         self.assertNotIn(b"..", sent.split(b"\r\n")[0])
         self.assertIn("forward", log)
 
-    def test_an_encoded_slash_never_reaches_an_origin(self):
+    def test_a_slash_an_origin_would_resolve_never_reaches_it(self):
         log, answer, dialled = self._run(
             ["h.example"],
             b"GET /a%2f..%2fb HTTP/1.1\r\nHost: h.example\r\n\r\n")
         self.assertEqual(dialled, [])
         self.assertTrue(answer.startswith(b"HTTP/1.1 400 "), answer[:40])
         self.assertIn("unreadable request", log)
+
+    def test_an_encoded_slash_goes_up_encoded(self):
+        """Decoded, it would be the separator reading chosen for an origin
+        that reads it as a byte."""
+        log, _, dialled = self._run(
+            ["registry.example"],
+            b"GET /@types%2fnode HTTP/1.1\r\nHost: registry.example\r\n"
+            b"Connection: close\r\n\r\n",
+            responses=[_OK])
+        self.assertEqual(len(dialled), 1)
+        sent = dialled[0][1]
+        self.assertTrue(
+            sent.startswith(b"GET /@types%2Fnode HTTP/1.1\r\n"), sent[:60])
+        self.assertIn("forward", log)
 
 
 if __name__ == "__main__":

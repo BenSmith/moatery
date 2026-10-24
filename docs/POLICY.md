@@ -86,7 +86,8 @@ network error. The reason is in the record, not the response.
   case-sensitive, matched against the request's path **without its
   query**, after percent-decoding of unreserved characters, dot-segment
   resolution and collapsing of duplicate slashes. `*` matches `/`. An
-  empty list permits no path.
+  empty list permits no path. A path holding an encoded slash is matched
+  twice (see "Encoded slashes").
 - `credential`: the id of a credential the broker holds for this host.
   It belongs to the HOST, not to the entry: present on any entry matching
   a host, it sends every permitted request to that host to the broker
@@ -187,19 +188,23 @@ opens with the HTTP/2 preface is answered 400.
 
 ## Encoded slashes
 
-A request whose path holds an encoded slash (`%2F`) is refused on every
-terminated host before any list is consulted, with the reason
-`unreadable request`, and the record has no host for it. Whether `%2F`
-separates two segments or sits inside one is a question origins answer
-differently, so the path has no one reading for `paths` to match or for
-the relay to send on.
+An encoded slash (`%2F`) goes to the origin as it came, and origins
+split on whether it separates two segments or sits inside one. So a
+path holding one is matched against `paths` both ways, as sent and with
+each `%2F` read as `/`, and is permitted only if both readings are, by
+one entry or by two. `/v2/a%2Fb` is permitted by `/v2/*`; `/@types%2Fnode`
+is refused by `/@types/*` alone, which the reading as sent does not
+match, and permitted by `/@types*`. An entry with no `paths` permits
+both, so npm, which asks for every scoped package this way, needs
+nothing on its registry's host. A `paths` list there would have to name
+every dependency an install fetches, scoped or not, so npm's registry
+is best left without one.
 
-npm asks for every scoped package that way (`/@types%2fnode`). It goes
-on without an optional dependency it cannot fetch, so an install can
-finish with a package left out, a compiler's platform binary say, which
-fails only when run. Such a client's host goes in `splice`, with
-everything `splice` says above: `registry.npmjs.org` is on a shared
-CDN, which then decides alone what a request inside may reach.
+A path whose `%2F`, read as `/`, makes a dot or empty segment
+(`/v2/..%2Fadmin`, `/a%2F%2Fb`) is refused on every terminated host
+before any list is consulted, with the reason `unreadable request`, and
+the record has no host for it. An origin that splits on the slash
+resolves that segment again, to a path neither reading names.
 
 ## Upgrades
 

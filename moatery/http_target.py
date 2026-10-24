@@ -5,9 +5,11 @@ form.
 The path is normalised here -- unreserved escapes decoded, dot segments
 resolved, duplicate slashes collapsed -- and the normalised form is what the
 policy matches and what goes upstream, so the two cannot address different
-resources. A path with two readings among origins is refused instead. The
-authority (`Host`, or an absolute-form target) and a redirect's `Location`
-are reduced the same way to the one name policy is matched against.
+resources. An encoded slash gives a path two readings, both of which the
+policy must permit, and a path an origin would resolve to a third is
+refused. The authority (`Host`, or an absolute-form target) and a
+redirect's `Location` are reduced the same way to the one name policy is
+matched against.
 """
 
 import ipaddress
@@ -15,6 +17,7 @@ from typing import NamedTuple
 
 from .inspect_document import (
     hostname_bad_character, hostname_empty_label, normalize_hostname,
+    path_readings,
 )
 from .egress_plane import CLEARTEXT, TLS
 from .http_framing import RequestUnreadable
@@ -42,9 +45,9 @@ def _decode_unreserved(path):
     """A path with unreserved percent-encodings decoded and the rest kept.
 
     `%2e` is decoded, so dot-segment resolution sees the dots an origin
-    will. An encoded slash is refused: origins split on whether it is a
-    separator. Every other escape stays, in uppercase hex, so one path has
-    one spelling.
+    will. Every other escape stays, in uppercase hex, so one path has one
+    spelling: an encoded slash among them, which path_readings reads both
+    ways.
     """
     out = []
     i = 0
@@ -60,13 +63,7 @@ def _decode_unreserved(path):
                 f"{path[i:i + 3]!r} in the request target is not a percent "
                 "escape, and a target with a stray % in it is read one way "
                 "here and another by anything that repairs it")
-        value = int(digits, 16)
-        decoded = chr(value)
-        if decoded == "/":
-            raise RequestUnreadable(
-                "an encoded slash in the request target: whether it separates "
-                "two segments or sits inside one is a question origins answer "
-                "differently, so it is not a path this can authorise")
+        decoded = chr(int(digits, 16))
         if decoded in _UNRESERVED:
             out.append(decoded)
         else:
@@ -110,7 +107,27 @@ def normalise_path(path):
     path, sep, query = path.partition("?")
     path = _decode_unreserved(path)
     _refuse_second_readings(path)
-    return _resolve_dot_segments(path) + sep + query
+    path = _resolve_dot_segments(path)
+    _refuse_a_moving_slash(path)
+    return path + sep + query
+
+
+def _refuse_a_moving_slash(path):
+    """Refuse a path whose separator reading an origin resolves further.
+
+    An encoded slash that makes a dot segment, an empty one or a `..;`
+    reaches, at an origin that splits on it, a path neither reading names:
+    `/v2/..%2Fadmin` is `/admin` there.
+    """
+    split = path_readings(path)[-1]
+    if split == path:
+        return
+    if _resolve_dot_segments(split) != split:
+        raise RequestUnreadable(
+            "an encoded slash in the request target makes a dot or empty "
+            "segment of it, so an origin that splits on the slash serves a "
+            "path this cannot authorise")
+    _refuse_second_readings(split)
 
 
 def _refuse_second_readings(path):

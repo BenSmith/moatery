@@ -504,12 +504,6 @@ Some clients pin a certificate or require HTTP/2 only; those need the
 host in `splice` ([POLICY.md](POLICY.md), "splice" and "HTTP/2"),
 which checks the name only and nothing inside the connection.
 
-**npm can't fetch scoped packages** (`@types/node`): `400 Bad
-Request`, or an install that finishes with a package left out, and
-`unreadable request` refusals with no host. npm sends the scope's slash
-encoded, which the inspector won't read; the registry needs `splice`
-([POLICY.md](POLICY.md), "Encoded slashes").
-
 **`dnf upgrade` fails in `ca-certificates`,** with `p11-kit: couldn't
 complete writing file: .../tls-ca-bundle.pem: Unknown error 16`. The
 hut's certificate bundle is mounted where that package rebuilds its

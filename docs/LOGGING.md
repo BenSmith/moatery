@@ -63,7 +63,7 @@ Every reason, as the journal, the record and `drop_reasons` spell it:
 | `host does not match the server name` | a request inside a session named a host on no list (suspect) |
 | `host does not match the server name (allowlisted)` | the same for a listed host: usually a client reusing one connection for two names |
 | `not HTTP`, `not HTTP (policy entry)` | a terminated session did not carry HTTP; the host needs `splice` |
-| `unreadable request` | a request head this relay does not read, such as a path with an encoded slash, which npm sends for every scoped package ([POLICY.md](POLICY.md), "Encoded slashes") |
+| `unreadable request` | a request head this relay does not read, such as a path whose encoded slash makes a dot segment ([POLICY.md](POLICY.md), "Encoded slashes") |
 | `internal destination` | the dial failed and the name resolves to a private address the policy does not expect: most likely the host's rule refused it ([DESIGN.md](DESIGN.md), "Private addresses") |
 | `upstream unreachable`, `timed out` | the network, either end |
 | `relay failed` | the network, either end, or an origin's answer this relay does not pass on, such as a header that frames the body only for a parser that trims it, answered 502; the line's text says which |
