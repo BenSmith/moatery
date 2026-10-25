@@ -236,6 +236,63 @@ given a private address. `internal_expected` lists those names — hosts
 - to anything else, including a listed name, it is reported as
   `upstream unreachable`.
 
+## Every host
+
+A policy can admit every host and keep the inspector: TLS terminated,
+each request recorded, a provider's key held by the broker. Its
+`hosts` is `*`:
+
+```json
+{
+  "hosts": ["*"],
+  "policy": [
+    {"host": "api.anthropic.com", "methods": ["POST"],
+     "paths": ["/v1/messages"], "credential": "anthropic"}
+  ]
+}
+```
+
+`*` matches every name, so a request to any host, with any method and
+path, is let through and recorded. The entry still governs its own host,
+by the composition rule: the key is attached to a POST to `/v1/messages`,
+and every other request to `api.anthropic.com` is refused. Without
+`policy`, `{"hosts": ["*"]}` admits everything and brokers nothing.
+
+In a hut this sits between a listed policy and `--network-policy none`
+([MOATHUT.md](MOATHUT.md), "A hut with no network policy"), which
+reaches every port but has no inspector, record or broker.
+
+`*` opens only what the rules send to the inspector, so it is not an open
+network:
+
+- **Only HTTP and HTTPS leave**, on TCP 80 and 443. Every other port,
+  UDP 443 (HTTP/3) included, meets the drop ([DESIGN.md](DESIGN.md),
+  "The rules"). git over ssh, a database's own protocol and anything else
+  that is not HTTP still fail.
+- **Names still resolve to the responder's one address**
+  ([DESIGN.md](DESIGN.md), "DNS: answered, never forwarded"). A client
+  that needs a host's real address, or a record other than A and AAAA,
+  gets none.
+- **Every TLS connection is terminated**, so every client must trust the
+  inspector's CA. One that pins a certificate or carries its own trust
+  store fails, and so does one that speaks only h2 ([HTTP/2](#http2)).
+  Name those hosts in `splice`, one by one, never as `*` or as a wildcard
+  over a shared domain ([`splice`](#splice)).
+- **A TLS connection must name its host.** A hello with no server name,
+  which is what a client sends when it dials an address, is refused with
+  the reason `no server name`. On port 80 an IPv4 address in `Host` is
+  a name `*` matches, and the inspector dials it.
+- **Private destinations are reached.** The inspector dials whatever an
+  admitted name resolves to, local network included
+  ([DESIGN.md](DESIGN.md), "Private addresses"). A host rule
+  blocking private space is what keeps the workload off the local
+  network.
+
+Admitting every host, the inspector refuses no destination: whatever the
+workload holds can leave over HTTPS. What `*` keeps is the record of
+where it went and the broker: the real key is attached outside the
+workload, and the workload never holds it.
+
 ## Loading and reloading
 
 The inspector reads the document at start, and again on SIGUSR1
