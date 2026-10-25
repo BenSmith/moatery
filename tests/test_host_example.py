@@ -10,6 +10,7 @@ import re
 import unittest
 from pathlib import Path
 
+from moathut.units import HARDENING
 from tests import REPO_ROOT
 
 EXAMPLES = Path(REPO_ROOT) / "examples"
@@ -44,6 +45,15 @@ class TestTheHostExample(unittest.TestCase):
                            README.read_text())[0]
         self.assertIn("--name example", create)
         self.assertTrue(create.rstrip().endswith("sleep infinity"), create)
+
+    def test_its_listeners_are_hardened_and_make_no_namespace(self):
+        """A hut's lines, and RestrictNamespaces=: socket activated, they
+        join no namespace and run no podman."""
+        lines = set(HARDENING.splitlines()) | {"RestrictNamespaces=yes"}
+        for name in ("moat-inspect.service", "moat-resolve.service"):
+            unit = (EXAMPLES / "systemd" / name).read_text().splitlines()
+            with self.subTest(unit=name):
+                self.assertLessEqual(lines, set(unit))
 
     def test_every_unit_is_in_its_table_and_copied(self):
         text = README.read_text()

@@ -40,10 +40,10 @@ from moathut.credentials import (Broker, Credential, CredentialError,
 from moathut.mounts import Mount, MountRefused, parse_mount, refuse
 from moathut.paths import (Hut, huts_root, credentials_root, described,
                                protected, sealed, user_dirs, valid_name)
-from moathut.units import (ALL_CAPABILITIES, ANSWER, CA_VARIABLES,
-                               CAPABILITIES, MARK_PATH, PROMPT_PATH, Settings,
-                               container_unit, containers_conf, interpreter,
-                               prompt, render)
+from moathut.units import (ALL_CAPABILITIES, ANSWER, BROKER_HARDENING,
+                           CA_VARIABLES, CAPABILITIES, LISTENER_HARDENING,
+                           MARK_PATH, PROMPT_PATH, Settings, container_unit,
+                           containers_conf, interpreter, prompt, render)
 
 DESIGN = Path(REPO_ROOT) / "docs" / "DESIGN.md"
 DEPENDENCIES = ("Wants", "Requires", "After", "BindsTo", "PartOf")
@@ -750,6 +750,17 @@ class TestBrokerUnits(unittest.TestCase):
         env = _keys(self.work, "Environment")
         self.assertIn("A_KEY=moatery-placeholder-a", env)
         self.assertIn("B_KEY=moatery-placeholder-b", env)
+
+    def test_the_listeners_and_the_broker_are_hardened(self):
+        """hut_rig's hardening rows read what the kernel holds."""
+        resolve = self.units["moathut-agent-resolve.service"]
+        for name, text, lines in (
+                ("inspector", self.inspect, LISTENER_HARDENING),
+                ("responder", resolve, LISTENER_HARDENING),
+                ("broker", self.unit, BROKER_HARDENING)):
+            with self.subTest(unit=name):
+                self.assertIn("\n[Service]\n", text)
+                self.assertIn(lines, text.split("\n[Service]\n", 1)[1])
 
     def test_a_hut_without_credentials_has_no_broker(self):
         units = render(self.hut, self.settings, None)

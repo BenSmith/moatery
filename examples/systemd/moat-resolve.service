@@ -15,3 +15,14 @@ ExecStart=/usr/libexec/moatery/moat-resolve --name example \
     --status %S/moatery/resolve-status.json
 ExecReload=kill -USR1 $MAINPID
 StateDirectory=moatery
+NoNewPrivileges=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~process_vm_readv process_vm_writev
+SystemCallErrorNumber=EPERM
+RestrictNamespaces=yes

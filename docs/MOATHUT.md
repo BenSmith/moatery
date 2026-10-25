@@ -384,6 +384,14 @@ units differ from the example's in these ways:
   start.
 - The workload's unit names the hut's user and drops every capability
   outside podman's default set ("Refused", below).
+- The inspector's, the responder's and the broker's units run them
+  with no new privileges and under systemd's `@system-service` syscall
+  filter, which refuses ptrace, `process_vm_readv`, a module's load and
+  a 32-bit call. The listeners' allow a mount: podman, which they run to
+  find the pod, makes its storage's mount private. The broker's make no
+  namespace and write no core. None takes an option that needs a
+  namespace: in the user's manager it gives the unit a user namespace
+  of its own, from which the listeners cannot join the pod's.
 - At each start the workload's unit writes a sudoers drop-in, as root in
   the container (`ExecStartPost=`), giving the user sudo without a
   password: the image's own rule asks for one, and the user has none.
@@ -581,6 +589,11 @@ What stays open, and is warned about:
   gives it a network of its own, without the rules. An interactive shell
   in one that mounts the hut's prompt and mark warns; one that mounts
   neither cannot know it is the hut's.
+- The inspector, the responder and the broker run as the user, and
+  read and write what the user can. The inspector reads what the hut
+  sends, and a flaw in it that runs code runs it with the user's
+  account; the filter narrows what that code asks of the kernel, not
+  the user's files.
 - The profile refuses the sockets and the line disciplines that load a
   module few programs use, but a hut still makes the host load the
   modules behind what it allows. Refusing modules host-wide

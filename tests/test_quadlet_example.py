@@ -12,7 +12,7 @@ import re
 import unittest
 from pathlib import Path
 
-from moathut.units import ANSWER
+from moathut.units import ANSWER, BROKER_HARDENING, LISTENER_HARDENING
 from tests import REPO_ROOT
 
 EXAMPLES = Path(REPO_ROOT) / "examples"
@@ -40,6 +40,12 @@ def _provided():
     for p in QUADLET.glob("*.pod"):
         units[f"{p.stem}-pod.service"] = p
     return units
+
+
+def _settings(path):
+    """The unit's lines that set something, comments left out."""
+    return {ln for ln in path.read_text().splitlines()
+            if ln and not ln.startswith("#")}
 
 
 def _ruleset(text):
@@ -88,6 +94,17 @@ class TestQuadletExample(unittest.TestCase):
         moment finds the socket."""
         broker = EXAMPLES / "systemd" / "moat-broker.service"
         self.assertEqual(_keys(broker, "Type"), ["notify"])
+
+    def test_the_listeners_and_the_broker_are_hardened_as_moathuts(self):
+        """The same lines as a hut's, which hut_rig proves: the listeners
+        run podman, as a hut's do."""
+        broker = EXAMPLES / "systemd" / "moat-broker.service"
+        for unit, lines in ((QUADLET / LISTENERS[0], LISTENER_HARDENING),
+                            (QUADLET / LISTENERS[1], LISTENER_HARDENING),
+                            (broker, BROKER_HARDENING)):
+            with self.subTest(unit=unit.name):
+                self.assertLessEqual(set(lines.splitlines()),
+                                     _settings(unit))
 
     def test_the_script_is_given_the_pod_name(self):
         pod = QUADLET / "example.pod"

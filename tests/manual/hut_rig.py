@@ -15,7 +15,8 @@ on the proving host as an ordinary user, from a checkout:
                                     [--without-reload] [--without-reopen]
                                     [--without-autostart]
                                     [--uninspected-ruled] [--cp-unguarded]
-                                    [--rm-unguarded] [--restarts N]
+                                    [--rm-unguarded] [--unhardened]
+                                    [--restarts N]
 
 The tool is the checkout's bin/moathut running the checkout's
 programs, or, with MOATERY_LIBEXEC=/usr/libexec/moatery, the installed
@@ -58,6 +59,9 @@ tarfile's data filter, and neither refuses a place a hut can write.
 With --rm-unguarded, rm and the enter that races it run moathut with a
 sitecustomize that takes away rm's lock, its second stop, its letting
 go of a killed holder's namespace and its word of units left running.
+
+With --unhardened, moathut writes the listeners' and the broker's units
+with none of their hardening, by a sitecustomize that empties it.
 
 The stub is on the host's 127.0.0.1, which the pod cannot reach, so
 anything the stub answers came by the inspector's dial. The provider is
@@ -121,6 +125,9 @@ THE ROWS
             rows, a report, not a row: the calls the host's podman
             default and strict allow differently, beyond what strict
             narrows and widens.
+  hardening the inspector, the responder and the broker run with no new
+            privileges and under a seccomp filter, and the broker can
+            write no core, read from /proc for each unit's main process.
   home      the hut's home is its own: a file in the user's home is absent
             inside, and one written inside is in the hut's home on the
             host and not in the user's. The directories between the home
@@ -500,6 +507,7 @@ CP_VICTIM = RIG / "hut-cp-victim"
 CP_OUT = RIG / "hut-cp-out"
 CP_UNGUARDED = RIG / "hut-cp-unguarded"
 RM_UNGUARDED = RIG / "hut-rm-unguarded"
+UNHARDENED = RIG / "hut-unhardened"
 CP_SENDING = RIG / "hut-cp-sending-tar"
 CP_STEERED = RIG / "hut-cp-steered"
 PLANTED = ".moatery-rig-planted"
@@ -733,6 +741,14 @@ from moathut import commands
 commands._held = lambda hut: contextlib.nullcontext()
 commands._up = lambda hut, runner: []
 commands._let_go = lambda hut, runner: None
+"""
+
+UNHARDENED_SCRIPT = """\
+# written by tests/manual/hut_rig.py: --unhardened. moathut writes the
+# listeners' and the broker's units with none of their hardening.
+from moathut import units
+
+units.LISTENER_HARDENING = units.BROKER_HARDENING = ""
 """
 
 SENDING_TAR = f"""\
@@ -1694,6 +1710,50 @@ def counter_rows():
 
 def invocation(unit):
     return show(unit, "InvocationID")
+
+
+def proc_status(pid):
+    """/proc/PID/status as a dict; empty for no process."""
+    try:
+        text = Path(f"/proc/{pid}/status").read_text()
+    except OSError:
+        return {}
+    return {k: v.strip() for k, _, v in
+            (ln.partition(":") for ln in text.splitlines())}
+
+
+def core_limit(pid):
+    """The soft limit on the process's core, from /proc/PID/limits."""
+    try:
+        text = Path(f"/proc/{pid}/limits").read_text()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("Max core file size"):
+            return line.split()[4]
+    return None
+
+
+def hardening_rows():
+    """What the kernel holds for each unit's main process, not the unit's
+    text: a unit that loses its lines, or a manager that drops them, runs
+    with no filter."""
+    say("hardening")
+    for what, service in (("inspector", INSPECT_SERVICE),
+                          ("responder", RESOLVE_SERVICE),
+                          ("broker", BROKER_SERVICE)):
+        pid = show(service, "MainPID")
+        status = proc_status(pid)
+        row(f"hardening: the {what} runs with no new privileges, under a "
+            "seccomp filter",
+            status.get("NoNewPrivs") == "1" and status.get("Seccomp") == "2",
+            f"pid {pid}: NoNewPrivs {status.get('NoNewPrivs')}, Seccomp "
+            f"{status.get('Seccomp')}, filters "
+            f"{status.get('Seccomp_filters')}")
+    pid = show(BROKER_SERVICE, "MainPID")
+    core = core_limit(pid)
+    row("hardening: the broker can write no core", core == "0",
+        f"pid {pid}: soft core limit {core}")
 
 
 def broker_rows(secret):
@@ -2754,6 +2814,7 @@ def probe(args, tag, secret):
     enter_rows(tag)
     held_rows()
     seccomp_rows()
+    hardening_rows()
     home_rows(tag)
     label_rows()
     cp_rows(tag, args.cp_unguarded)
@@ -2797,7 +2858,7 @@ def clear_leftovers():
         path.unlink(missing_ok=True)
     shutil.rmtree(SLOW, ignore_errors=True)
     for path in (NFT_FAILS, NFT_LOADS_NOTHING, CP_OUT, CP_UNGUARDED,
-                 RM_UNGUARDED, CP_STEERED):
+                 RM_UNGUARDED, UNHARDENED, CP_STEERED):
         shutil.rmtree(path, ignore_errors=True)
     for path in (CP_SOURCE, CP_VICTIM, CP_SENDING):
         path.unlink(missing_ok=True)
@@ -2834,6 +2895,8 @@ def material():
     (CP_UNGUARDED / "sitecustomize.py").write_text(CP_UNGUARDED_SCRIPT)
     RM_UNGUARDED.mkdir(parents=True, exist_ok=True)
     (RM_UNGUARDED / "sitecustomize.py").write_text(RM_UNGUARDED_SCRIPT)
+    UNHARDENED.mkdir(parents=True, exist_ok=True)
+    (UNHARDENED / "sitecustomize.py").write_text(UNHARDENED_SCRIPT)
     CP_SENDING.write_text(SENDING_TAR)
     for directory, body in ((NFT_FAILS, "echo 'hut_rig: nft fails, as "
                                         "asked' >&2\nexit 1\n"),
@@ -2865,7 +2928,7 @@ def teardown(keep):
                 hut("rm", name, "--home")
         for path in (PROJECT, READONLY, SLOW, TWIN_LOGS, OPEN_LOGS,
                      NFT_FAILS, NFT_LOADS_NOTHING, CP_OUT, CP_UNGUARDED,
-                     RM_UNGUARDED, CP_STEERED):
+                     RM_UNGUARDED, UNHARDENED, CP_STEERED):
             shutil.rmtree(path, ignore_errors=True)
         for path in (CP_SOURCE, CP_VICTIM, CP_SENDING):
             path.unlink(missing_ok=True)
@@ -2929,6 +2992,10 @@ def main():
                          "rows that the enter finds no hut, that nothing "
                          "is left and that a killed holder's namespace is "
                          "let go must go red")
+    ap.add_argument("--unhardened", action="store_true",
+                    help="write the listeners' and the broker's units with "
+                         "none of their hardening; hardening's rows must go "
+                         "red")
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
     args = ap.parse_args()
@@ -2950,6 +3017,11 @@ def main():
     RIG.mkdir(parents=True, exist_ok=True)
     clear_leftovers()
     tag = material()
+    if args.unhardened:
+        TOOL_ENV["PYTHONPATH"] = ":".join(filter(None, (
+            str(UNHARDENED), TOOL_ENV.get("PYTHONPATH"))))
+        say("  the listeners' and the broker's units are written "
+            "unhardened, as asked")
     # Only the broker holds it; the stub answers 200 to it alone.
     secret = "sk-real-" + os.urandom(12).hex()
     try:
@@ -3020,6 +3092,9 @@ def main():
             "--rm-unguarded: rm's rows that the racing enter finds no hut, "
             "that nothing of the hut is left after it, and that rm --home "
             "lets go of a killed holder's namespace are expected red")
+    if args.unhardened:
+        expected.append(
+            "--unhardened: hardening's four rows are expected red")
     if args.without_autostart:
         expected.append(
             "--without-autostart: create's ls, the autostart rows and "

@@ -316,6 +316,35 @@ WantedBy=default.target
 """
 
 
+# What the listeners and the broker run under: a seccomp filter and
+# limits on the process, and nothing that needs a namespace. In the
+# user's manager that would put the unit in a user namespace of its
+# own, from which neither podman, finding the pod, nor the listeners'
+# bind can join the pod's (netns_listen). AF_NETLINK is getaddrinfo's.
+HARDENING = """\
+NoNewPrivileges=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~process_vm_readv process_vm_writev
+SystemCallErrorNumber=EPERM
+"""
+
+# podman, finding the pod, makes its storage's mount private.
+LISTENER_HARDENING = HARDENING + "SystemCallFilter=@mount\n"
+
+# The broker joins no namespace, and a core of it holds the credentials.
+BROKER_HARDENING = HARDENING + """\
+RestrictNamespaces=yes
+UMask=0077
+LimitCORE=0
+"""
+
+
 def _listener_unit(hut, settings, what, argv, broker=None):
     after = [hut.pod_service] + ([hut.broker_service] if broker else [])
     wants = f"Wants={hut.broker_service}\n" if broker else ""
@@ -335,7 +364,7 @@ Type=notify
     _tool(settings, "exec", hut.name, "--", *argv))}
 ExecReload=kill -USR1 $MAINPID
 Restart=on-failure
-"""
+{LISTENER_HARDENING}"""
 
 
 def inspect_argv(hut, settings, broker):
@@ -408,7 +437,7 @@ Type=notify
 {loads}RuntimeDirectory={_value(runtime)}
 RuntimeDirectoryMode=0700
 Restart=on-failure
-"""
+{BROKER_HARDENING}"""
 
 
 def rotate_unit(hut, settings):
