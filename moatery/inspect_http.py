@@ -12,10 +12,12 @@ planes apply the policy through the same loop.
 import ssl
 
 from .egress_record import (
-    DROP_BROKER_UNREACHABLE, DROP_CLIENT_CERT, DROP_MISDIRECTED,
-    DROP_MISDIRECTED_LISTED, DROP_NOT_ALLOWLISTED, DROP_NOT_PERMITTED,
-    DROP_RELAY_FAILED, DROP_TIMED_OUT, DROP_UNREADABLE_REQUEST,
-    NOTE_H2_PREFACE, NOTE_H2C, Record,
+    DROP_BROKER_UNREACHABLE, DROP_CLIENT_CERT, DROP_FILTER_FAILED,
+    DROP_FILTER_REFUSED, DROP_FILTER_TIMED_OUT, DROP_FILTER_UNAVAILABLE,
+    DROP_MISDIRECTED, DROP_MISDIRECTED_LISTED, DROP_NOT_ALLOWLISTED,
+    DROP_NOT_FILTERABLE, DROP_NOT_PERMITTED, DROP_RELAY_FAILED,
+    DROP_TIMED_OUT, DROP_UNREADABLE_REQUEST, NOTE_H2_PREFACE, NOTE_H2C,
+    Record,
 )
 from .egress_relay import relay
 from . import egress_relay
@@ -23,13 +25,17 @@ from .egress_upstream import (
     BROKER_UPSTREAM_KEY, dial_failure_reason, tls_failure,
 )
 from .http_framing import (
-    ReadTimedOut, RequestUnreadable, ResetWhileIdle, _Stream, _get_all,
-    _is_count, _split_response_head, copy_body, drain, response_framing,
-    send_response,
+    BodyTooLarge, BudgetSpent, Framing, ReadTimedOut, RequestUnreadable,
+    ResetWhileIdle, _Stream, _get_all, _is_count, _split_response_head,
+    copy_body, drain, read_body, response_framing, send_response,
 )
 from .http_request import parse_request, rebuild_request
 from .http_target import SCHEME_HTTP, redirect_target
 from .inspect_scope import quoted
+from .request_filter import (
+    FAILED, FILTER_BODY_MAX, FILTER_TIMEOUT, PASSED, REFUSED, REWROTE,
+    TIMED_OUT, UNAVAILABLE, filter_env, run_filter,
+)
 
 
 # How many 1xx interim responses one request may collect. A real exchange
@@ -39,6 +45,15 @@ INTERIM_MAX = 32
 
 # The start of HTTP/2's connection preface, which is a request line.
 H2_PREFACE = b"PRI * HTTP/2.0\r\n"
+
+# How each request-filter outcome that forwards nothing is counted and
+# answered: (drop reason, status, phrase).
+FILTER_ANSWERS = {
+    REFUSED: (DROP_FILTER_REFUSED, 403, "Forbidden"),
+    FAILED: (DROP_FILTER_FAILED, 502, "Bad Gateway"),
+    TIMED_OUT: (DROP_FILTER_TIMED_OUT, 504, "Gateway Timeout"),
+    UNAVAILABLE: (DROP_FILTER_UNAVAILABLE, 503, "Service Unavailable"),
+}
 
 
 class _ClientCertDemanded(Exception):
@@ -151,15 +166,139 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
         insp.drop(where, DROP_NOT_PERMITTED, host=req.host, rec=rec,
                   answered=403, method=req.method)
         return _refuse(client, conn, req, 403, "Forbidden")
-    # An HTTP/1.0 request is sent with `Connection: close`, so its upstream
-    # is not pooled.
-    transient = req.version == "HTTP/1.0"
     rec.request(req)
     # A brokered request goes to the broker instead of the origin, with the
     # same head; the broker picks the credential by its Host.
     credential = policy.credential_for(req.host)
     if credential:
         rec.set(credential=credential)
+    run = policy.request_filters.filter_for(req.host)
+    if run is None:
+        return _forward(insp, client, conn, where, upstreams, rec, req,
+                        policy, credential, pinned_host)
+    taken = _Taken(insp.filter_budget)
+    try:
+        return _serve_filtered(insp, client, conn, where, upstreams, rec,
+                               req, policy, credential, pinned_host, run,
+                               taken)
+    finally:
+        # After the dial, the send and every early return.
+        taken.give_back()
+
+
+class _Taken:
+    """What one request holds of the shared filter budget."""
+
+    def __init__(self, budget):
+        self.budget, self.n = budget, 0
+
+    def take(self, n):
+        if not self.budget.take(n):
+            return False
+        self.n += n
+        return True
+
+    def give_back(self):
+        self.budget.give(self.n)
+        self.n = 0
+
+
+def _unfilterable(req):
+    """(status, phrase, why) for a request no filter can be given the
+    whole body of, or None."""
+    if req.upgrade:
+        return (403, "Forbidden",
+                "it offers Upgrade, and what follows a 101 is never read")
+    codings = {t.strip().lower() for v in _get_all(req.headers,
+                                                   "content-encoding")
+               for t in v.split(",")} - {"", "identity"}
+    if codings:
+        return (415, "Unsupported Media Type",
+                f"its body is encoded ({', '.join(sorted(codings))}), "
+                f"which a filter would read as bytes it cannot judge")
+    if req.framing.kind == "length" and req.framing.length > FILTER_BODY_MAX:
+        return (413, "Content Too Large",
+                f"its {req.framing.length}-byte body is over the "
+                f"{FILTER_BODY_MAX}-byte filter cap")
+    return None
+
+
+def _serve_filtered(insp, client, conn, where, upstreams, rec, req, policy,
+                    credential, pinned_host, run, taken):
+    """A request to a filtered host: refused, answered for its filter, or
+    forwarded with the body the filter wrote."""
+    refusal = _unfilterable(req)
+    if refusal is not None:
+        status, phrase, why = refusal
+        insp.drop(where, DROP_NOT_FILTERABLE, f"{req.host}: {why}",
+                  host=req.host, rec=rec, answered=status)
+        return _refuse(client, conn, req, status, phrase)
+    if req.framing.kind == "none" or (req.framing.kind == "length"
+                                      and req.framing.length == 0):
+        return _forward(insp, client, conn, where, upstreams, rec, req,
+                        policy, credential, pinned_host)
+    if req.expects_continue:
+        # As _forward grants it: after policy, here before the body is read.
+        conn.sendall(b"HTTP/1.1 100 Continue\r\n\r\n")
+    conn.settimeout(egress_relay.RELAY_IDLE_TIMEOUT)
+    try:
+        body = read_body(client, req.framing, FILTER_BODY_MAX, taken.take)
+    except ReadTimedOut as exc:
+        insp.drop(where, DROP_TIMED_OUT, exc, host=req.host, rec=rec)
+        return False
+    except RequestUnreadable as exc:
+        insp.drop(where, DROP_UNREADABLE_REQUEST, exc, host=req.host,
+                  rec=rec, answered=400)
+        send_response(conn, 400, "Bad Request", close=True)
+        return False
+    except BodyTooLarge as exc:
+        # The rest of the body is unread, so the connection ends here.
+        insp.drop(where, DROP_NOT_FILTERABLE, exc, host=req.host, rec=rec,
+                  answered=413)
+        send_response(conn, 413, "Content Too Large", close=True)
+        return False
+    except BudgetSpent as exc:
+        insp.drop(where, DROP_FILTER_UNAVAILABLE, exc, host=req.host,
+                  rec=rec, answered=503, budget="spent")
+        send_response(conn, 503, "Service Unavailable", close=True)
+        return False
+    outcome = run_filter(
+        run, body, filter_env(where.cid, where.seq, req, len(body)),
+        budget=insp.filter_budget, slots=insp.filter_slots,
+        timeout=FILTER_TIMEOUT, cap=FILTER_BODY_MAX)
+    rec.set(filter_ms=outcome.ms)
+    if outcome.kind in (PASSED, REWROTE):
+        # run_filter left the output taken; it is given back with the body.
+        taken.n += len(outcome.body)
+        rec.set(filter=outcome.kind)
+        held = req._replace(framing=Framing("length", len(outcome.body)),
+                            expects_continue=False)
+        return _forward(insp, client, conn, where, upstreams, rec, held,
+                        policy, credential, pinned_host, outcome=outcome)
+    reason, status, phrase = FILTER_ANSWERS[outcome.kind]
+    fields = dict(f.split("=", 1) for f in outcome.fields if "=" in f)
+    if outcome.kind == REFUSED:
+        rec.set(filter=REFUSED)
+        fields["filter_reason"] = outcome.reason
+    if outcome.spawn_refused:
+        insp.warn_unrunnable(policy.request_filters.digest, run,
+                             fields.get("errno"))
+    insp.drop(where, reason, f"{run}; nothing was sent to {req.host}",
+              host=req.host, rec=rec, answered=status, **fields)
+    return _answer_read(conn, req, status, phrase)
+
+
+def _forward(insp, client, conn, where, upstreams, rec, req, policy,
+             credential, pinned_host, outcome=None):
+    """Dial, send the request and relay its answer. True to stay on the
+    connection.
+
+    With a filter's `outcome`, its body is sent in place of the guest's,
+    which has been read already.
+    """
+    # An HTTP/1.0 request is sent with `Connection: close`, so its upstream
+    # is not pooled.
+    transient = req.version == "HTTP/1.0"
     try:
         up = insp.upstream.connection_for(
             req.host, upstreams, reusable=not transient,
@@ -222,10 +361,18 @@ def serve_request(insp, client, conn, where, upstreams, first, rec, *,
         # The body goes up before the response is read. An origin that
         # answers without reading it stalls this send until the idle
         # timeout.
-        copy_body(client, up.sock, req.framing)
+        if outcome is None:
+            copy_body(client, up.sock, req.framing)
+        else:
+            up.sock.sendall(outcome.body)
         insp.counters.record_forward()
         rec.set(decision="forward")
-        insp.log(f"forward {where} host={req.host} method={req.method}")
+        filtered = ""
+        if outcome is not None:
+            insp.counters.record_filtered(outcome.kind)
+            filtered = f" filter={outcome.kind} filter_ms={outcome.ms}"
+        insp.log(f"forward {where} host={req.host} method={req.method}"
+                 f"{filtered}")
         if req.withheld:
             insp.note(where, NOTE_H2C,
                       f"the request offered Upgrade: {req.withheld} and "
@@ -403,6 +550,14 @@ def _binding_reason(insp, host):
     if insp.policy.admits(host):
         return DROP_MISDIRECTED_LISTED
     return DROP_MISDIRECTED
+
+
+def _answer_read(conn, req, status, reason):
+    """Answer a request whose body has been read whole. True if the
+    connection lives: there is nothing left of it to drain."""
+    keep = not req.wants_close
+    send_response(conn, status, reason, close=not keep)
+    return keep
 
 
 def _refuse(client, conn, req, status, reason):

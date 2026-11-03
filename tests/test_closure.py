@@ -45,7 +45,7 @@ BROKER_FLAGS = frozenset({
 })
 INSPECTOR_FLAGS = frozenset({
     "--name", "--policy", "--state-dir", "--status", "--record", "--broker",
-    "--caller-uid", "--netns-pid",
+    "--caller-uid", "--netns-pid", "--request-filters",
 })
 RESOLVER_FLAGS = frozenset({
     "--name", "--address", "--address6", "--policy", "--static",
@@ -181,7 +181,8 @@ class TestThePackageIsTheClosure(unittest.TestCase):
     def test_the_resolver_reaches_no_dialling_module(self):
         """moat-resolve answers from memory. Its closure is its own three
         modules, the policy reader it counts names against, and the status
-        writer; nothing that opens a connection is in it."""
+        writer; nothing that opens a connection or starts a process is in
+        it."""
         mods = _lib_modules()
         self.assertEqual(
             sorted(_closure(RESOLVER, mods)),

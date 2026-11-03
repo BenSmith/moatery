@@ -95,6 +95,8 @@ class Settings(NamedTuple):
     level: str | None = None
     # False for `--network-policy none`.
     inspected: bool = True
+    # Whether its inspector reads request-filters.json.
+    filtered: bool = False
 
     def to_json(self):
         doc = self._asdict()
@@ -375,6 +377,8 @@ def inspect_argv(hut, settings, broker):
             "--record", str(hut.record), "--netns-pid", PID]
     if broker:
         argv += ["--broker", f"unix:{hut.broker_socket}"]
+    if settings.filtered:
+        argv += ["--request-filters", str(hut.request_filters)]
     return argv
 
 

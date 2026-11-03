@@ -1,0 +1,13 @@
+#!/bin/sh
+# A request filter's sandbox: the document's "run" names this script, and
+# FILTER names the filter it runs. The workload must be able to write
+# neither.
+FILTER=${0%/*}/json-only
+exec bwrap --unshare-all --unshare-user --disable-userns \
+    --die-with-parent --new-session --cap-drop ALL \
+    --ro-bind /usr /usr \
+    --symlink usr/bin /bin --symlink usr/lib /lib \
+    --symlink usr/lib64 /lib64 \
+    --proc /proc --dev /dev --tmpfs /tmp \
+    --ro-bind "$FILTER" "$FILTER" \
+    -- "$FILTER"

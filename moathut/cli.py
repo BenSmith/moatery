@@ -9,15 +9,16 @@ from pathlib import Path
 
 from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, HutError, allow, cp,
                        create, credential_add, credential_ls, credential_rm,
-                       edit_policy, enter, log, ls, ptyxis_add,
+                       edit_policy, edit_request_filters, enter, log, ls,
+                       ptyxis_add,
                        ptyxis_remove, refused, rm, stop, unit_exec,
                        unit_netns, unit_rotate, unit_sudoers)
 from .netns import NetnsError
 from .paths import user_dirs
 from .process import CommandFailed
 
-PUBLIC = ("{create,enter,cp,log,allow,network-policy,stop,rm,ls,"
-          "credential,ptyxis}")
+PUBLIC = ("{create,enter,cp,log,allow,network-policy,request-filters,"
+          "stop,rm,ls,credential,ptyxis}")
 
 # The release's VERSION, which the RPM installs beside the package.
 VERSION = Path(__file__).with_name("VERSION")
@@ -48,11 +49,15 @@ def build_parser():
     p.add_argument("--seccomp", metavar="PROFILE",
                    help="strict, the default; debug, which allows "
                         "ptrace; or a seccomp profile file, copied in")
+    p.add_argument("--request-filters", metavar="FILE",
+                   help="the inspector's request-filter document, copied "
+                        "in")
     p.add_argument("--like", metavar="HUT",
-                   help="start from another hut's policy, image, mounts "
-                        "and seccomp profile; --network-policy, --image "
-                        "and --seccomp replace its, and --mount adds to "
-                        "them")
+                   help="start from another hut's policy, image, mounts, "
+                        "seccomp profile and request filters; "
+                        "--network-policy, --image, --seccomp and "
+                        "--request-filters replace its, and --mount adds "
+                        "to them")
     p.add_argument("--dry-run", action="store_true",
                    help="print the files it would write, and write none; "
                         "the image is pulled, to find its trust store")
@@ -87,6 +92,10 @@ def build_parser():
     p = sub.add_parser("network-policy",
                        help="edit a hut's policy in $EDITOR; its "
                             "listeners reload")
+    p.add_argument("name")
+    p = sub.add_parser("request-filters",
+                       help="edit a hut's request filters in $EDITOR; its "
+                            "inspector reloads")
     p.add_argument("name")
     p = sub.add_parser("stop", help="stop a hut")
     p.add_argument("name")
@@ -170,17 +179,19 @@ def run_credential(args, *, dirs, stdin):
         credential_rm(args.id, dirs=dirs)
 
 
-def _applied(name, what, unchanged, applied):
+def _applied(name, what, unchanged, applied, responder=True):
     if applied is None:
         print(f"hut {name}: {unchanged}")
         return
     if not applied.running:
         listeners = "it applies from the hut's next start"
     elif applied.restarted:
-        listeners = (f"its inspector restarted, since {applied.restarted}, "
-                     "and its responder reloaded")
+        listeners = (f"its inspector restarted, since {applied.restarted}"
+                     + (", and its responder reloaded" if responder
+                        else ""))
     else:
-        listeners = "its inspector and responder reloaded"
+        listeners = ("its inspector and responder reloaded" if responder
+                     else "its inspector reloaded")
     print(f"hut {name}: {what}; {listeners}"
           + ("; the workload has its new variables from its next start"
              if applied.moved else ""))
@@ -221,7 +232,8 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
                      uid=os.getuid(), gid=os.getgid(), cwd=cwd,
                      environ=environ, autostart=args.autostart,
                      dry_run=args.dry_run, like=args.like,
-                     profile=args.seccomp)
+                     profile=args.seccomp,
+                     request_filters=args.request_filters)
         if args.dry_run:
             for path, text in hut.items():
                 print(f"# {path}\n{text}")
@@ -249,6 +261,11 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
         _applied(args.name, "policy replaced", "policy unchanged",
                  edit_policy(args.name, dirs=dirs, environ=environ,
                              isatty=isatty))
+    elif args.command == "request-filters":
+        _applied(args.name, "request filters replaced",
+                 "request filters unchanged",
+                 edit_request_filters(args.name, dirs=dirs, environ=environ,
+                                      isatty=isatty), responder=False)
     elif args.command == "stop":
         stop(args.name, dirs=dirs)
     elif args.command == "rm":

@@ -435,10 +435,22 @@ def response_framing(status, method, headers):
     return Framing("close")
 
 
-def copy_chunked(src, dst):
-    """Relay a chunked body, re-emitting each chunk header ourselves.
+class BodyTooLarge(Exception):
+    """A body that grew past the reader's limit while it was read."""
 
-    Chunk extensions and trailers are dropped, not forwarded.
+
+class BudgetSpent(Exception):
+    """A body piece the caller's budget would not take."""
+
+
+def _chunks(src, room=None):
+    """A chunked body, parsed: the chunk's size (an int) as each chunk
+    starts, its data in pieces (bytes), and None once its CRLF is checked.
+
+    `room`, when given, is asked before each read how many bytes the
+    consumer will take next, so a capped reader reads no further than its
+    cap. Trailers are read and dropped. The one parser behind both relaying
+    and holding a body, so a chunk rule cannot differ between them.
     """
     while True:
         line = src.read_line()
@@ -459,19 +471,72 @@ def copy_chunked(src, dst):
             else:
                 raise RequestUnreadable(
                     f"more than {MAX_TRAILER_LINES} trailer lines")
-            dst.sendall(b"0\r\n\r\n")
             return
-        # Streamed in pieces: the size is the peer's number, and reading a
+        yield size
+        # Read in pieces: the size is the peer's number, and reading a
         # whole chunk first would let it set this process's memory.
-        dst.sendall(b"%x\r\n" % size)
         left = size
         while left:
-            piece = src.read_exactly(min(left, RELAY_CHUNK))
-            dst.sendall(piece)
+            n = min(left, RELAY_CHUNK)
+            if room is not None:
+                n = min(n, room())
+            piece = src.read_exactly(n)
+            yield piece
             left -= len(piece)
         if src.read_exactly(2) != b"\r\n":
             raise RequestUnreadable("a chunk is not CRLF-terminated")
-        dst.sendall(b"\r\n")
+        yield None
+
+
+def copy_chunked(src, dst):
+    """Relay a chunked body, re-emitting each chunk header ourselves.
+
+    Chunk extensions and trailers are dropped, not forwarded.
+    """
+    for event in _chunks(src):
+        if event is None:
+            dst.sendall(b"\r\n")
+        elif isinstance(event, int):
+            dst.sendall(b"%x\r\n" % event)
+        else:
+            dst.sendall(event)
+    dst.sendall(b"0\r\n\r\n")
+
+
+def read_body(src, framing, limit, take):
+    """A request body, decoded and held whole: at most `limit` bytes.
+
+    `take(n)` is asked before each piece is kept, and a False raises
+    BudgetSpent; what it took before a raise stays the caller's to give
+    back. A "length" body is the caller's to have checked against `limit`
+    already. A chunked one raises BodyTooLarge once it reaches limit + 1
+    bytes, with nothing past them read.
+    """
+    if framing.kind == "none":
+        return b""
+    if framing.kind == "length":
+        pieces, left = [], framing.length
+        while left:
+            piece = src.read_exactly(min(left, RELAY_CHUNK))
+            if not take(len(piece)):
+                raise BudgetSpent(f"{len(piece)} body bytes not taken")
+            pieces.append(piece)
+            left -= len(piece)
+        return b"".join(pieces)
+    if framing.kind != "chunked":
+        raise RequestUnreadable(
+            f"a request body framed {framing.kind!r} is not one we hold")
+    pieces, held = [], 0
+    for event in _chunks(src, room=lambda: limit + 1 - held):
+        if not isinstance(event, bytes):
+            continue
+        if held + len(event) > limit:
+            raise BodyTooLarge(f"a chunked body over {limit} bytes")
+        if not take(len(event)):
+            raise BudgetSpent(f"{len(event)} body bytes not taken")
+        pieces.append(event)
+        held += len(event)
+    return b"".join(pieces)
 
 
 def copy_body(src, dst, framing):

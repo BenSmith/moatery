@@ -1,0 +1,4 @@
+{"filters": [
+  {"host": "api.example.com",
+   "run": "HOME/.local/libexec/request-filter/sandboxed"}
+]}

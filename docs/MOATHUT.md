@@ -27,7 +27,7 @@ so git over ssh cannot leave a hut, and git over https can.
 `create NAME --network-policy none` makes a hut whose network is not
 inspected. It keeps its own home, only the mounts it was given, its
 SELinux level and its seccomp profile, and has no rules, inspector,
-responder, broker, CA or record. The namespace's unit connects the
+responder, broker, CA, record or request filters. The namespace's unit connects the
 namespace with pasta and loads nothing into it; the pod and the
 workload join it as in any hut. What runs in the hut reaches any
 address and port the host's network reaches, the local network
@@ -37,7 +37,8 @@ A provider's key in it is the real one: there is no broker to hold it.
 `ls` marks such a hut `network-policy:none`, and never `unprotected`;
 its prompt reads `⬢ NAME uninspected`, and warns of no rules. `enter`
 neither looks for the rules nor starts listeners. `log`, `allow` and
-`network-policy` refuse it, and no credential is its. A hut made
+`network-policy` refuse it, and so do `request-filters` and
+`create --request-filters`; no credential is its. A hut made
 `--like` it has no network policy either, unless given
 `--network-policy FILE`, and `--network-policy none` with `--like` a
 hut that has one makes a hut without. A hut's network policy is
@@ -48,12 +49,14 @@ decided at `create`: to add or drop one, make another hut `--like` it.
 ```
 moathut create NAME (--network-policy FILE | --like HUT)
                    [--image IMAGE] [--mount SRC[:DST][:ro]]...
-                   [--seccomp PROFILE] [--autostart] [--dry-run]
+                   [--seccomp PROFILE] [--request-filters FILE]
+                   [--autostart] [--dry-run]
 moathut enter NAME [--root] [-- COMMAND...]
 moathut cp SRC... DEST
 moathut log NAME [--refused]
 moathut allow NAME HOST [--method M]... [--path P]...
 moathut network-policy NAME
+moathut request-filters NAME
 moathut credential add ID [--host HOST]... [--env VARIABLE]
                    [--auth-header FIELD] [--auth-format FORMAT]
 moathut credential ls
@@ -88,9 +91,12 @@ the git, Python, ssh client and manual pages `fedora:44` leaves out.
   no network policy", above).
 - `--seccomp`: the workload's seccomp profile ("Seccomp", below):
   `strict`, the default, `debug`, or a file, copied in.
+- `--request-filters FILE`: the inspector's request-filter document,
+  copied in ("Request filters", below).
 - `--like HUT`: it starts from another hut's policy, as edited since,
-  its image, its mounts and its seccomp profile. `--network-policy`,
-  `--image` and `--seccomp` replace its, and a `--mount` joins its,
+  its image, its mounts, its seccomp profile and its request filters.
+  `--network-policy`, `--image`, `--seccomp` and `--request-filters`
+  replace its, and a `--mount` joins its,
   replacing one at the same target. The new hut gets a home and an
   SELinux level of its own, and is not autostarted without
   `--autostart`. A mount whose source has gone since is refused, naming
@@ -221,6 +227,45 @@ Package installs inside a hut are the hard case: a mirror list spreads
 over many hosts, and the install does not outlive a stop (next
 section). A hut's tools are better built into its image.
 
+## Request filters
+
+A request filter ([POLICY.md](POLICY.md), "Request filters") is a
+program the inspector runs on each request body for the hosts its
+document names, and forwards what it writes. `create --request-filters
+FILE` copies the document in, mode 0600, and the inspector's unit
+passes it with `--request-filters`; a hut made without one has no
+filters, and its inspector is started without the flag.
+
+- **request-filters** opens a copy of the hut's document in the editor,
+  as `network-policy` does, or `{"filters": []}` for a hut without one.
+  The copy is loaded with the inspector's own loader
+  (`moatery.request_filter.load_request_filters`), beside the hut's
+  policy. Then a running inspector is reloaded, and the command waits
+  until its status file names the new document. For a hut that had no
+  filters, the units are written again with the flag and the inspector
+  is restarted instead. A stopped hut has them from its next start.
+- `network-policy` and `allow` load the hut's filters beside the new
+  policy too, and refuse one that would strand them, such as a `splice`
+  over a filtered host: the inspector reloads the two together, and
+  refuses the pair.
+
+Both `create` and `request-filters` refuse a `run` that is in, or is
+reached through, a place a hut can write, as `cp` refuses a path
+(above), and the new hut's own mounts count. A hut that could replace
+the program would choose what runs on its requests, outside the moat.
+
+The inspector runs on the host, as you, so a filter does too: with your
+home, your network and your session bus, parsing bytes the workload
+chose. Point `run` at the wrapper,
+[examples/request-filter/sandboxed](../examples/request-filter/sandboxed),
+with the filter on its `FILTER=` line. Place the wrapper and the filter
+somewhere no hut can write: outside every hut's home and every mount a
+hut has that is not read-only, such as `/usr/local/libexec` or a
+directory of yours that no hut mounts. moathut checks `run`, the
+wrapper, and cannot see the file the wrapper names; that one is yours
+to place as carefully. The hut's inspector unit allows the namespaces
+and mounts bwrap makes.
+
 ## What persists
 
 Quadlet runs the workload with `--replace --rm`, and removes it at
@@ -275,6 +320,7 @@ For hut NAME, credential ID:
 | prompt | `~/.config/moatery/hut/NAME/prompt.sh` |
 | podman's override for the pod | `~/.config/moatery/hut/NAME/containers.conf` |
 | seccomp profile | `~/.config/moatery/hut/NAME/seccomp.json` |
+| request filters | `~/.config/moatery/hut/NAME/request-filters.json` |
 | CA, certificates, status files, the namespace's name | `~/.local/state/moatery/hut/NAME/` |
 | record | `~/.local/state/log/moatery/hut/NAME/requests.log`, and `.1` to `.4.gz` |
 | the hut's home | `~/.local/share/moatery/hut/NAME/home/` |
@@ -286,8 +332,8 @@ For hut NAME, credential ID:
 | broker's socket | `$XDG_RUNTIME_DIR/moathut/NAME/broker.sock` |
 | credential | `~/.config/moatery/credentials/ID.{cred,json}` |
 
-A hut with no network policy has no policy, bundle, CA, status file or
-record, and no inspector, responder, broker or rotation units.
+A hut with no network policy has no policy, bundle, CA, status file,
+record or request filters, and no inspector, responder, broker or rotation units.
 
 The container is named NAME, and so is its pod, so `podman` commands
 take the hut's name; `create` refuses a name podman already uses. The

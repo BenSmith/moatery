@@ -33,6 +33,7 @@ from tests.test_quadlet_example import _ruleset
 from moatery.egress_record import DROP_MISDIRECTED
 from moatery.inspect_document import INSPECT_DIGEST_KEY, inspect_policy_digest
 from moatery.inspect_policy import load_policy
+from moatery.request_filter import REQUEST_FILTERS_DIGEST_KEY
 from moathut import commands, document, netns, record, seccomp
 from moathut.cli import main, parse
 from moathut.credentials import (Broker, Credential, CredentialError,
@@ -557,6 +558,16 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(args.policy, str(self.hut.policy))
         self.assertEqual(args.state_dir, str(self.hut.state))
         self.assertEqual(args.record, str(self.hut.record))
+        self.assertIsNone(args.request_filters)
+
+    def test_a_filtered_hut_hands_its_inspector_the_filter_document(self):
+        settings = self.settings._replace(filtered=True)
+        unit = render(self.hut, settings, None)[self.hut.inspect_file]
+        launched = self._handed(unit)
+        args = load_script("libexec/moat-inspect").parse_args(
+            launched.command[2:])
+        self.assertEqual(args.request_filters, str(self.hut.request_filters))
+        self.assertEqual(self.hut.request_filters.parent, self.hut.config)
 
     def test_the_responder_is_handed_flags_its_parser_takes(self):
         launched = self._handed(self.resolve)
@@ -1144,9 +1155,13 @@ class FakeHost:
             if self.dirs and self.reloads:
                 hut = Hut(argv[-1].removeprefix("moathut-")
                           .removesuffix("-inspect.service"), self.dirs)
-                hut.status.write_text(json.dumps({
-                    INSPECT_DIGEST_KEY:
-                        inspect_policy_digest(hut.policy.read_text())}))
+                status = {INSPECT_DIGEST_KEY:
+                          inspect_policy_digest(hut.policy.read_text())}
+                if hut.request_filters.exists():
+                    status[REQUEST_FILTERS_DIGEST_KEY] = (
+                        inspect_policy_digest(
+                            hut.request_filters.read_text()))
+                hut.status.write_text(json.dumps(status))
         elif "moat-mint-ca" in line:
             ca = Path(argv[argv.index("--state-dir") + 1]) / "ca.pem"
             ca.write_text("HUT CA\n")
@@ -3063,6 +3078,275 @@ with mock.patch.object(cli, "unit_netns", held):
         self.assertEqual(cp.call_args.args, (["a", "b"], "agent:x"))
         with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
             parse(["cp", "a"])
+
+
+class TestRequestFilters(unittest.TestCase):
+    """A hut's request-filter document: copied in, named to its inspector,
+    checked as the inspector loads it, with no `run` a hut can write."""
+
+    setUp = TestCommands.setUp
+    _create = TestCommands._create
+    _like = TestCommands._like
+    _editor = TestCommands._editor
+    _reloads = TestCommands._reloads
+    _restarts = TestCommands._restarts
+    _host = TestCommands._host
+
+    def _program(self, path=None):
+        path = path or self.home.parent / "filter"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/bin/sh\nexec cat\n")
+        path.chmod(0o755)
+        return path
+
+    def _document(self, run=None, host="api.example.com", name="f.json"):
+        path = self.home.parent / name
+        path.write_text(json.dumps({"filters": [
+            {"host": host, "run": str(run or self._program())}]}) + "\n")
+        return path
+
+    def _flag(self, hut):
+        return _exec_words(hut.inspect_file.read_text(), "ExecStart")
+
+    def _edit(self, edit, *, host=None, isatty=False, ask=None):
+        return commands.edit_request_filters(
+            "agent", dirs=self.dirs, environ=self.env, isatty=isatty,
+            runner=host or self._host(), edit=edit, ask=ask or self.fail,
+            pause=self.fail)
+
+    def test_create_copies_the_document_in_and_names_it_to_the_inspector(self):
+        doc = self._document()
+        hut, _ = self._create(request_filters=doc)
+        self.assertEqual(hut.request_filters.read_text(), doc.read_text())
+        self.assertEqual(hut.request_filters.stat().st_mode & 0o777, 0o600)
+        self.assertTrue(
+            Settings.from_json(hut.settings.read_text()).filtered)
+        words = self._flag(hut)
+        self.assertEqual(words[words.index("--request-filters") + 1],
+                         str(hut.request_filters))
+        plain, _ = self._create("plain")
+        self.assertNotIn("--request-filters", self._flag(plain))
+        self.assertFalse(plain.request_filters.exists())
+
+    def test_a_relative_document_is_read_from_the_working_directory(self):
+        self._document(name="home/rel.json")
+        hut, _ = self._create(request_filters="rel.json")
+        self.assertTrue(hut.request_filters.exists())
+        with self.assertRaisesRegex(commands.HutError,
+                                    "--request-filters nosuch.json"):
+            self._create("other", request_filters="nosuch.json")
+
+    def test_a_dry_run_lists_the_document_and_writes_nothing(self):
+        doc = self._document()
+        files = self._create(request_filters=doc, dry_run=True)[0]
+        hut = Hut("agent", self.dirs)
+        self.assertEqual(files[hut.request_filters], doc.read_text())
+        self.assertIn("--request-filters", files[hut.inspect_file])
+        self.assertFalse(hut.config.exists())
+
+    def test_a_hut_like_another_has_its_filters_unless_given_its_own(self):
+        self._create(request_filters=self._document())
+        other = self._document(host="api.other.com", name="g.json")
+        like = self._like("like", "agent")
+        self.assertEqual(like.request_filters.read_text(),
+                         Hut("agent", self.dirs).request_filters.read_text())
+        self.assertIn("--request-filters", self._flag(like))
+        own = self._like("own", "agent", request_filters=other)
+        self.assertEqual(own.request_filters.read_text(), other.read_text())
+        plain, _ = self._create("plain")
+        self.assertFalse(self._like("bare", "plain").request_filters
+                         .exists())
+
+    def _refused(self, doc, words, **kwargs):
+        with self.assertRaisesRegex(commands.HutError, words):
+            self._create("refused", request_filters=doc, **kwargs)
+        self.assertFalse(Hut("refused", self.dirs).config.exists())
+
+    def test_a_run_a_hut_can_write_is_refused_directly_or_by_a_link(self):
+        """A hut that could replace the program would choose what the
+        inspector runs, as the inspector's uid, outside the moat."""
+        shared = self.home / "projects" / "p"
+        self._create(mounts=[str(shared)])
+        in_mount = self._program(shared / "filter")
+        self._refused(self._document(in_mount), "where a hut can write")
+        link = self.home.parent / "link"
+        link.symlink_to(shared)
+        self._refused(self._document(link / "filter"),
+                      f"reached through {shared}")
+        home = Hut("agent", self.dirs).home
+        self._refused(self._document(self._program(home / "f")),
+                      "a filter's run, and what it runs, go where no hut")
+        # Its own mount, which no hut has yet.
+        mine = self.home / "mine"
+        self._refused(self._document(self._program(mine / "f")),
+                      f"reached through {mine}", mounts=[str(mine)])
+        # A read-only mount is no hut's to write.
+        hut, _ = self._create("ro", mounts=[f"{mine}:/m:ro"],
+                              request_filters=self._document(mine / "f"))
+        self.assertTrue(hut.request_filters.exists())
+
+    def test_a_document_that_does_not_load_is_refused_before_a_hut_is(self):
+        bad = self.home.parent / "bad.json"
+        for text, words in (('{"filters": [], "x": 1}', "unknown key 'x'"),
+                            ("{", "request filters: Expecting"),
+                            (json.dumps({"filters": [{"host": "a.x",
+                                                      "run": "rel"}]}),
+                             "not an absolute path")):
+            bad.write_text(text)
+            with self.subTest(text):
+                self._refused(bad, words)
+
+    def test_filters_beside_no_network_policy_are_refused(self):
+        with self.assertRaisesRegex(commands.HutError,
+                                    "no inspector to run them"):
+            self._create(policy=commands.NO_POLICY,
+                         request_filters=self._document())
+        self._create(request_filters=self._document())
+        bare = commands.create(
+            "bare", commands.NO_POLICY, None, [], dirs=self.dirs,
+            tool=("/py", "/cb"), python="/py", libexec="/lx",
+            pythonpath=None, uid=1000, gid=1000, cwd=self.home,
+            environ=self.env, like="agent", runner=FakeHost(self.home))
+        self.assertFalse(bare.request_filters.exists())
+        self.assertFalse(
+            Settings.from_json(bare.settings.read_text()).filtered)
+        with self.assertRaisesRegex(commands.HutError, "no network policy"):
+            commands.edit_request_filters(
+                "bare", dirs=self.dirs, environ=self.env, isatty=False,
+                runner=self._host(), edit=self.fail)
+
+    def test_a_hut_json_without_the_setting_reads_as_unfiltered(self):
+        hut, _ = self._create()
+        doc = json.loads(hut.settings.read_text())
+        del doc["filtered"]
+        self.assertFalse(Settings.from_json(json.dumps(doc)).filtered)
+
+    def test_an_edit_is_applied_by_a_reload(self):
+        hut, _ = self._create(request_filters=self._document())
+        text = json.dumps({"filters": [{"host": "*.example.com",
+                                        "run": str(self._program())}]})
+        host = self._host()
+        self.assertEqual(self._edit(self._editor(text)[0], host=host),
+                         commands.Applied(True))
+        self.assertEqual(hut.request_filters.read_text(), text)
+        self.assertEqual(hut.request_filters.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self._reloads(host), [hut.inspect_service])
+        self.assertEqual(self._restarts(host), [])
+        self.assertEqual(
+            json.loads(hut.status.read_text())[REQUEST_FILTERS_DIGEST_KEY],
+            inspect_policy_digest(text))
+        self.assertFalse(any(p.name.startswith(".")
+                             for p in hut.config.iterdir()))
+        self.assertIsNone(self._edit(self._editor(None)[0]))
+
+    def test_an_inspector_that_does_not_take_the_reload_is_restarted(self):
+        hut, _ = self._create(request_filters=self._document())
+        host, waits = self._host(reloads=False), []
+        text = '{"filters": []}'
+        self.assertEqual(
+            commands.edit_request_filters(
+                "agent", dirs=self.dirs, environ=self.env, isatty=False,
+                runner=host, edit=self._editor(text)[0], ask=self.fail,
+                pause=waits.append),
+            commands.Applied(True, "it did not take the reload"))
+        self.assertEqual(sum(waits), commands._RELOAD_WAIT)
+        self.assertEqual(self._restarts(host), [[
+            "systemctl", "--user", "try-restart", hut.inspect_service]])
+
+    def test_new_filters_restart_the_inspector_with_the_flag(self):
+        """An inspector started without the flag has no document to
+        reload; the hut now has one, and its unit names it."""
+        hut, _ = self._create()
+        edit, runs = self._editor(json.dumps({"filters": [
+            {"host": "api.example.com", "run": str(self._program())}]}))
+        seen = []
+        host = self._host()
+        self.assertEqual(
+            self._edit(lambda argv: (seen.append(Path(argv[-1])
+                                                 .read_text()),
+                                     edit(argv))[1], host=host),
+            commands.Applied(True, "it had no request filters"))
+        self.assertEqual(seen, [commands._NO_FILTERS])
+        self.assertTrue(
+            Settings.from_json(hut.settings.read_text()).filtered)
+        self.assertIn("--request-filters", self._flag(hut))
+        self.assertIn(["systemctl", "--user", "daemon-reload"], host.calls)
+        self.assertEqual(self._reloads(host), [])
+        self.assertEqual(self._restarts(host), [[
+            "systemctl", "--user", "try-restart", hut.inspect_service]])
+
+    def test_new_filters_on_a_stopped_hut_apply_from_its_next_start(self):
+        hut, _ = self._create()
+        host = self._host(listener_state="inactive")
+        self.assertEqual(
+            self._edit(self._editor('{"filters": []}')[0], host=host),
+            commands.Applied(False))
+        self.assertIn("--request-filters", self._flag(hut))
+        self.assertEqual(self._restarts(host), [])
+
+    def test_an_edit_that_does_not_load_changes_nothing(self):
+        hut, _ = self._create(request_filters=self._document())
+        before = hut.request_filters.read_text()
+        shared = Hut("agent", self.dirs).home
+        for text, words in (
+                ("{", "request filters: Expecting"),
+                (json.dumps({"filters": [
+                    {"host": "a.x", "run": str(self._program(shared / "f"))}
+                ]}), "where a hut can write")):
+            host = self._host()
+            with self.subTest(text), \
+                    self.assertRaisesRegex(commands.HutError, words):
+                self._edit(self._editor(text)[0], host=host)
+            self.assertEqual(hut.request_filters.read_text(), before)
+            self.assertEqual(host.calls, [])
+            self.assertFalse(any(p.name.startswith(".")
+                                 for p in hut.config.iterdir()))
+
+    def test_a_policy_edit_that_would_strand_a_filter_is_refused(self):
+        """The inspector reloads the pair, and refuses a policy whose
+        `splice` covers a filtered host; so does the command."""
+        hut, _ = self._create(request_filters=self._document())
+        before = hut.policy.read_text()
+        host = self._host()
+        with self.assertRaisesRegex(commands.HutError,
+                                    "request filters would not load "
+                                    "beside it: filter 'api.example.com' "
+                                    "overlaps"):
+            commands.edit_policy(
+                "agent", dirs=self.dirs, environ=self.env, isatty=False,
+                runner=host, edit=self._editor(
+                    '{"hosts": ["pypi.org"], "splice": ["*.example.com"]}'
+                )[0], ask=self.fail, pause=self.fail)
+        self.assertEqual(hut.policy.read_text(), before)
+        self.assertEqual(host.calls, [])
+        plain, _ = self._create("plain")
+        self.assertEqual(
+            commands.edit_policy(
+                "plain", dirs=self.dirs, environ=self.env, isatty=False,
+                runner=self._host(), edit=self._editor(
+                    '{"hosts": ["pypi.org"], "splice": ["*.example.com"]}'
+                )[0], ask=self.fail, pause=self.fail),
+            commands.Applied(True))
+
+    def test_the_command_line_hands_both_on(self):
+        from moathut import cli
+        args = parse(["create", "agent", "--network-policy", "p.json",
+                      "--request-filters", "f.json"])
+        with mock.patch.object(cli, "create") as create, \
+                mock.patch("sys.stdout"):
+            cli.run_command(args, tool=(), environ=self.env, cwd=self.home,
+                            isatty=False)
+        self.assertEqual(create.call_args.kwargs["request_filters"],
+                         "f.json")
+        out = io.StringIO()
+        with mock.patch.object(cli, "edit_request_filters",
+                               return_value=commands.Applied(True)) as edit, \
+                mock.patch("sys.stdout", out):
+            cli.run_command(parse(["request-filters", "agent"]), tool=(),
+                            environ=self.env, cwd=self.home, isatty=False)
+        self.assertEqual(edit.call_args.args, ("agent",))
+        self.assertEqual(out.getvalue(), "hut agent: request filters "
+                                         "replaced; its inspector reloaded\n")
 
 
 

@@ -42,10 +42,29 @@ status file counts it, so one grep finds both.
 | `rejected` | a connection refused before it was read: the connection ceiling, or a caller that is not this workload |
 | `note` | something reported that refuses nothing ("Notes") |
 | `close` | a kept-alive connection reached its idle bound, or its client reset it between requests |
-| `policy reloaded` | SIGUSR1 loaded a new document; a `WARNING:` line if it was refused |
+| `policy reloaded` | SIGUSR1 loaded a new policy, and the request filters with it; a `WARNING:` line if either was refused |
 
 `WARNING:` lines are the inspector's own trouble, such as a status or
-record file it could not write.
+record file it could not write, or a request filter it could not run
+(`WARNING: request filter RUN cannot be run (ENOENT): …`), logged once
+per filter per loaded document.
+
+A request to a filtered host ([POLICY.md](POLICY.md), "Request
+filters") adds fields to its line. A `forward` line carries
+`filter=passed` or `filter=rewrote`, and `filter_ms=N`, the filter's
+time. A drop carries what the inspector saw of the filter:
+
+- `filter_reason=TOKEN`, on a refusal, the reason the filter gave, or
+  `unnamed`;
+- `exit=N`, the exit status of a filter that failed;
+- `signal=NAME`, the signal that ended it (`signal=SEGV`,
+  `signal=KILL`);
+- `errno=NAME`, why it could not be started (`errno=ENOENT`);
+- `output=over`, output past the cap;
+- `budget=spent` or `slots=busy`, the shared body budget or the eight
+  filters taken.
+
+A filter's stderr is never logged.
 
 ### Refusals
 
@@ -70,6 +89,11 @@ Every reason, as the journal, the record and `drop_reasons` spell it:
 | `upstream certificate unverified` | the origin's certificate did not verify |
 | `upstream wants a client certificate` | the host needs `splice` |
 | `credential broker unreachable` | the request needs a key and the broker did not answer; nothing was sent |
+| `refused by filter` | the host's request filter exited 77; `filter_reason=` has its reason, and nothing was sent |
+| `filter failed` | the filter exited with neither 0 nor 77, was killed by a signal, wrote past the cap, or could not be run; answered 502, and nothing was sent |
+| `filter timed out` | the filter outran its 10 seconds and was killed; answered 504 |
+| `filter unavailable` | no room to run the filter: the shared body budget, the eight filters, a start refused for want of a process or memory, or a kill not the inspector's, likely the OOM killer; answered 503 |
+| `request not filterable` | a request to a filtered host with an `Upgrade`, an encoded body, or a body over the cap; answered 403, 415 or 413 |
 | `connection ceiling reached`, `mint rationed`, `could not mint a leaf` | the inspector's own limits |
 | `caller is not this workload` | a connection from another uid (suspect) |
 | `caller closed before it was identified` | the caller left before its uid was read |
@@ -117,6 +141,8 @@ where it was not measured:
 | `upstream` | the address actually dialled, or `unix:PATH` for the broker |
 | `credential` | the credential's name for a brokered request, never the key |
 | `duration_ms` | |
+| `filter` | for a filtered host, what its filter decided: `passed`, `rewrote` or `refused`; null where no filter decided |
+| `filter_ms` | the filter's time |
 
 No headers and no bodies, ever. A spliced connection is one line, since
 nothing inside it is read.
@@ -144,7 +170,11 @@ program may rely on. Those most read by hand:
 - `record_failures`: lines the record lost. Not zero means the record
   is incomplete.
 - `policy_digest` and `lists`: the policy this process enforces, which
-  is not always what the file says.
+  is not always what the file says. `request_filters_digest` and
+  `lists.request_filters` are the same for the request filters.
+- `filtered.passed` and `filtered.rewrote`: requests a filter let
+  through, unchanged and changed. Its refusals and failures are in
+  `drop_reasons`.
 
 ## The responder
 

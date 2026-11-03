@@ -101,6 +101,10 @@ class Hut(NamedTuple):
         return self.config / "policy.json"
 
     @property
+    def request_filters(self):
+        return self.config / "request-filters.json"
+
+    @property
     def bundle(self):
         return self.config / "bundle.pem"
 

@@ -163,3 +163,35 @@ def inspect_policy_digest(text: str) -> str:
     definition both use.
     """
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+# --- The request-filter document, as a policy carries it ---
+
+class RequestFilter(NamedTuple):
+    host: str
+    run: str
+
+
+class RequestFilters(NamedTuple):
+    """The loaded document. Tuples, replaced whole at a reload."""
+
+    filters: tuple
+    digest: str
+
+    def filter_for(self, host: str) -> str | None:
+        """The program this host's request bodies are run through, or None.
+
+        The load refuses overlapping entries with different programs, so
+        the first match is every match's.
+        """
+        for entry in self.filters:
+            if hostname_match(host, (entry.host,)):
+                return entry.run
+        return None
+
+    @property
+    def summary(self) -> str:
+        return f"filters={len(self.filters)}"
+
+
+NO_REQUEST_FILTERS = RequestFilters((), "")

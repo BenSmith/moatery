@@ -45,8 +45,8 @@ from moatery.tls_hello import (
 from moatery.http_target import (
     host_from_authority, normalise_path, normalise_target)
 from moatery.http_framing import (
-    DRAIN_MAX, MAX_TRAILER_LINES, RELAY_CHUNK, RequestUnreadable, _Stream,
-    copy_body,
+    DRAIN_MAX, MAX_TRAILER_LINES, RELAY_CHUNK, BodyTooLarge, BudgetSpent,
+    Framing, RequestUnreadable, _Stream, copy_body, copy_chunked, read_body,
 )
 from moatery import egress_mint
 from moatery import egress_record
@@ -204,8 +204,9 @@ def _serve_line(test, local, peer=("192.0.2.1", 1024)):
 
 
 # Policy fields that are deliberately NOT keys of the policy document. See
-# test_every_key_the_helper_writes_is_a_key_the_listener_reads.
-NON_DOCUMENT_FIELDS = {"digest"}
+# test_every_key_the_helper_writes_is_a_key_the_listener_reads. The request
+# filters are a document of their own.
+NON_DOCUMENT_FIELDS = {"digest", "request_filters"}
 
 class TestPlaneDetection(unittest.TestCase):
     """The plane is the accepting port, from getsockname() on the inherited fd.
@@ -3118,6 +3119,108 @@ class TestCleartextFraming(unittest.TestCase):
             [[b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n", _OK]])
         self.assertIn(b"GET /second", ups[0][1])
         self.assertIn(b"Content-Length: 100", got)
+
+
+class _Taker:
+    """A budget's take: True until `allow` bytes are spent, counting what
+    each call asked for."""
+
+    def __init__(self, allow=1 << 40):
+        self.allow, self.taken, self.calls = allow, 0, []
+
+    def __call__(self, n):
+        self.calls.append(n)
+        if self.taken + n > self.allow:
+            return False
+        self.taken += n
+        return True
+
+
+class TestReadBody(unittest.TestCase):
+    """read_body holds a body for a filter. It shares copy_chunked's parser,
+    so the framing tests above are the check on that refactor."""
+
+    def _stream(self, data):
+        return _Stream(_FakeSocket([data]))
+
+    def test_a_length_body_comes_back_whole_and_leaves_the_next_request(self):
+        body = b"x" * (RELAY_CHUNK + 10)
+        src = self._stream(body + b"GET / HTTP/1.1\r\n\r\n")
+        take = _Taker()
+        self.assertEqual(
+            read_body(src, Framing("length", len(body)), len(body), take),
+            body)
+        self.assertEqual(take.calls, [RELAY_CHUNK, 10])
+        self.assertEqual(src.take_buffered(), b"GET / HTTP/1.1\r\n\r\n")
+
+    def test_no_body_is_empty(self):
+        self.assertEqual(
+            read_body(self._stream(b""), Framing("none"), 10, _Taker()), b"")
+
+    def test_a_chunked_body_is_decoded_without_extensions_or_trailers(self):
+        src = self._stream(
+            b"5;name=value\r\nhello\r\n"
+            b"7\r\n, world\r\n"
+            b"0\r\nX-Trailer: t\r\n\r\nNEXT")
+        take = _Taker()
+        self.assertEqual(
+            read_body(src, Framing("chunked"), 100, take), b"hello, world")
+        self.assertEqual(take.taken, 12)
+        self.assertEqual(src.take_buffered(), b"NEXT")
+
+    def test_a_chunked_body_over_the_limit_stops_at_limit_plus_one(self):
+        reads = []
+        original = _Stream.read_exactly
+
+        def recording(stream, n):
+            reads.append(n)
+            return original(stream, n)
+
+        src = self._stream(b"64\r\n" + b"A" * 100 + b"\r\n0\r\n\r\n")
+        take = _Taker()
+        with unittest.mock.patch.object(_Stream, "read_exactly", recording):
+            with self.assertRaises(BodyTooLarge):
+                read_body(src, Framing("chunked"), 10, take)
+        self.assertEqual(sum(reads), 11)
+        self.assertEqual(take.taken, 0)
+
+    def test_a_chunked_body_at_the_limit_is_kept(self):
+        src = self._stream(b"3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n")
+        self.assertEqual(
+            read_body(src, Framing("chunked"), 5, _Taker()), b"abcde")
+
+    def test_a_budget_that_refuses_raises_budget_spent(self):
+        for framing, data in (
+                (Framing("length", 8), b"12345678"),
+                (Framing("chunked"), b"8\r\n12345678\r\n0\r\n\r\n")):
+            with self.subTest(framing.kind):
+                with self.assertRaises(BudgetSpent):
+                    read_body(self._stream(data), framing, 100, _Taker(4))
+
+    def test_neither_refusal_is_an_unreadable_request(self):
+        """The handlers that answer RequestUnreadable must not swallow
+        these as one."""
+        self.assertFalse(issubclass(BodyTooLarge, RequestUnreadable))
+        self.assertFalse(issubclass(BudgetSpent, RequestUnreadable))
+
+    def test_a_bad_chunk_is_refused_as_relaying_refuses_it(self):
+        for data in (b"zz\r\n", b"3\r\nabcXX0\r\n\r\n"):
+            with self.subTest(data):
+                with self.assertRaises(RequestUnreadable):
+                    read_body(self._stream(data), Framing("chunked"), 100,
+                              _Taker())
+
+    def test_copy_chunked_re_emits_each_chunk_as_it_came(self):
+        class Sink:
+            out = b""
+
+            def sendall(self, data):
+                self.out += data
+
+        sink = Sink()
+        copy_chunked(self._stream(b"3;x\r\nabc\r\n2\r\nde\r\n0\r\n"
+                                  b"T: v\r\n\r\n"), sink)
+        self.assertEqual(sink.out, b"3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n")
 
 
 class TestCleartextPerRequest(unittest.TestCase):

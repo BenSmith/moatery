@@ -20,7 +20,8 @@ anyone.
 
 The policy is read here, and one that cannot be read fails the start.
 SIGUSR1 reads it again (moatery/inspect_listener.py): one that cannot be
-read then is logged and the one loaded kept.
+read then is logged and the one loaded kept. --request-filters is read
+beside it, as a pair, both at start and at a reload.
 
 It never binds. The socket unit binds and hands the listeners in, which
 keeps the bind out of the workload's security domain, so a missing
@@ -43,6 +44,7 @@ sys.dont_write_bytecode = True
 
 from moatery.inspect_policy import load_policy
 from moatery.inspect_listener import Listener, build_minter
+from moatery.request_filter import load_request_filters
 from moatery.peer_identity import (
     OWN_TABLES, listed_in, namespace_uids, netns_tables, unmappable_uids)
 from moatery.sd_listen import NotSocketActivated
@@ -131,6 +133,10 @@ def parse_args(argv):
                              "absent means this process's own, or with "
                              "--netns-pid every uid of that process's user "
                              "namespace")
+    parser.add_argument("--request-filters", default=None, metavar="PATH",
+                        help="the request-filter document (JSON), read "
+                             "with the policy; absent means no request is "
+                             "filtered")
     parser.add_argument("--netns-pid", type=int, default=None,
                         metavar="PID",
                         help="the process whose network namespace the "
@@ -202,6 +208,15 @@ def main(argv=None):
         # No empty-policy fallback: see load_policy.
         print(f"error: could not read {policy_path}: {exc}", file=sys.stderr)
         return 1
+    filters_path = args.request_filters
+    if filters_path is not None:
+        try:
+            policy = policy._replace(request_filters=load_request_filters(
+                filters_path, policy))
+        except (OSError, ValueError) as exc:
+            print(f"error: could not read {filters_path}: {exc}",
+                  file=sys.stderr)
+            return 1
     try:
         minter = build_minter(name, args.state_dir, policy)
     except FileNotFoundError as exc:
@@ -238,8 +253,12 @@ def main(argv=None):
                         broker_endpoint=args.broker,
                         caller_uid=args.caller_uid,
                         caller_ranges=caller_ranges,
-                        peer_tables=tables, policy_path=policy_path)
+                        peer_tables=tables, policy_path=policy_path,
+                        request_filters_path=filters_path)
     print(f"policy loaded from {policy_path}: {policy.summary}", flush=True)
+    if filters_path is not None:
+        print(f"request filters loaded from {filters_path}: "
+              f"{policy.request_filters.summary}", flush=True)
     if caller_ranges is not None:
         print(f"callers served: uids {spans(caller_ranges)}", flush=True)
     signal.signal(signal.SIGTERM, lambda *_args: listener.stop())

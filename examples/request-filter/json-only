@@ -1,0 +1,14 @@
+#!/usr/bin/python3 -I
+"""A request filter: refuses a body that is not JSON, and sends the rest
+unchanged."""
+
+import json
+import sys
+
+body = sys.stdin.buffer.read()
+try:
+    json.loads(body)
+except (ValueError, RecursionError):
+    sys.stderr.write("not-json\n")
+    sys.exit(77)
+sys.stdout.buffer.write(body)

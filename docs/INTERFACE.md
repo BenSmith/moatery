@@ -34,6 +34,8 @@ moatery.inspect_document  INSPECT_DIGEST_KEY TLS_DEFAULT TLS_MODES
                           hostname_match inspect_policy_digest
                           normalize_hostname patterns_overlap
                           policy_governs
+moatery.request_filter    REQUEST_FILTERS_DIGEST_KEY
+                          load_request_filters
 moatery.sd_listen         NotSocketActivated
                           inherited_listening_sockets
 ```
@@ -50,10 +52,13 @@ on these paths, dotted through the JSON objects:
 
 ```
 policy_digest               the policy's digest, "" for none
+request_filters_digest      the request filters' digest, "" for none
 dispositions.spliced        connections spliced
 dispositions.terminated     connections terminated
 dispositions.forwarded      requests forwarded
 dispositions.dropped        refused; drop_reasons sums to it
+filtered.passed             forwarded by a request filter, unchanged
+filtered.rewrote            forwarded by a request filter, changed
 drop_reasons                {reason: count}, every DROP_REASONS key
 suspects                    of those, the SUSPECT_REASONS
 per_host                    {reason: {host: count}}, bounded
@@ -66,6 +71,7 @@ credentialed                requests sent to the broker
 credential_unauthorized     of those, answered 401 or 403
 per_credential              {credential: count}, bounded
 lists.policy                the policy entries, as loaded
+lists.request_filters       the request filters, as loaded
 record_failures             records the request log could not take
 bumped                      refusals answered inside terminated TLS
 ech.seen                    hellos with the ECH extension
@@ -82,6 +88,23 @@ mint.denials
 
 A key may be added; one of these is not renamed or removed without a
 release that says so.
+
+## A request filter
+
+`moat-inspect --request-filters PATH` runs the program a document
+names over each request body to a host it names ([POLICY.md](POLICY.md),
+"Request filters"). What the program is given and what its exit means
+are kept as stable as the names above:
+
+```
+MOAT_ID MOAT_REQ MOAT_HOST MOAT_METHOD MOAT_PATH MOAT_CONTENT_TYPE
+MOAT_LENGTH PATH
+```
+
+the whole environment, and exit 0 sends its stdout, 77 refuses the
+request, and anything else is a failure. `load_request_filters` is the
+inspector's own check of a document, and the digest it records is the
+SHA-256 of the document's text, as `policy_digest` is the policy's.
 
 ## The responder's status file
 

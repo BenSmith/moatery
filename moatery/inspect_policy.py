@@ -19,6 +19,8 @@ from .inspect_document import (
     patterns_overlap,
     policy_governs,
     VmPolicyEntry,
+    NO_REQUEST_FILTERS,
+    RequestFilters,
 )
 
 
@@ -43,6 +45,9 @@ class Policy(NamedTuple):
     # can tell a listener enforcing the file on disk from one holding an older
     # one.
     digest: str = ""
+    # The request-filter document loaded beside it, so a reload swaps the
+    # pair or neither. Its summary is logged on a line of its own.
+    request_filters: RequestFilters = NO_REQUEST_FILTERS
 
     @property
     def summary(self) -> str:

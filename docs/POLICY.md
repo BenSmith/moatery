@@ -325,3 +325,173 @@ that is empty or not a string, an entry with no `host`, `methods` or
 A `credential` that is not a non-empty string is ignored rather than
 refused; that request then goes to the origin unbrokered, and its record
 line carries no credential.
+
+## Request filters
+
+A second document, `moat-inspect --request-filters PATH`, names hosts
+whose request bodies pass through a program before they leave. The
+program, the filter, reads the body and either writes the body to send
+or refuses the request. The policy still says what the workload can
+reach; this document opens nothing, and a host it names is admitted, or
+not, by the policy alone. Without the flag nothing is filtered.
+
+```json
+{"filters": [
+  {"host": "api.example.com", "run": "/usr/local/libexec/example-filter"}
+]}
+```
+
+`filters` is the only key, and an entry has exactly `host` and `run`.
+
+- `host` is a pattern, as above, matched against the request's host:
+  the name the policy decided it on. It follows hosts however they were
+  admitted, by `hosts`, by `*` or by a `policy` entry, and brokered or
+  not, so a brokered host's broker receives the filtered body.
+- `run` is the filter: an absolute path to a regular file the inspector
+  can execute and that is not group- or world-writable, checked through
+  any link. It is exec'd directly, with no arguments and no shell.
+
+Two entries whose patterns can match one name must have the same `run`,
+so the order of entries never matters.
+
+### Loading
+
+The inspector reads the document at start, after the policy, and a
+document that is missing or refused fails the start. SIGUSR1 reloads
+the two as a pair: both are swapped, or neither is, and the `WARNING:`
+line names the document that was refused. So a policy whose `splice`
+would cover a filtered host is refused at a reload, and the old policy
+and filters stay. The status file carries the SHA-256 of the
+document's text as `request_filters_digest`, and its entries under
+`lists.request_filters`.
+
+Refused, naming what:
+
+- a key other than those above, at either level;
+- a `host` or `run` that is empty or not a string, or `filters` that is
+  not a list;
+- two overlapping entries with different `run`;
+- any entry under `"tls": "splice"`, and an entry whose host overlaps a
+  `splice` pattern: a spliced connection is never read;
+- a `run` that is relative, missing, not a regular file, not
+  executable, or group- or world-writable.
+
+### The contract
+
+What a filter is given, and what it answers:
+
+- **stdin** is the body. A chunked body is decoded first, and its
+  trailers dropped.
+- **stdout** is the body to send. The inspector sends it with a
+  `Content-Length` of its own and no `Transfer-Encoding`, so an empty
+  output sends an empty body.
+- **The environment** is exactly these eight names, and no header
+  beyond the content type is ever given:
+
+  | name | |
+  |---|---|
+  | `MOAT_ID` | the connection's id, as in the journal and the record |
+  | `MOAT_REQ` | the request's ordinal on the connection |
+  | `MOAT_HOST` | the request's host |
+  | `MOAT_METHOD` | its method |
+  | `MOAT_PATH` | its path, without the query |
+  | `MOAT_CONTENT_TYPE` | its `Content-Type` |
+  | `MOAT_LENGTH` | the body's length in bytes, as given on stdin |
+  | `PATH` | `/usr/bin:/bin` |
+
+- **The process** has `/` as its working directory, descriptors 0, 1
+  and 2 and no other, a session of its own, and no signal ignored.
+- **Exit 0** sends stdout. The record shows `passed`, or `rewrote` if
+  the output differs from the body.
+- **Exit 77** refuses the request. The first line of stderr is the
+  reason if it is a token (`[a-z0-9._-]{1,64}`), and `unnamed`
+  otherwise.
+- **Any other exit**, or a signal, is a failure. A refusal is not 1,
+  because an uncaught Python exception and the wrapper's own failure
+  both exit 1.
+
+Stderr is never logged: past the reason, it is read and thrown away.
+
+A request with no body, or with `Content-Length: 0`, is sent unfiltered.
+The filter runs once per request with a body, and is given 10 seconds.
+A body is held whole while it runs, up to 64 MiB, and every body being
+filtered, with the filter's output, shares 256 MiB. At most eight
+filters run at once; a request waits for one to finish, within its 10
+seconds.
+
+### What a filtered host gets
+
+Before anything is read:
+
+- a request offering `Upgrade` is refused, 403: what follows a `101`
+  would go unread;
+- a body with a `Content-Encoding` other than `identity` is refused,
+  415, since a filter of its bytes would pass it unchanged;
+- a declared length over 64 MiB is refused, 413.
+
+Then the body is read, `100 Continue` sent first if the client asked
+for it, and the filter is run. Nothing is dialled until it has
+finished: the origin or the broker hears of a request only once the
+filter has said to send it.
+
+| what happened | the client gets | the reason |
+|---|---|---|
+| exit 0 | the origin's answer | — |
+| exit 77 | 403 | `refused by filter` |
+| the 10 seconds passed; the filter and its session are killed | 504 | `filter timed out` |
+| killed by SIGKILL the inspector did not send (likely the OOM killer), or exit 137 through a wrapper | 503 | `filter unavailable` |
+| the start failed for want of a process or memory, or `run` was open for writing (`EAGAIN`, `ENOMEM`, `ETXTBSY`) | 503 | `filter unavailable` |
+| the shared 256 MiB, or the eight filters, are taken | 503 | `filter unavailable` |
+| `run` is missing, not executable, or not a program (`ENOENT`, `EACCES`, `ENOEXEC`), with a `WARNING:` line | 502 | `filter failed` |
+| any other exit, or another signal (exit 128 and over through a wrapper) | 502 | `filter failed` |
+| output over 64 MiB | 502 | `filter failed` |
+| an upgrade, an encoded body, or a declared length over 64 MiB | 403, 415, 413 | `request not filterable` |
+
+A refusal or a failure comes after the body has been read, so the
+connection is kept for the client's next request. A chunked body that
+turns out to be over 64 MiB is refused 413 with the connection closed,
+since the rest of it is unread.
+
+### What is not covered
+
+- **A spliced connection.** Nothing in it is read, which is why a
+  filter over a spliced host is refused.
+- **After a `101`.** A filtered host takes no upgrade.
+- **A name no pattern matches.** A filter covers its patterns' hosts
+  only, so a `*` in `hosts` admits hosts no filter reads.
+- **Everything but the body.** The filter sees the eight names above;
+  the headers and the query go up as they came. The response is not
+  filtered.
+
+### Trusting a filter
+
+The filter decides what leaves, and is trusted to: the inspector checks
+how it exited, not what it wrote. It also parses bytes the workload
+chose, outside the workload's namespaces and as the inspector's user.
+Run bare, a bug in it is a way out of the workload, with the user's
+home, network and session bus to hand. A filter inherits the
+inspector's unit, so where that unit has `MemoryDenyWriteExecute=`, a
+runtime that compiles code as it runs fails there.
+
+### The wrapper
+
+[examples/request-filter/](../examples/request-filter/) holds a
+wrapper, `sandboxed`, that `run` names in the filter's place. It runs
+the filter named on its `FILTER=` line under `bwrap` with:
+
+- `--unshare-all`, so no network, and namespaces of its own;
+- `--unshare-user` and `--disable-userns`, so it makes no user
+  namespace of its own;
+- `--die-with-parent`, so a filter killed at its deadline takes the
+  sandbox with it;
+- `--new-session`, so it can push nothing into a terminal;
+- `--cap-drop ALL`;
+- a filesystem of `/usr` read-only, the filter itself, `/proc`, `/dev`
+  and an empty `/tmp`: no home, no runtime directory, no session bus
+  and no credentials.
+
+The inspector checks `run`, so it checks the wrapper, not the file the
+wrapper names: that file must be just as far from the workload's reach.
+The wrapper makes namespaces and mounts, which the inspector's unit has
+to allow ([DESIGN.md](DESIGN.md), "Request filters"). Where it is
+refused them, bwrap exits 1 and every filtered request fails, 502.

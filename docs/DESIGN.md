@@ -314,6 +314,49 @@ can report `internal destination` — a name with no accept line, one
 edit from working — rather than `upstream unreachable`. With no rule
 loaded that dial succeeds, and the list only changes the report.
 
+## Request filters: where they run
+
+A request filter ([POLICY.md](POLICY.md), "Request filters") is a child
+of the inspector, so it runs where the inspector does and as its uid:
+the user's, in the host and netns placements and a hut, and 200 in the
+sidecar. It inherits the inspector's unit: its seccomp filter,
+`NoNewPrivileges=` and `MemoryDenyWriteExecute=`. It parses bytes the
+workload chose, outside the workload, which is what the wrapper
+([examples/request-filter/](../examples/request-filter/)) is for.
+
+The inspector checks `run` at every load, in every placement: absolute,
+a regular file, executable, and not group- or world-writable. That
+says nothing about whether the workload can write it, or the file the
+wrapper names, so each placement answers that on its own:
+
+- **Host**: the workload reaches the host's files only through what its
+  container mounts. Keep `run` and the filter out of every mount, a
+  project directory shared with the container included.
+- **Netns**, and a hut: moathut refuses a `run` a hut can write,
+  directly or through a link ([MOATHUT.md](MOATHUT.md)). The file the
+  wrapper names is the operator's to place as carefully.
+- **Sidecar**: `run` is a path in the sidecar's own filesystem, in the
+  image or mounted into it. The workload's container shares no mount
+  namespace with it, so the workload can write it only through a volume
+  both mount. bwrap is not expected to run in the sidecar, so a filter
+  there runs unsandboxed, with the inspector's uid and its reach: the
+  network and the CA in the state volume.
+- **VM**: as the placement it is in.
+
+**The inspector's unit.** The wrapper makes namespaces and mounts, so
+the host example's inspector unit
+([examples/systemd/](../examples/systemd/)) carries no
+`RestrictNamespaces=` and allows `@mount`: the same lines a hut's
+inspector runs under, where podman, finding the pod, makes its
+storage's mount private. That gives up less than it seems. The inspector
+is a user unit, and any process in one can ask the user's service
+manager, over the user bus, to start a transient unit with none of these
+restrictions (`systemd-run --user`), measured on a real host. So
+`RestrictNamespaces=` in a user unit bounds a compromised inspector
+little; the wrapper's sandbox, which has no user bus, is what bounds
+the filter.
+The responder runs no filter and keeps `RestrictNamespaces=yes`.
+
 ## Choosing a placement
 
 | placement | the programs | the listeners | who else can reach them |

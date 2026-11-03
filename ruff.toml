@@ -6,7 +6,7 @@ include = ["moatery/*.py", "moathut/*.py", "bin/moathut",
            "libexec/moat-broker", "libexec/moat-inspect",
            "libexec/moat-mint-ca", "libexec/moat-netns-listen",
            "libexec/moat-resolve", "container/moat-sidecar",
-           "tests/manual/*.py"]
+           "examples/request-filter/json-only", "tests/manual/*.py"]
 
 [lint]
 select = ["E4", "E7", "E9", "F", "E501"]

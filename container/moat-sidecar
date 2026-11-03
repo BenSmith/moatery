@@ -22,15 +22,20 @@ uid clears every capability.
 
 The two flags are the facts the image cannot know, the workload's label and
 uid; every flag after them is the broker's, passed through. The credential
-material is mounted at /run/secrets.
+material is mounted at /run/secrets. --request-filters has the inspector
+read the request-filter document mounted at REQUEST_FILTERS; each filter's
+run, and what it runs, must be in the image or mounted, and runs
+unsandboxed, as the inspector's uid.
 
 Usage:
-  moat-sidecar --name NAME --caller-uid UID [BROKER FLAGS...]
+  moat-sidecar --name NAME --caller-uid UID [--request-filters]
+      [BROKER FLAGS...]
 
   podman run --pod POD --restart on-failure \\
       --cap-drop all --cap-add chown,dac_override,setgid,setuid \\
       --security-opt label=level:s0:cA,cB \\
       -v policy.json:/etc/moatery/policy.json:ro,Z \\
+      [-v filters.json:/etc/moatery/request-filters.json:ro,Z \\]
       -v moatery-state:/var/lib/moatery:Z \\
       --secret KEY,target=CRED,uid=201,gid=200,mode=0400 \\
       IMAGE --name NAME --caller-uid UID --host HOST=CRED ...
@@ -84,6 +89,7 @@ BROKER_USER = "broker"
 GROUP = "moatery"
 
 POLICY = "/etc/moatery/policy.json"
+REQUEST_FILTERS = "/etc/moatery/request-filters.json"
 STATE = "/var/lib/moatery"
 STATUS = f"{STATE}/status.json"
 RECORD = f"{STATE}/egress.jsonl"
@@ -130,6 +136,8 @@ def parse_args(argv):
     p.add_argument("--caller-uid", required=True, type=int, metavar="UID",
                    help="the workload's uid in the pod: the one caller the "
                         "inspector serves")
+    p.add_argument("--request-filters", action="store_true",
+                   help=f"the inspector reads {REQUEST_FILTERS}")
     args, broker_flags = p.parse_known_args(argv[1:])
     for flag in ("--listen", "--caller-uid", "--name"):
         if any(f == flag or f.startswith(flag + "=") for f in broker_flags):
@@ -146,12 +154,13 @@ def broker_argv(name, flags):
             *flags]
 
 
-def inspector_argv(name, caller_uid):
+def inspector_argv(name, caller_uid, filtered=False):
     return [sys.executable, str(INSPECTOR), "--name", name,
             "--policy", POLICY, "--state-dir", STATE,
             "--status", STATUS, "--record", RECORD,
             "--broker", f"unix:{SOCKET}",
-            "--caller-uid", str(caller_uid)]
+            "--caller-uid", str(caller_uid),
+            *(["--request-filters", REQUEST_FILTERS] if filtered else [])]
 
 
 def resolver_argv(name):
@@ -394,6 +403,9 @@ def main(argv=None):
                  "container's pid 1; run the container without --init")
     if not Path(POLICY).exists():
         sys.exit(f"no policy at {POLICY}; mount one (ro)")
+    if args.request_filters and not Path(REQUEST_FILTERS).exists():
+        sys.exit(f"--request-filters, and no document at "
+                 f"{REQUEST_FILTERS}; mount one (ro)")
 
     prepare_dirs(inspect, broker, group)
     try:
@@ -419,8 +431,9 @@ def main(argv=None):
         sys.exit(f"the broker exited with status {status} before "
                  "listening; its reason is above")
     children = {pid: "broker"}
-    children[start_activated(inspector_argv(args.name, args.caller_uid),
-                             inspect, group, planes)] = "inspector"
+    children[start_activated(
+        inspector_argv(args.name, args.caller_uid, args.request_filters),
+        inspect, group, planes)] = "inspector"
     children[start_activated(resolver_argv(args.name), inspect, group,
                              resolver)] = "responder"
     for s in sockets:

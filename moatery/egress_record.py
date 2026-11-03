@@ -75,6 +75,14 @@ DROP_BROKER_UNREACHABLE = "credential broker unreachable"
 # A hello that would be spliced carries encrypted_client_hello, which can
 # name a host other than the one the splice was decided on.
 DROP_ECH_SPLICED = "ECH on a spliced connection"
+# A request filter's outcomes, none of which sent anything upstream.
+DROP_FILTER_REFUSED = "refused by filter"
+DROP_FILTER_FAILED = "filter failed"
+DROP_FILTER_TIMED_OUT = "filter timed out"
+DROP_FILTER_UNAVAILABLE = "filter unavailable"
+# A request to a filtered host whose body no filter could be given whole:
+# an upgrade, an encoded body, or one over the cap.
+DROP_NOT_FILTERABLE = "request not filterable"
 
 DROP_REASONS = (
     DROP_NOT_ALLOWLISTED,
@@ -102,6 +110,11 @@ DROP_REASONS = (
     DROP_NOT_PERMITTED,
     DROP_BROKER_UNREACHABLE,
     DROP_ECH_SPLICED,
+    DROP_FILTER_REFUSED,
+    DROP_FILTER_FAILED,
+    DROP_FILTER_TIMED_OUT,
+    DROP_FILTER_UNAVAILABLE,
+    DROP_NOT_FILTERABLE,
 )
 
 # The reasons that also get a per-host figure: those an operator fixes by
@@ -164,11 +177,12 @@ NOTE_KINDS = (
 
 # The record's field names. `credential` is the name of the credential a
 # request was brokered with, never the material; it is what explains why
-# `upstream`, the address actually dialled, is the broker's.
+# `upstream`, the address actually dialled, is the broker's. `filter` is
+# what a request filter decided, null where none did.
 RECORD_FIELDS = (
     LOG_ID_FIELD, LOG_REQ_FIELD, "ts", "plane", "mode", "host", "method",
     "path", "query", "http", "decision", "reason", "status", "upstream",
-    "credential", "duration_ms",
+    "credential", "duration_ms", "filter", "filter_ms",
 )
 
 # The journal's own verbs. Whether the guest was told is `status` being

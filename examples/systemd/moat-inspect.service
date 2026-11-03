@@ -30,4 +30,5 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~process_vm_readv process_vm_writev
 SystemCallErrorNumber=EPERM
-RestrictNamespaces=yes
+# A request filter's sandbox makes namespaces and mounts.
+SystemCallFilter=@mount

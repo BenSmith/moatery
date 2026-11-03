@@ -200,6 +200,35 @@ The units carry no sandboxing directives. In a user unit most of them
 and the broker refuses to start in a user namespace that cannot map its
 caller's uid.
 
+## A request filter
+
+[request-filter/](request-filter/) runs every request body to
+`api.example.com` through a filter before it leaves
+([POLICY.md](../docs/POLICY.md), "Request filters"):
+
+- `json-only`, the filter: it refuses a body that is not JSON, with the
+  reason `not-json`, and sends the rest unchanged;
+- `sandboxed`, the wrapper the document names: it runs the filter
+  beside it under `bwrap`, with no home, no network and no session bus;
+- `request-filters.json`, the document, with `HOME` replaced.
+
+The two scripts go where the container cannot write, and the wrapper's
+`FILTER=` line names the filter if it is anywhere else:
+
+```
+mkdir -p ~/.local/libexec/request-filter
+cp -p request-filter/sandboxed request-filter/json-only \
+    ~/.local/libexec/request-filter/
+sed "s|HOME|$HOME|" request-filter/request-filters.json \
+    > ~/.config/moatery/request-filters.json
+```
+
+Then add `--request-filters %E/moatery/request-filters.json` to the
+inspector's `ExecStart=` and restart it. After that a reload reads the
+document again with the policy. The inspector's unit carries no
+`RestrictNamespaces=` and allows `@mount`, since bwrap needs both
+([DESIGN.md](../docs/DESIGN.md), "Request filters: where they run").
+
 ## Elsewhere here
 
 - [quadlet/](quadlet/): a quadlet pod, the listeners in the pod's

@@ -34,8 +34,8 @@ _moathut_credentials() {
 _moathut_takes_value() {
     case $1 in
         --network-policy | --image | --mount | --seccomp | --like | \
-            --method | --path | --host | --env | --auth-header | \
-            --auth-format)
+            --request-filters | --method | --path | --host | --env | \
+            --auth-header | --auth-format)
             return 0 ;;
     esac
     return 1
@@ -66,6 +66,7 @@ _moathut() {
             COMPREPLY+=($(compgen -W "none" -- "$cur"))
             return ;;
         --mount) _filedir -d; return ;;
+        --request-filters) _filedir; return ;;
         --seccomp)
             _filedir
             COMPREPLY+=($(compgen -W "strict debug" -- "$cur"))
@@ -85,11 +86,11 @@ _moathut() {
     case $command in
         "")
             options="--version"
-            names="create enter cp log allow network-policy stop rm ls
-                credential ptyxis" ;;
+            names="create enter cp log allow network-policy request-filters
+                stop rm ls credential ptyxis" ;;
         create)
             options="--network-policy --image --mount --autostart --seccomp
-                --like --dry-run" ;;
+                --request-filters --like --dry-run" ;;
         enter)
             options="--root"
             ((n == 0)) && names=$(_moathut_huts) ;;
@@ -114,7 +115,7 @@ _moathut() {
         allow)
             options="--method --path"
             ((n == 0)) && names=$(_moathut_huts) ;;
-        network-policy | stop)
+        network-policy | request-filters | stop)
             ((n == 0)) && names=$(_moathut_huts) ;;
         rm)
             options="--home"

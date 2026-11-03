@@ -12,10 +12,10 @@ One daemon thread per connection, up to a ceiling, and refused above it
 rather than queued. Every accepted socket gets egress_relay's decision
 timeout before it is touched.
 
-A reload reads the policy file again between accepts and enforces it from
-each connection's next decision; a connection already relaying keeps
-going. Its `tls` is the one thing a reload cannot change: the minter was
-built for it.
+A reload reads the policy file again between accepts, with the request
+filters beside it, and enforces the pair from each connection's next
+decision; a connection already relaying keeps going. Its `tls` is the
+one thing a reload cannot change: the minter was built for it.
 """
 
 import errno
@@ -40,6 +40,7 @@ from . import inspect_http
 from . import inspect_tls
 from .inspect_policy import load_policy
 from .inspect_scope import Inspection, quoted
+from .request_filter import REQUEST_FILTERS_DIGEST_KEY, load_request_filters
 from .peer_identity import (
     OWN_TABLES, NoSocketTable, in_ranges, local_endpoints, peer_caller,
     peer_closed,
@@ -115,10 +116,13 @@ class Listener:
     def __init__(self, sockets, out=None, limit=MAX_CONNECTIONS, policy=None,
                  status_path=None, minter=None, record_path=None,
                  broker_endpoint=None, caller_uid=None, caller_ranges=None,
-                 peer_tables=OWN_TABLES, policy_path=None):
+                 peer_tables=OWN_TABLES, policy_path=None,
+                 request_filters_path=None):
         self._sockets = list(sockets)
         # Where a reload reads the policy from; None: it cannot be.
         self._policy_path = policy_path
+        # And the request filters; None: there are none.
+        self._request_filters_path = request_filters_path
         self._reload = threading.Event()
         self._ceiling = Ceiling(limit)
         self._identifying = Ceiling(MAX_IDENTIFYING)
@@ -150,10 +154,12 @@ class Listener:
         self._reload.set()
 
     def reload_policy(self):
-        """Read the policy file and enforce it, or keep enforcing the one
-        loaded and log why. The status file names the digest enforced
-        either way."""
+        """Read the policy file and the request filters, and enforce the
+        pair, or keep enforcing the pair loaded and log why. The filters
+        are checked against the new policy. The status file names the
+        digests enforced either way."""
         current = self.inspection.policy
+        filters_path = self._request_filters_path
         try:
             if self._policy_path is None:
                 raise ValueError("this listener was given no policy path")
@@ -162,6 +168,9 @@ class Listener:
                 raise ValueError(
                     f"its tls is {policy.tls!r} and the one enforced "
                     f"{current.tls!r}, which only a restart changes")
+            if filters_path is not None:
+                policy = policy._replace(request_filters=load_request_filters(
+                    filters_path, policy))
         except (OSError, ValueError) as exc:
             self.inspection.log(
                 f"WARNING: policy not reloaded, still enforcing "
@@ -171,6 +180,10 @@ class Listener:
             self.inspection.counters.set_lists(policy)
             self.inspection.log(f"policy reloaded from {self._policy_path}: "
                                 f"{policy.summary}")
+            if filters_path is not None:
+                self.inspection.log(
+                    f"request filters reloaded from {filters_path}: "
+                    f"{policy.request_filters.summary}")
         self.write_status()
 
     def close(self):
@@ -362,6 +375,8 @@ class Listener:
         # Which policy this process enforces, empty string included, so a
         # missing digest is not mistaken for an older listener.
         snap[INSPECT_DIGEST_KEY] = self.inspection.policy.digest
+        snap[REQUEST_FILTERS_DIGEST_KEY] = (
+            self.inspection.policy.request_filters.digest)
         if self.inspection.minter is not None:
             snap["mint"] = self.inspection.minter.snapshot()
         return snap

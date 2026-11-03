@@ -8,11 +8,13 @@ and the status file belong to the process (moatery/inspect_listener.py).
 
 import json
 import sys
+import threading
 
 from .egress_record import SUSPECT_REASONS, Record, RequestLog
 from .egress_upstream import Upstream
 from .inspect_counters import Counters
 from .inspect_policy import Policy
+from .request_filter import FILTER_INFLIGHT_MAX, FILTER_PROCESSES_MAX, Budget
 
 
 class Inspection:
@@ -50,6 +52,12 @@ class Inspection:
         # would fail every guest handshake while reporting itself healthy.
         self.minter = minter
         self.upstream = Upstream(broker_endpoint)
+        # Shared by every request this process holds a body for.
+        self.filter_budget = Budget(FILTER_INFLIGHT_MAX)
+        self.filter_slots = threading.BoundedSemaphore(FILTER_PROCESSES_MAX)
+        # (document digest, run) pairs already warned about.
+        self._unrunnable = set()
+        self._unrunnable_lock = threading.Lock()
 
     def log(self, line):
         # One write of the line WITH its newline. print() writes the two
@@ -85,6 +93,16 @@ class Inspection:
                         if v is not None)
         self.log(f"{verb} {where}{named} reason={quoted(text)}")
 
+    def warn_unrunnable(self, digest, run, why):
+        """Say once per loaded document that a filter's `run` cannot be
+        exec'd: every request it covers is answered 502 until then."""
+        with self._unrunnable_lock:
+            if (digest, run) in self._unrunnable:
+                return
+            self._unrunnable.add((digest, run))
+        self.log(f"WARNING: request filter {run} cannot be run ({why}): "
+                 f"every request it covers is answered 502 until it can "
+                 f"be, or the document is changed and reloaded")
 
     def note(self, where, kind, detail, *, host=None):
         """One thing the operator asked to hear about, deciding nothing:

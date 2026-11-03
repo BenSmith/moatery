@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 from pathlib import Path, PurePosixPath
@@ -23,6 +24,8 @@ from moatery.broker_profiles import (BROKER_DEFAULT_AUTH_FORMAT,
 from moatery.inspect_document import (INSPECT_DIGEST_KEY,
                                       inspect_policy_digest)
 from moatery.inspect_policy import load_policy
+from moatery.request_filter import (REQUEST_FILTERS_DIGEST_KEY,
+                                    load_request_filters)
 from moatery.sd_notify import notify_ready
 
 from . import archive, credentials, document, ptyxis, record, seccomp
@@ -283,15 +286,17 @@ def _own_profile(given, cwd):
 
 def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
            libexec, pythonpath, uid, gid, cwd, environ, autostart=False,
-           dry_run=False, like=None, profile=None, runner=run):
+           dry_run=False, like=None, profile=None, request_filters=None,
+           runner=run):
     """The hut; with dry_run, what would be written, path to text, and
     nothing is. A hut `like` another starts from its policy, image,
-    mounts and seccomp profile: a policy, image or profile given
-    replaces its, and a mount given joins its, replacing one at the same
-    target. `profile` names one of seccomp's or a file, copied in.
-    `policy_path` NO_POLICY makes a hut with no network policy, which has
-    neither rules nor listeners; one like it is one too, unless given a
-    policy."""
+    mounts, seccomp profile and request filters: a policy, image,
+    profile or filter document given replaces its, and a mount given
+    joins its, replacing one at the same target. `profile` names one of
+    seccomp's or a file, copied in; `request_filters`, a filter
+    document, copied in. `policy_path` NO_POLICY makes a hut with no
+    network policy, which has neither rules nor listeners nor filters;
+    one like it is one too, unless given a policy."""
     hut = _hut(name, dirs)
     if hut.config.exists() or any(p.exists() for p in hut.unit_files):
         raise HutError(f"hut {name} exists")
@@ -304,7 +309,7 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
                  for spec in mount_specs]
     except MountRefused as exc:
         raise HutError(f"--mount {exc}") from None
-    inherited, own = [], None
+    inherited, own, filters = [], None, None
     if profile is not None and profile not in seccomp.PROFILES:
         own = _own_profile(profile, cwd)
     if like is not None:
@@ -317,6 +322,8 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
             policy_path = (other.policy if other_settings.inspected
                            else NO_POLICY)
         image = image or other_settings.image
+        if other_settings.filtered:
+            filters = other.request_filters.read_text()
         targets = {mount.target for mount, _ in given}
         inherited = [(mount, f"hut {like}'s mount")
                      for mount in other_settings.mounts
@@ -329,8 +336,21 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
         profile = seccomp.DEFAULT
     image = image or DEFAULT_IMAGE
     inspected = policy_path != NO_POLICY
+    if request_filters is not None:
+        if not inspected:
+            raise HutError(f"--request-filters with --network-policy "
+                           f"{NO_POLICY}: a hut whose network is not "
+                           "inspected has no inspector to run them")
+        try:
+            filters = Path(cwd, request_filters).read_text()
+        except OSError as exc:
+            raise HutError(f"--request-filters {request_filters}: "
+                           f"{exc.strerror}") from None
+    elif not inspected:
+        filters = None
     if inspected:
-        broker = _broker(_policy(policy_path), dirs)
+        policy = _policy(policy_path)
+        broker = _broker(policy, dirs)
         host_bundle = _host_bundle()
         trust_path = _trust_path(image, runner)
     else:
@@ -345,19 +365,28 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
         except MountRefused as exc:
             raise HutError(f"{origin} {exc}") from None
     mounts = tuple(mount for mount, _ in inherited + given)
+    if filters is not None:
+        roots = _hut_writable(dirs) | {Path(os.path.realpath(m.source))
+                                       for m in mounts if not m.readonly}
+        with tempfile.TemporaryDirectory() as tmp:
+            _checked_filters(filters, policy, roots,
+                             Path(tmp, "request-filters.json"))
     settings = Settings(image=image, trust_path=trust_path,
                         home_path=home_path, uid=uid, gid=gid,
                         mounts=mounts, tool=tuple(tool), python=python,
                         libexec=str(libexec), pythonpath=pythonpath,
                         autostart=autostart, seccomp=profile,
-                        level=_free_level(dirs), inspected=inspected)
+                        level=_free_level(dirs), inspected=inspected,
+                        filtered=filters is not None)
     if dry_run:
         return {**_written(hut, settings, broker),
-                **({hut.seccomp: own} if own is not None else {})}
+                **({hut.seccomp: own} if own is not None else {}),
+                **({hut.request_filters: filters}
+                   if filters is not None else {})}
     home_existed = hut.home.exists()
     try:
         _lay_out(hut, settings, broker, policy_path, host_bundle, environ,
-                 own, runner)
+                 own, filters, runner)
     except BaseException:
         _discard(hut, home=not home_existed, runner=runner)
         raise
@@ -365,7 +394,7 @@ def create(name, policy_path, image, mount_specs, *, dirs, tool, python,
 
 
 def _lay_out(hut, settings, broker, policy_path, host_bundle, environ,
-             own_profile, runner):
+             own_profile, filters, runner):
     for path in (hut.config, hut.state, hut.logs, hut.home):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
     # The runtime makes a missing mount point, and each directory above
@@ -381,6 +410,8 @@ def _lay_out(hut, settings, broker, policy_path, host_bundle, environ,
     if settings.inspected:
         hut.policy.write_bytes(Path(policy_path).read_bytes())
         hut.policy.chmod(0o600)
+        if filters is not None:
+            _private(hut.request_filters, filters)
         minted = runner([*interpreter(settings),
                          str(Path(settings.libexec) / "moat-mint-ca"),
                          "--name", hut.name, "--state-dir", str(hut.state)],
@@ -692,7 +723,11 @@ def _lookups(path):
     return looked, current
 
 
-def _apart(path, roots, *, holding=False):
+_CP_ADVICE = "copy to and from a directory no hut can write"
+
+
+def _apart(path, roots, *, holding=False, refuser="cp",
+           advice=_CP_ADVICE):
     """PATH, real, if resolving it looks nothing up where a hut can
     write, nor ends there; with HOLDING, nor holds such a place. A hut
     could otherwise swap a link in on the way, and send what cp writes,
@@ -701,14 +736,13 @@ def _apart(path, roots, *, holding=False):
     for at in (*looked, real):
         for root in roots:
             if Path(at).is_relative_to(root):
-                raise HutError(f"cp refuses {path}: it is in or reached "
-                               f"through {root}, where a hut can write; "
-                               "copy to and from a directory no hut can "
-                               "write")
+                raise HutError(f"{refuser} refuses {path}: it is in or "
+                               f"reached through {root}, where a hut can "
+                               f"write; {advice}")
     for root in roots if holding else ():
         if root.is_relative_to(real):
-            raise HutError(f"cp refuses {path}: it holds {root}, where a "
-                           "hut can write")
+            raise HutError(f"{refuser} refuses {path}: it holds {root}, "
+                           "where a hut can write")
     return real
 
 
@@ -1013,10 +1047,48 @@ def edit_policy(name, *, dirs, environ, isatty, runner=run,
     once it loads. A copy that does not is opened again, if there is a
     terminal to ask on. None if it came back unchanged."""
     hut, settings = _inspected(name, dirs)
+    checked = _edited(hut.config / ".policy.json.edit",
+                      hut.policy.read_text(), "the policy",
+                      lambda text: _checked(hut, text, dirs),
+                      environ=environ, isatty=isatty, edit=edit, ask=ask)
+    if checked is None:
+        return None
+    staged, broker = checked
+    return _apply_policy(hut, settings, staged, broker, runner, pause)
+
+
+# What `request-filters` opens for a hut that has none.
+_NO_FILTERS = '{"filters": []}\n'
+
+
+def edit_request_filters(name, *, dirs, environ, isatty, runner=run,
+                         edit=subprocess.run, ask=input, pause=time.sleep):
+    """Open a copy of the hut's request filters in the user's editor, and
+    apply it once it loads beside the hut's policy, as edit_policy does.
+    A hut without them starts from a document with none. None if it came
+    back unchanged."""
+    hut, settings = _inspected(name, dirs)
+    original = (hut.request_filters.read_text()
+                if hut.request_filters.exists() else _NO_FILTERS)
+    staged = hut.config / ".request-filters.json.new"
+
+    def check(text):
+        _checked_filters(text, _policy(hut.policy), _hut_writable(dirs),
+                         staged)
+        return staged
+    if _edited(hut.config / ".request-filters.json.edit", original,
+               "the request filters", check, environ=environ,
+               isatty=isatty, edit=edit, ask=ask) is None:
+        return None
+    return _apply_filters(hut, settings, staged, dirs, runner, pause)
+
+
+def _edited(draft, original, what, check, *, environ, isatty, edit, ask):
+    """What CHECK gives the text the user's editor leaves in DRAFT, a copy
+    of ORIGINAL, opened again while CHECK refuses it and there is a
+    terminal to ask on; None if it came back unchanged."""
     editor = shlex.split(environ.get("VISUAL") or environ.get("EDITOR")
                          or "vi")
-    original = hut.policy.read_text()
-    draft = hut.config / ".policy.json.edit"
     _private(draft, original)
     try:
         while True:
@@ -1024,26 +1096,24 @@ def edit_policy(name, *, dirs, environ, isatty, runner=run,
                 done = edit([*editor, str(draft)])
             except FileNotFoundError:
                 raise HutError(f"no editor {editor[0]}: set VISUAL or "
-                               "EDITOR; the policy is unchanged") from None
+                               f"EDITOR; {what} is unchanged") from None
             if done.returncode != 0:
-                raise HutError(f"{editor[0]} exited {done.returncode}; the "
-                               "policy is unchanged")
+                raise HutError(f"{editor[0]} exited {done.returncode}; "
+                               f"{what} is unchanged")
             text = draft.read_text()
             if text == original:
                 return None
             try:
-                staged, broker = _checked(hut, text, dirs)
-                break
+                return check(text)
             except HutError as exc:
                 if not isatty:
                     raise
                 _warn(str(exc))
                 if ask("edit it again? [Y/n] ").strip().lower() in ("n",
                                                                     "no"):
-                    raise HutError("the policy is unchanged") from None
+                    raise HutError(f"{what} is unchanged") from None
     finally:
         draft.unlink(missing_ok=True)
-    return _apply_policy(hut, settings, staged, broker, runner, pause)
 
 
 def _private(path, text):
@@ -1066,10 +1136,41 @@ def _checked(hut, text, dirs):
             raise HutError("policy: " + str(exc).replace(
                 f"{staged}: ", "")) from None
         broker = _broker(policy, dirs)
+        # The inspector reloads the two together, and refuses a pair
+        # that does not load.
+        if hut.request_filters.exists():
+            try:
+                load_request_filters(hut.request_filters, policy)
+            except (OSError, ValueError) as exc:
+                raise HutError(
+                    "policy: the hut's request filters would not load "
+                    "beside it: " + str(exc).replace(
+                        f"{hut.request_filters}: ", "")) from None
     except BaseException:
         staged.unlink(missing_ok=True)
         raise
     return staged, broker
+
+
+def _checked_filters(text, policy, roots, staged):
+    """The filter document TEXT staged at STAGED, loaded beside POLICY as
+    the inspector will load it, with no `run` in or reached through
+    ROOTS, where a hut can write and could replace the program; or
+    raise, staging nothing."""
+    try:
+        _private(staged, text)
+        try:
+            filters = load_request_filters(staged, policy)
+        except (OSError, ValueError) as exc:
+            raise HutError("request filters: " + str(exc).replace(
+                f"{staged}: ", "")) from None
+        for entry in filters.filters:
+            _apart(entry.run, roots, refuser="moathut",
+                   advice="a filter's run, and what it runs, go where no "
+                          "hut can write")
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
 
 
 # How long a reload has to show in the inspector's status file, which it
@@ -1151,6 +1252,41 @@ def _apply_policy(hut, settings, staged, broker, runner, pause):
                    and _state(hut.service, runner) == "active")
 
 
+def _apply_filters(hut, settings, staged, dirs, runner, pause):
+    """Put a checked filter document in place, and have the inspector
+    read it if it is running: a reload, unless the hut had no filters,
+    whose inspector was started without the flag that names them."""
+    text = staged.read_text()
+    state = _state(hut.inspect_service, runner)
+    os.replace(staged, hut.request_filters)
+    restart = None
+    if not settings.filtered:
+        settings = settings._replace(filtered=True)
+        hut.settings.write_text(settings.to_json())
+        _write_units(hut, settings, _broker(_policy(hut.policy), dirs),
+                     runner)
+        runner(["systemctl", "--user", "daemon-reload"])
+        restart = "it had no request filters"
+    if state not in ("active", "activating"):
+        return Applied(False)
+    if restart is None and state == "active":
+        runner(["systemctl", "--user", "reload", hut.inspect_service],
+               check=False)
+        if not _enforcing(hut, inspect_policy_digest(text), pause,
+                          REQUEST_FILTERS_DIGEST_KEY):
+            restart = "it did not take the reload"
+    if restart is not None:
+        try:
+            runner(["systemctl", "--user", "try-restart",
+                    hut.inspect_service])
+        except CommandFailed as exc:
+            raise HutError(f"hut {hut.name}'s request filters are "
+                           "replaced, but its inspector did not start "
+                           f"again ({exc}); see journalctl --user -u "
+                           f"{hut.inspect_service}") from None
+    return Applied(True, restart)
+
+
 def _tls(path):
     """The document's `tls`, or None for one that does not load, which
     the inspector refuses to reload into and _enforcing catches."""
@@ -1160,15 +1296,15 @@ def _tls(path):
         return None
 
 
-def _enforcing(hut, digest, pause):
-    """Whether the inspector's status file names the digest, within
-    _RELOAD_WAIT."""
+def _enforcing(hut, digest, pause, key=INSPECT_DIGEST_KEY):
+    """Whether the inspector's status file names the digest under KEY,
+    within _RELOAD_WAIT."""
     for _ in range(round(_RELOAD_WAIT / _RELOAD_POLL)):
         try:
             doc = json.loads(hut.status.read_text())
         except (OSError, ValueError):
             doc = None
-        if isinstance(doc, dict) and doc.get(INSPECT_DIGEST_KEY) == digest:
+        if isinstance(doc, dict) and doc.get(key) == digest:
             return True
         pause(_RELOAD_POLL)
     return False

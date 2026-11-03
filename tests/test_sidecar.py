@@ -100,6 +100,42 @@ class TestEachArgvIsAcceptedByItsProgram(unittest.TestCase):
         self.assertEqual(args.caller_uid, 1000)
         self.assertEqual(args.state_dir, mod.STATE)
         self.assertEqual(args.policy, mod.POLICY)
+        self.assertIsNone(args.request_filters)
+
+    def test_request_filters_name_the_mounted_document_to_the_inspector(self):
+        """Without the flag nothing is filtered, so a fixed path read only
+        when it is there would make a missing mount look unfiltered."""
+        mod = _mod()
+        given, rest = mod.parse_args(
+            ["x", "--name", "wl", "--caller-uid", "1000",
+             "--request-filters", "--host", "a=b"])
+        self.assertTrue(given.request_filters)
+        self.assertEqual(rest, ["--host", "a=b"])
+        self.assertFalse(mod.parse_args(
+            ["x", "--name", "wl", "--caller-uid", "1000", "--host", "a=b"]
+        )[0].request_filters)
+        argv = mod.inspector_argv("wl", 1000, given.request_filters)
+        args = load_script("libexec/moat-inspect").parse_args(argv[1:])
+        self.assertEqual(args.request_filters, mod.REQUEST_FILTERS)
+        self.assertEqual(Path(mod.REQUEST_FILTERS).parent,
+                         Path(mod.POLICY).parent)
+
+    def test_request_filters_with_no_document_fail_the_start(self):
+        mod = _mod()
+        with mock.patch.object(mod.os, "getuid", return_value=0), \
+                mock.patch.object(mod.os, "getpid", return_value=1), \
+                mock.patch.object(mod.pwd, "getpwnam",
+                                  return_value=FAKE_INSPECT), \
+                mock.patch.object(mod.grp, "getgrnam"), \
+                mock.patch.object(mod, "POLICY", __file__), \
+                mock.patch.object(mod, "REQUEST_FILTERS", "/nonexistent"), \
+                mock.patch.object(mod, "prepare_dirs") as prepare, \
+                self.assertRaises(SystemExit) as caught:
+            mod.main(["moat-sidecar", "--name", "wl", "--caller-uid",
+                      "1000", "--request-filters", "--host", "h=c"])
+        self.assertIn("no document at /nonexistent",
+                      str(caught.exception.code))
+        prepare.assert_not_called()
 
     def test_the_responder_argv_parses_and_answers_off_the_loopback(self):
         """Every name answered with an address the redirect lands 443 and

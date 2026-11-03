@@ -61,6 +61,9 @@ class Counters:
         # Brokered requests the origin answered 401 or 403: every layer of
         # ours succeeded and the provider still said no.
         self.credential_unauthorized = 0
+        # Requests a filter forwarded, by what it did to the body. Its
+        # refusals and failures are drop reasons.
+        self.filtered = {"passed": 0, "rewrote": 0}
         # The per-host DROP_INTERNAL figure, under the key the status
         # document names it by.
         self.internal_refusals = self.per_host[DROP_INTERNAL]
@@ -132,6 +135,11 @@ class Counters:
             if host and reason in self.per_host:
                 self.per_host[reason].add(host)
 
+    def record_filtered(self, kind: str) -> None:
+        """One request forwarded with the body a filter let through."""
+        with self._lock:
+            self.filtered[kind] += 1
+
     def record_credentialed(self, host: str, credential: str) -> None:
         """One request sent to the broker, counted once its dial succeeds."""
         with self._lock:
@@ -171,6 +179,7 @@ class Counters:
                 "credentialed_hosts": self.credentialed_hosts.snapshot(),
                 "per_credential": self.per_credential.snapshot(),
                 "credential_unauthorized": self.credential_unauthorized,
+                "filtered": dict(self.filtered),
                 "concurrency": {"open": open_now, "refused": refused},
                 "lists": dict(self.lists),
             }
@@ -189,5 +198,9 @@ def _lists(policy):
              "paths": None if e.paths is None else list(e.paths),
              "credential": e.credential}
             for e in policy.policy
+        ] if policy else [],
+        "request_filters": [
+            {"host": f.host, "run": f.run}
+            for f in policy.request_filters.filters
         ] if policy else [],
     }
