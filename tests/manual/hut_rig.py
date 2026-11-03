@@ -2,9 +2,10 @@
 """hut_rig.py — a moathut hut, made and run through its command line.
 
 docs/MOATHUT.md: `moathut credential add`, `create`, `enter`, `cp`,
-`log`, `allow`, `network-policy`, `stop` and `rm`, the hut's units run by the
-user's manager and quadlet, the namespace its netns unit holds, the
-netns placement's rules and listeners in it, and the hut's broker. Run
+`log`, `allow`, `network-policy`, `request-filters`, `stop` and `rm`,
+the hut's units run by the user's manager and quadlet, the namespace
+its netns unit holds, the netns placement's rules and listeners in it,
+the hut's broker and its request filter. Run
 on the proving host as an ordinary user, from a checkout:
 
     python3 tests/manual/hut_rig.py [--keep] [--without-rules]
@@ -16,7 +17,7 @@ on the proving host as an ordinary user, from a checkout:
                                     [--without-autostart]
                                     [--uninspected-ruled] [--cp-unguarded]
                                     [--rm-unguarded] [--unhardened]
-                                    [--restarts N]
+                                    [--unfiltered] [--restarts N]
 
 The tool is the checkout's bin/moathut running the checkout's
 programs, or, with MOATERY_LIBEXEC=/usr/libexec/moatery, the installed
@@ -26,7 +27,9 @@ Beside the units `create` writes, the rig writes eight drop-ins, and
 removes them before `rm`:
 
   inspector SSL_CERT_FILE names the stub's certificate, which no system
-            store holds; with --without-reload, an empty ExecReload=.
+            store holds; with --without-reload, an empty ExecReload=;
+            with --unfiltered, a PYTHONPATH whose sitecustomize finds no
+            request filter for any host.
   broker    the same, and a PYTHONPATH whose sitecustomize sleeps 3 s, so
             the broker's start has a window a request can fall in; with
             --broker-not-ready, Type=simple.
@@ -248,6 +251,23 @@ THE ROWS
             the same connect from the rig's hut times out, and the
             listener reads nothing more. allow, log and network-policy
             refuse it; rm --home leaves nothing of it.
+  filter    the rig's hut, with no request filters, sends a POST whose
+            body reaches the provider whole and is logged there.
+            request-filters with an $EDITOR writing a document whose
+            run is the example's sandboxed wrapper, FILTER= naming a
+            dispatch script in the rig's directory, makes the hut
+            filtered, and restarts the inspector, whose status names
+            the document. Through the wrapper, under the inspector's
+            own unit: /rewrite's body reaches the provider as the
+            filter wrote it, with the key the broker attached; /refuse
+            gets 403 and /crash, which the filter answers with SEGV,
+            502, and neither reaches the provider; /probe's sandbox
+            holds nothing of the home but the path to the filter, no
+            /run/user and no bus, cannot connect to the stub and cannot
+            make a user namespace, each of which works from the host.
+            The record says rewrote and refused, and the journal names
+            the refusal's reason and the crash. No row's window logged
+            an AVC.
   rm        credential rm is refused while the hut names it; no unit, pod
             or container is left, nor the broker's socket; the home and the
             record stay, and create, with a policy naming no credential,
@@ -331,6 +351,11 @@ lets go of a killed holder's namespace must go red.
 row's ls, and the autostart rows, must go red, and outside's first,
 which restarts the pod the autostart row started.
 
+`--unfiltered` puts a sitecustomize on the inspector's PYTHONPATH that
+makes RequestFilters.filter_for find no filter for any host: filter's
+rows from /rewrite on must go red, and its first two, the control and
+the document the status names, stay green.
+
 `--broker-not-ready` makes the broker's unit Type=simple, so nothing
 waits for its socket: the first request after each start of the broker,
 at the first start, each enter that starts it again, rotate, the loop's
@@ -369,6 +394,7 @@ from moatery.egress_ca import ca_cert_path  # noqa
 from moatery.inspect_document import (  # noqa
     INSPECT_DIGEST_KEY, inspect_policy_digest,
 )
+from moatery.request_filter import REQUEST_FILTERS_DIGEST_KEY  # noqa
 from moatery.egress_record import (  # noqa
     DROP_BROKER_UNREACHABLE, DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED,
     DROP_UNREACHABLE,
@@ -515,6 +541,19 @@ MADE = ".moatery-rig-made"
 SENT = ".moatery-rig-sent"
 FAKE_TAR = "/usr/local/bin/tar"
 HOSTS_MARK = "moathut-rig"
+# The request filter's: the example wrapper, with FILTER= naming the
+# dispatch script beside it, the document naming the wrapper, the
+# $EDITOR that writes it, and the --unfiltered sitecustomize. In the
+# rig's directory, which no hut's home or mount is in.
+FILTER_DIR = RIG / "hut-filter"
+WRAPPER = FILTER_DIR / "sandboxed"
+DISPATCH = FILTER_DIR / "dispatch"
+FILTERS = RIG / "hut-request-filters.json"
+FILTERS_EDITOR = RIG / "hut-filters-editor"
+UNFILTERED = RIG / "hut-unfiltered"
+EXAMPLE_WRAPPER = CHECKOUT / "examples" / "request-filter" / "sandboxed"
+REWRITTEN = "moatery-rig-rewritten"
+AUDIT_LOG = "/var/log/audit/audit.log"
 
 if riglib.INSTALLED:
     TOOL = ["moathut"]
@@ -768,6 +807,61 @@ file = tarfile.TarInfo("{SENT}/x")
 file.size = len(data)
 out.addfile(file, io.BytesIO(data))
 out.close()
+"""
+
+DISPATCH_SCRIPT = f"""\
+#!/usr/bin/python3 -I
+# written by tests/manual/hut_rig.py: the request filter, by MOAT_PATH.
+import errno, json, os, signal, socket, subprocess, sys
+
+HOME = {str(HOME)!r}
+MARKER = {str(MARKER)!r}
+RUNTIME = {str(RUNTIME)!r}
+STUB = ("127.0.0.1", {riglib.PROVIDER_PORT})
+REWRITTEN = {REWRITTEN!r}
+""" + """
+kind, nonce = (os.environ.get("MOAT_PATH", "").split("/")[1:3]
+               + ["", ""])[:2]
+body = sys.stdin.buffer.read()
+if kind == "rewrite":
+    sys.stdout.write(f"{REWRITTEN} {nonce}")
+elif kind == "refuse":
+    sys.stderr.write("rig-refusal\\n")
+    sys.exit(77)
+elif kind == "crash":
+    os.kill(os.getpid(), signal.SIGSEGV)
+elif kind == "probe":
+    s = socket.socket()
+    s.settimeout(3)
+    try:
+        s.connect(STUB)
+        connect = "connected"
+    except OSError as exc:
+        connect = errno.errorcode.get(exc.errno, type(exc).__name__)
+    try:
+        unshare = subprocess.run(["unshare", "-U", "true"],
+                                 capture_output=True).returncode
+    except OSError as exc:
+        unshare = type(exc).__name__
+    json.dump({"home": sorted(os.listdir(HOME)) if os.path.isdir(HOME)
+               else None,
+               "marker": os.path.exists(MARKER),
+               "run_user": os.path.exists("/run/user"),
+               "bus": os.path.exists(RUNTIME + "/bus"),
+               "dbus_env": "DBUS_SESSION_BUS_ADDRESS" in os.environ,
+               "ifs": sorted(i for _, i in socket.if_nameindex()),
+               "connect": connect, "unshare": unshare},
+              sys.stdout, separators=(",", ":"))
+else:
+    sys.stdout.buffer.write(body)
+"""
+
+UNFILTERED_SCRIPT = """\
+# written by tests/manual/hut_rig.py: --unfiltered. The inspector finds
+# no filter for any host, whatever its document names.
+from moatery.inspect_document import RequestFilters
+
+RequestFilters.filter_for = lambda self, host: None
 """
 
 SITECUSTOMIZE = """\
@@ -2768,13 +2862,209 @@ def rm_rows(tag, unguarded):
     rm_left_rows(unguarded)
 
 
+audit_mark = None
+
+
+def audit_size():
+    got = riglib.sudo(["stat", "-c", "%s", AUDIT_LOG], check=False)
+    return int(got.stdout) if got.returncode == 0 else None
+
+
+def new_avcs():
+    """The audit log's AVC lines since the last call, or None if it
+    cannot be read."""
+    global audit_mark
+    if audit_mark is None:
+        return None
+    if (audit_size() or 0) < audit_mark:
+        audit_mark = 0
+    got = riglib.sudo(["tail", "-c", f"+{audit_mark + 1}", AUDIT_LOG],
+                      check=False, text=False)
+    if got.returncode:
+        return None
+    audit_mark += len(got.stdout)
+    return [ln for ln in got.stdout.decode(errors="replace").splitlines()
+            if "avc:" in ln]
+
+
+def filter_row(label, ok, detail):
+    """A row that also holds no AVC was logged since the last one."""
+    avcs = new_avcs()
+    row(label, ok and avcs == [],
+        f"{detail}; AVCs: "
+        + ("unreadable" if avcs is None else str(avcs[:3]) if avcs
+           else "none"))
+
+
+def post(path, body):
+    """A POST from the hut's user to the provider: (status, the stub's
+    JSON or {}, stderr)."""
+    got = exec_in(["curl", "-s", "-S", "--max-time", "15", "-w",
+                   "\n%{http_code}", "-H", "Content-Type: text/plain",
+                   "--data-binary", body, f"https://{PROVIDER}{path}"])
+    text, _, code = got.stdout.rpartition("\n")
+    try:
+        answer = json.loads(text) if code == "200" else {}
+    except ValueError:
+        answer = {}
+    return code, answer, got.stderr.strip()
+
+
+def stub_has(nonce):
+    return nonce in STUB_LOG.read_text()
+
+
+def filters_digest():
+    try:
+        return json.loads(STATUS.read_text()).get(REQUEST_FILTERS_DIGEST_KEY)
+    except (OSError, ValueError):
+        return None
+
+
+def host_connects(address):
+    s = socket.socket()
+    s.settimeout(3)
+    try:
+        s.connect(address)
+        return "connected"
+    except OSError as exc:
+        return type(exc).__name__
+    finally:
+        s.close()
+
+
+def filter_rows(secret):
+    """The hut's inspector running the sandboxed filter on the provider's
+    bodies, under its own unit."""
+    say("filter")
+    global audit_mark
+    audit_mark = audit_size()
+    since = int(time.time())
+    entered = hut("enter", HUT, "--", "true")
+    nonce = os.urandom(8).hex()
+    body = f"moatery-rig-body {nonce}"
+    code, got, err = post(f"/control/{nonce}", body)
+    logged = await_(lambda: stub_has(nonce), 5)
+    want = hashlib.sha256(body.encode()).hexdigest()
+    unfiltered = filters_digest()
+    filter_row(
+        "filter: with no filters, a POST reaches the provider with its own "
+        "body, and the stub logs it",
+        entered.returncode == 0 and not (CONFIG / FILTERS.name).exists()
+        and unfiltered == "" and code == "200"
+        and got.get("body_sha256") == want and logged,
+        f"enter rc={entered.returncode}; digest {unfiltered!r}; "
+        f"http={code!r} {err}; sha256 {got.get('body_sha256')} (sent "
+        f"{want}); the stub {'logged' if logged else 'never saw'} it")
+
+    before = invocation(INSPECT_SERVICE)
+    edited = hut("request-filters", HUT,
+                 env={"VISUAL": "", "EDITOR": str(FILTERS_EDITOR)})
+    document = CONFIG / "request-filters.json"
+    text = document.read_text() if document.exists() else None
+    want = inspect_policy_digest(FILTERS.read_text())
+    digest = await_(lambda: filters_digest() == want and want, 40)
+    after = invocation(INSPECT_SERVICE)
+    filter_row(
+        "filter: request-filters, with an $EDITOR, makes the hut filtered "
+        "and restarts the inspector, whose status names the document",
+        edited.returncode == 0 and text == FILTERS.read_text()
+        and after != before and show(INSPECT_SERVICE, "ActiveState")
+        == "active" and digest == want,
+        f"rc={edited.returncode} {edited.stdout.strip()[-200:]} "
+        f"{edited.stderr.strip()[-200:]}; invocation {before[:8]} -> "
+        f"{after[:8]}; digest {filters_digest()} (file {want})")
+
+    nonces = {k: os.urandom(8).hex()
+              for k in ("rewrite", "refuse", "crash", "probe")}
+    rewrite = f"/rewrite/{nonces['rewrite']}"
+    code, got, err = post(rewrite, f"original {nonces['rewrite']}")
+    marker = f"{REWRITTEN} {nonces['rewrite']}"
+    keyed = got.get("authorization") == f"Bearer {secret}"
+    filter_row(
+        "filter: /rewrite: the provider received the filter's body, and "
+        "the broker attached the key",
+        code == "200" and got.get("body_head") == marker
+        and got.get("body_length") == len(marker) and keyed
+        and stub_has(nonces["rewrite"]),
+        f"http={code!r} {err}; head {got.get('body_head')!r}, length "
+        f"{got.get('body_length')}; key "
+        f"{'attached' if keyed else repr(got.get('authorization'))}")
+
+    for kind, status in (("refuse", "403"), ("crash", "502")):
+        code, _, err = post(f"/{kind}/{nonces[kind]}", "x")
+        time.sleep(1)
+        arrived = stub_has(nonces[kind])
+        filter_row(
+            f"filter: /{kind}: {status}, and the provider never saw it",
+            code == status and not arrived,
+            f"http={code!r} {err}; the stub "
+            f"{'logged' if arrived else 'never saw'} it")
+
+    code, got, err = post(f"/probe/{nonces['probe']}", "x")
+    try:
+        seen = json.loads(got.get("body_head", ""))
+    except ValueError:
+        seen = {}
+    # The controls: from the host, as the inspector's user, each of these
+    # is there or works.
+    host = {"marker": MARKER.exists(), "bus": (RUNTIME / "bus").exists(),
+            "connect": host_connects(("127.0.0.1", riglib.PROVIDER_PORT)),
+            "unshare": run(["unshare", "-U", "true"],
+                           check=False).returncode}
+    # bwrap makes the directories down to the filter it binds, so the
+    # home is there holding .local and nothing else. It brings up the
+    # sandbox's own loopback, which refuses the stub's port: the host's
+    # answers it, so the sandbox's 127.0.0.1 is another, and lo its only
+    # interface.
+    filter_row(
+        "filter: /probe: the sandbox has none of the home, no /run/user, "
+        "no bus and no network, and cannot make a user namespace",
+        code == "200" and seen.get("home") == [".local"]
+        and seen.get("marker") is False and seen.get("run_user") is False
+        and seen.get("bus") is False and seen.get("dbus_env") is False
+        and seen.get("ifs") == ["lo"]
+        and seen.get("connect") not in (None, "connected")
+        and seen.get("unshare") not in (None, 0)
+        and host == {"marker": True, "bus": True, "connect": "connected",
+                     "unshare": 0},
+        f"http={code!r} {err}; sandbox {seen or got.get('body_head')}; "
+        f"host {host}")
+
+    journal = run(["journalctl", "--user", "-u", INSPECT_SERVICE,
+                   "--since", f"@{since}", "-o", "cat"],
+                  check=False).stdout.splitlines()
+    refused = [ln for ln in journal if "refused by filter" in ln
+               and "filter_reason=rig-refusal" in ln]
+    # Through the wrapper the inspector sees bwrap's exit, which is 128
+    # and the filter's signal.
+    crashed = [ln for ln in journal if "filter failed" in ln
+               and f"exit={128 + signal.SIGSEGV}" in ln]
+    recs = {k: record_for(f"/{k}/{nonces[k]}") or {}
+            for k in ("rewrite", "refuse")}
+    filter_row(
+        "filter: the record says rewrote and refused, and the journal "
+        "names the refusal's reason and the crash",
+        recs["rewrite"].get("filter") == "rewrote"
+        and recs["refuse"].get("filter") == "refused" and refused
+        and crashed,
+        f"record: rewrite {recs['rewrite'].get('filter')!r}, refuse "
+        f"{recs['refuse'].get('filter')!r}; journal: {refused[:1]} "
+        f"{crashed[:1]}")
+
+
 def probe(args, tag, secret):
     chain_rows()
+    pythonpath = ":".join([str(UNFILTERED), *PROGRAM_ENV.values()])
     write_drop_in("inspect",
                   f"[Service]\nEnvironment=SSL_CERT_FILE={riglib.STUB_CERT}\n"
-                  + ("ExecReload=\n" if args.without_reload else ""))
+                  + ("ExecReload=\n" if args.without_reload else "")
+                  + (f"Environment=PYTHONPATH={pythonpath}\n"
+                     if args.unfiltered else ""))
     if args.without_reload:
         say("  the inspector's unit has no ExecReload=, as asked")
+    if args.unfiltered:
+        say("  the inspector finds no request filter, as asked")
     pythonpath = ":".join([str(SLOW), *PROGRAM_ENV.values()])
     write_drop_in("broker",
                   f"[Service]\nEnvironment=SSL_CERT_FILE={riglib.STUB_CERT}\n"
@@ -2822,7 +3112,7 @@ def probe(args, tag, secret):
     drop_rows()
     request_rows()
     broker_rows(secret)
-    rotate_rows()
+    secret = rotate_rows()
     counter_rows()
     loop_rows()
     record_rows(args.without_reopen)
@@ -2832,6 +3122,7 @@ def probe(args, tag, secret):
     outside_rows()
     like_rows(tag)
     uninspected_rows(tag, args.uninspected_ruled)
+    filter_rows(secret)
     rm_rows(tag, args.rm_unguarded)
 
 
@@ -2857,6 +3148,10 @@ def clear_leftovers():
     for path in (MARKER, HOME / WRITTEN, SEALED, DESCRIBED):
         path.unlink(missing_ok=True)
     shutil.rmtree(SLOW, ignore_errors=True)
+    for path in (FILTER_DIR, UNFILTERED):
+        shutil.rmtree(path, ignore_errors=True)
+    for path in (FILTERS, FILTERS_EDITOR):
+        path.unlink(missing_ok=True)
     for path in (NFT_FAILS, NFT_LOADS_NOTHING, CP_OUT, CP_UNGUARDED,
                  RM_UNGUARDED, UNHARDENED, CP_STEERED):
         shutil.rmtree(path, ignore_errors=True)
@@ -2889,6 +3184,21 @@ def material():
                              (BROKERED_EDITOR, POLICY)):
         editor.write_text(f"#!/bin/sh\ncp '{document}' \"$1\"\n")
         editor.chmod(0o755)
+    wrapper, swapped = re.subn(r"(?m)^FILTER=.*$", f"FILTER={DISPATCH}",
+                               EXAMPLE_WRAPPER.read_text())
+    if swapped != 1:
+        sys.exit(f"{EXAMPLE_WRAPPER}: no one FILTER= line to point at the "
+                 "rig's filter")
+    FILTER_DIR.mkdir(parents=True, exist_ok=True)
+    for path, text in ((WRAPPER, wrapper), (DISPATCH, DISPATCH_SCRIPT)):
+        path.write_text(text)
+        path.chmod(0o755)
+    FILTERS.write_text(json.dumps({"filters": [
+        {"host": PROVIDER, "run": str(WRAPPER)}]}) + "\n")
+    FILTERS_EDITOR.write_text(f"#!/bin/sh\ncp '{FILTERS}' \"$1\"\n")
+    FILTERS_EDITOR.chmod(0o755)
+    UNFILTERED.mkdir(parents=True, exist_ok=True)
+    (UNFILTERED / "sitecustomize.py").write_text(UNFILTERED_SCRIPT)
     SLOW.mkdir(parents=True, exist_ok=True)
     (SLOW / "sitecustomize.py").write_text(SITECUSTOMIZE)
     CP_UNGUARDED.mkdir(parents=True, exist_ok=True)
@@ -2926,7 +3236,8 @@ def teardown(keep):
                              (OPEN, OPEN_CONFIG)):
             if (config / "hut.json").exists():
                 hut("rm", name, "--home")
-        for path in (PROJECT, READONLY, SLOW, TWIN_LOGS, OPEN_LOGS,
+        for path in (PROJECT, READONLY, SLOW, FILTER_DIR, UNFILTERED,
+                     TWIN_LOGS, OPEN_LOGS,
                      NFT_FAILS, NFT_LOADS_NOTHING, CP_OUT, CP_UNGUARDED,
                      RM_UNGUARDED, UNHARDENED, CP_STEERED):
             shutil.rmtree(path, ignore_errors=True)
@@ -2996,6 +3307,10 @@ def main():
                     help="write the listeners' and the broker's units with "
                          "none of their hardening; hardening's rows must go "
                          "red")
+    ap.add_argument("--unfiltered", action="store_true",
+                    help="give the inspector a sitecustomize that finds "
+                         "no request filter for any host; filter's rows "
+                         "from /rewrite on must go red")
     ap.add_argument("--restarts", type=int, default=3, metavar="N",
                     help="workload restarts, then pod restarts (default 3)")
     args = ap.parse_args()
@@ -3095,6 +3410,10 @@ def main():
     if args.unhardened:
         expected.append(
             "--unhardened: hardening's four rows are expected red")
+    if args.unfiltered:
+        expected.append(
+            "--unfiltered: filter's /rewrite, /refuse, /crash, /probe and "
+            "record rows are expected red")
     if args.without_autostart:
         expected.append(
             "--without-autostart: create's ls, the autostart rows and "

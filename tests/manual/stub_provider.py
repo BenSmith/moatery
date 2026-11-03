@@ -17,7 +17,12 @@ the leg that carries the real credential is the one this exercises.
 `/slow/N/...`, with the key, is a download that takes a while: N chunks of
 SLOW_CHUNK bytes, chunk i all byte i % 256, SLOW_PAUSE seconds apart, so
 something can happen while it runs.
+
+Every reply's JSON carries the request body's `body_length`,
+`body_sha256` and its first 256 bytes as `body_head`, so a row can see
+what arrived in place of what was sent.
 """
+import hashlib
 import http.server
 import json
 import os
@@ -42,16 +47,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print(f"stub: {self.address_string()} {fmt % args}", flush=True)
 
+    def _body(self):
+        if "chunked" in self.headers.get("transfer-encoding", "").lower():
+            chunks = []
+            while True:
+                size = int(self.rfile.readline().split(b";")[0], 16)
+                if size == 0:
+                    while self.rfile.readline() not in (b"\r\n", b""):
+                        pass
+                    return b"".join(chunks)
+                chunks.append(self.rfile.read(size))
+                self.rfile.readline()
+        return self.rfile.read(int(self.headers.get("content-length", 0)))
+
     def _reply(self):
         got = self.headers.get("authorization", "")
+        sent = self._body()
         status = 200 if got == f"Bearer {SECRET}" else 401
         parts = self.path.split("/")
         if status == 200 and parts[1:2] == ["slow"] and parts[2:3] \
                 and parts[2].isdigit():
             self._slow(int(parts[2]))
             return
-        body = json.dumps({"path": self.path, "authorization": got,
-                           "status": status}).encode()
+        body = json.dumps({
+            "path": self.path, "authorization": got, "status": status,
+            "body_length": len(sent),
+            "body_sha256": hashlib.sha256(sent).hexdigest(),
+            "body_head": sent[:256].decode("utf-8", "replace")}).encode()
         self.send_response(status)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))

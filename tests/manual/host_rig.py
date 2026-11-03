@@ -67,6 +67,16 @@ THE ROWS
   no key    from the host, the placeholder alone gets 401 from the origin;
             the real key gets 200. The second half is the control that the
             stub distinguishes at all.
+  filter    the inspector restarted with examples/systemd's
+            moat-inspect.service lines in a drop-in and a request-filter
+            document naming the example's sandboxed wrapper, FILTER= a
+            dispatch script in the rig's directory: its status names the
+            document. A POST to /rewrite reaches the provider over the
+            TLS plane as the filter's body, with the real key; one to
+            /refuse gets 403, never arrives, and the journal names the
+            filter's reason. The premise: a second drop-in putting
+            RestrictNamespaces=yes back makes bwrap exit 1, and the
+            request gets 502 and never arrives.
 
 `--without-rules` skips loading the netns rules and changes nothing else.
 The `premise`, `first`, `dns`, `silent`, `quic`, `h2`, `request`, `neighbour`,
@@ -104,6 +114,8 @@ recipe here is what worked:
 import argparse
 import json
 import os
+import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -119,9 +131,11 @@ from riglib import (  # noqa
 )
 from moatery.egress_ca import ca_cert_path  # noqa
 from moatery.egress_record import (  # noqa
-    DROP_FOREIGN_CALLER, DROP_NOT_ALLOWLISTED, DROP_UNREADABLE_REQUEST,
-    NOTE_H2_PREFACE,
+    DROP_FILTER_FAILED, DROP_FILTER_REFUSED, DROP_FOREIGN_CALLER,
+    DROP_NOT_ALLOWLISTED, DROP_UNREADABLE_REQUEST, NOTE_H2_PREFACE,
 )
+from moatery.inspect_document import inspect_policy_digest  # noqa
+from moatery.request_filter import REQUEST_FILTERS_DIGEST_KEY  # noqa
 
 BROKER_ADDR = "127.129.0.1"
 BROKER_PORT = 8081
@@ -140,6 +154,20 @@ RESOLVE_STATUS = RIG / "resolve-status.json"
 RECORD = RIG / "egress.jsonl"
 BUNDLE = RIG / "bundle.pem"
 CRED = RIG / f"{CREDENTIAL}.cred"
+STUB_LOG = RIG / "stub.log"
+AUDIT_LOG = "/var/log/audit/audit.log"
+# The request filter's: the example wrapper with FILTER= naming the
+# dispatch script beside it, and the document naming the wrapper, in the
+# rig's directory, which the container has no path to.
+FILTER_DIR = RIG / "host-filter"
+WRAPPER = FILTER_DIR / "sandboxed"
+DISPATCH = FILTER_DIR / "dispatch"
+FILTERS = RIG / "host-request-filters.json"
+EXAMPLES = riglib.CHECKOUT / "examples"
+EXAMPLE_WRAPPER = EXAMPLES / "request-filter" / "sandboxed"
+EXAMPLE_UNIT = EXAMPLES / "systemd" / "moat-inspect.service"
+INSPECT_DROP_INS = UNITS / f"{UNIT}-inspect.service.d"
+REWRITTEN = "moatery-rig-rewritten"
 
 
 # --- the host side: units ----------------------------------------------------
@@ -150,6 +178,18 @@ def seal_credential(secret):
     run(["systemd-creds", "--user", "encrypt", f"--name={CREDENTIAL}",
          "-", str(CRED)], input=secret + "\n")
     CRED.chmod(0o600)
+
+
+def broker_endpoint(over_tcp):
+    return (f"{BROKER_ADDR}:{BROKER_PORT}" if over_tcp
+            else f"unix:%t/{UNIT}/broker.sock")
+
+
+def inspect_command(endpoint):
+    return (f"{sys.executable} {LIBEXEC / 'moat-inspect'}"
+            f" --name {NAME} --policy {POLICY} --state-dir {STATE}"
+            f" --status {STATUS} --record {RECORD}"
+            f" --broker {endpoint}")
 
 
 def write_units(over_tcp):
@@ -163,8 +203,7 @@ def write_units(over_tcp):
     py = sys.executable
     path = "".join(f"Environment={k}={v}\n" for k, v in PROGRAM_ENV.items())
     env = path + f"Environment=SSL_CERT_FILE={STUB_CERT}\n"
-    endpoint = (f"{BROKER_ADDR}:{BROKER_PORT}" if over_tcp
-                else f"unix:%t/{UNIT}/broker.sock")
+    endpoint = broker_endpoint(over_tcp)
     (UNITS / f"{UNIT}-broker.service").write_text(
         "# written by tests/manual/host_rig.py — removed at teardown\n"
         "[Service]\n"
@@ -187,10 +226,7 @@ def write_units(over_tcp):
     (UNITS / f"{UNIT}-inspect.service").write_text(
         "# written by tests/manual/host_rig.py — removed at teardown\n"
         "[Service]\n"
-        f"ExecStart={py} {LIBEXEC / 'moat-inspect'}"
-        f" --name {NAME} --policy {POLICY} --state-dir {STATE}"
-        f" --status {STATUS} --record {RECORD}"
-        f" --broker {endpoint}\n"
+        f"ExecStart={inspect_command(endpoint)}\n"
         + env)
     (UNITS / f"{UNIT}-resolve.socket").write_text(
         "# written by tests/manual/host_rig.py — removed at teardown\n"
@@ -257,6 +293,9 @@ def stop_units():
         run(["systemctl", "--user", "stop", f"{UNIT}-{unit}"], check=False)
     for unit in UNIT_FILES:
         (UNITS / f"{UNIT}-{unit}").unlink(missing_ok=True)
+    shutil.rmtree(INSPECT_DROP_INS, ignore_errors=True)
+    shutil.rmtree(FILTER_DIR, ignore_errors=True)
+    FILTERS.unlink(missing_ok=True)
     run(["systemctl", "--user", "daemon-reload"], check=False)
     run(["systemctl", "--user", "reset-failed"], check=False)
 
@@ -613,6 +652,247 @@ def probe(pid, dns, secret, over_tcp):
             prefaces == 1, f"notes={status.get('notes')}")
 
 
+# --- the request filter ------------------------------------------------------
+
+DISPATCH_SCRIPT = f"""\
+#!/usr/bin/python3 -I
+# written by tests/manual/host_rig.py: the request filter, by MOAT_PATH.
+import os, sys
+
+REWRITTEN = {REWRITTEN!r}
+""" + """
+kind, nonce = (os.environ.get("MOAT_PATH", "").split("/")[1:3]
+               + ["", ""])[:2]
+body = sys.stdin.buffer.read()
+if kind == "rewrite":
+    sys.stdout.write(f"{REWRITTEN} {nonce}")
+elif kind == "refuse":
+    sys.stderr.write("rig-refusal\\n")
+    sys.exit(77)
+else:
+    sys.stdout.buffer.write(body)
+"""
+
+# The example unit's keys the rig's unit holds its own values for.
+OWN_KEYS = ("ExecStart=", "ExecReload=", "StateDirectory=",
+            "LogsDirectory=")
+
+
+def example_lines():
+    """The example inspector unit's [Service] lines, but for its command
+    and directories."""
+    lines, section, continued = [], None, False
+    for line in EXAMPLE_UNIT.read_text().splitlines():
+        if continued:
+            continued = line.endswith("\\")
+            continue
+        if line.startswith("["):
+            section = line
+        elif section == "[Service]" and line and not line.startswith("#"):
+            if line.startswith(OWN_KEYS):
+                continued = line.endswith("\\")
+            else:
+                lines.append(line)
+    return "".join(f"{line}\n" for line in lines)
+
+
+def filter_material():
+    wrapper, swapped = re.subn(r"(?m)^FILTER=.*$", f"FILTER={DISPATCH}",
+                               EXAMPLE_WRAPPER.read_text())
+    if swapped != 1:
+        sys.exit(f"{EXAMPLE_WRAPPER}: no one FILTER= line to point at the "
+                 "rig's filter")
+    FILTER_DIR.mkdir(parents=True, exist_ok=True)
+    for path, text in ((WRAPPER, wrapper), (DISPATCH, DISPATCH_SCRIPT)):
+        path.write_text(text)
+        path.chmod(0o755)
+    FILTERS.write_text(json.dumps({"filters": [
+        {"host": PROVIDER, "run": str(WRAPPER)}]}) + "\n")
+
+
+def inspect_drop_in(name, text):
+    INSPECT_DROP_INS.mkdir(parents=True, exist_ok=True)
+    (INSPECT_DROP_INS / f"{name}.conf").write_text(
+        "# written by tests/manual/host_rig.py — removed at teardown\n"
+        "[Service]\n" + text)
+    run(["systemctl", "--user", "daemon-reload"])
+
+
+def show(key):
+    return run(["systemctl", "--user", "show", "-p", key, "--value",
+                f"{UNIT}-inspect.service"], check=False).stdout.strip()
+
+
+def await_(probe, seconds):
+    """probe()'s first truthy value within `seconds`, or its last."""
+    deadline = time.monotonic() + seconds
+    while True:
+        got = probe()
+        if got or time.monotonic() > deadline:
+            return got
+        time.sleep(0.2)
+
+
+def filters_digest():
+    try:
+        return json.loads(STATUS.read_text()).get(REQUEST_FILTERS_DIGEST_KEY)
+    except (OSError, ValueError):
+        return None
+
+
+def restart_inspector():
+    """Restarted under its drop-ins: (its ActiveState and
+    RestrictNamespaces=, and whether its status names the document)."""
+    STATUS.unlink(missing_ok=True)
+    run(["systemctl", "--user", "restart", f"{UNIT}-inspect.service"],
+        check=False)
+    want = inspect_policy_digest(FILTERS.read_text())
+    named = await_(lambda: filters_digest() == want, 40)
+    return show("ActiveState"), show("RestrictNamespaces"), named
+
+
+def audit_size():
+    got = riglib.sudo(["stat", "-c", "%s", AUDIT_LOG], check=False)
+    return int(got.stdout) if got.returncode == 0 else None
+
+
+audit_mark = None
+
+
+def new_avcs():
+    """The audit log's AVC lines since the last call, or None if it
+    cannot be read."""
+    global audit_mark
+    if audit_mark is None:
+        return None
+    if (audit_size() or 0) < audit_mark:
+        audit_mark = 0
+    got = riglib.sudo(["tail", "-c", f"+{audit_mark + 1}", AUDIT_LOG],
+                      check=False, text=False)
+    if got.returncode:
+        return None
+    audit_mark += len(got.stdout)
+    return [ln for ln in got.stdout.decode(errors="replace").splitlines()
+            if "avc:" in ln]
+
+
+def filter_row(label, ok, detail):
+    """A row that also holds no AVC was logged since the last one."""
+    avcs = new_avcs()
+    row(label, ok and avcs == [],
+        f"{detail}; AVCs: "
+        + ("unreadable" if avcs is None else str(avcs[:3]) if avcs
+           else "none"))
+
+
+def post(path, body):
+    """A POST from inside to the provider, with the placeholder: (http
+    status, the stub's JSON or {}, curl's stderr)."""
+    _, code, text, err = curl_in(
+        f"https://{PROVIDER}{path}", "-H",
+        f"Authorization: Bearer {PLACEHOLDER}", "-H",
+        "Content-Type: text/plain", "--data-binary", body)
+    try:
+        answer = json.loads(text) if code == "200" else {}
+    except ValueError:
+        answer = {}
+    return code, answer, err
+
+
+def stub_has(nonce):
+    return nonce in STUB_LOG.read_text()
+
+
+def record_for(path):
+    return next((r for r in records() if r.get("path") == path), {})
+
+
+def inspect_journal(since):
+    return run(["journalctl", "--user", "-u", f"{UNIT}-inspect.service",
+                "--since", f"@{since}", "-o", "cat", "--no-pager"],
+               check=False).stdout.splitlines()
+
+
+def filter_rows(secret, over_tcp):
+    """The inspector under the example unit's lines, running the example's
+    sandboxed wrapper on the provider's bodies over the TLS plane; then
+    the premise, that those lines must leave namespaces unrestricted."""
+    say("filter")
+    global audit_mark
+    audit_mark = audit_size()
+    filter_material()
+    command = (f"{inspect_command(broker_endpoint(over_tcp))}"
+               f" --request-filters {FILTERS}")
+    inspect_drop_in("filter", f"ExecStart=\nExecStart={command}\n"
+                    + example_lines())
+    state, restricted, named = restart_inspector()
+    loaded = show("SystemCallFilter")
+    filter_row(
+        "filter: the inspector runs under the example unit's lines, "
+        "namespaces unrestricted, and its status names the document",
+        state == "active" and restricted == "no" and named
+        and "mount" in loaded and show("NoNewPrivileges") == "yes",
+        f"{state}; RestrictNamespaces={restricted}; status names the "
+        f"document: {named}; mount in SystemCallFilter: "
+        f"{'mount' in loaded}")
+
+    since = int(time.time())
+    nonces = {k: os.urandom(8).hex() for k in ("rewrite", "refuse", "bwrap")}
+    code, got, err = post(f"/rewrite/{nonces['rewrite']}",
+                          f"original {nonces['rewrite']}")
+    marker = f"{REWRITTEN} {nonces['rewrite']}"
+    keyed = got.get("authorization") == f"Bearer {secret}"
+    rec = record_for(f"/rewrite/{nonces['rewrite']}")
+    filter_row(
+        "filter: /rewrite: the provider received the filter's body, and "
+        "the broker attached the key",
+        code == "200" and got.get("body_head") == marker
+        and got.get("body_length") == len(marker) and keyed
+        and stub_has(nonces["rewrite"]) and rec.get("filter") == "rewrote",
+        f"http={code!r} {err}; head {got.get('body_head')!r}, length "
+        f"{got.get('body_length')}; key "
+        f"{'attached' if keyed else repr(got.get('authorization'))}; "
+        f"record filter {rec.get('filter')!r}")
+
+    code, _, err = post(f"/refuse/{nonces['refuse']}", "x")
+    time.sleep(1)
+    arrived = stub_has(nonces["refuse"])
+    rec = record_for(f"/refuse/{nonces['refuse']}")
+    reasons = [ln for ln in inspect_journal(since)
+               if DROP_FILTER_REFUSED in ln
+               and "filter_reason=rig-refusal" in ln]
+    filter_row(
+        "filter: /refuse: 403, the provider never saw it, and the record "
+        "and the journal name the filter's reason",
+        code == "403" and not arrived and rec.get("filter") == "refused"
+        and reasons != [],
+        f"http={code!r} {err}; the stub "
+        f"{'logged' if arrived else 'never saw'} it; record filter "
+        f"{rec.get('filter')!r}; journal {reasons[:1]}")
+
+    # The premise: the example's lines leave namespaces unrestricted
+    # because bwrap needs them. Put the restriction back and the filter
+    # cannot start, and the request is refused, not sent unfiltered.
+    inspect_drop_in("restrict", "RestrictNamespaces=yes\n")
+    state, restricted, named = restart_inspector()
+    since = int(time.time())
+    code, _, err = post(f"/rewrite/{nonces['bwrap']}", "x")
+    time.sleep(1)
+    arrived = stub_has(nonces["bwrap"])
+    rec = record_for(f"/rewrite/{nonces['bwrap']}")
+    failed = [ln for ln in inspect_journal(since)
+              if DROP_FILTER_FAILED in ln and " exit=1 " in ln]
+    filter_row(
+        "filter: premise: with RestrictNamespaces=yes put back, the wrapped "
+        "filter fails, and the request gets 502 and never arrives",
+        state == "active" and restricted == "yes" and named
+        and code == "502" and not arrived
+        and rec.get("reason") == DROP_FILTER_FAILED and failed != [],
+        f"{state}; RestrictNamespaces={restricted}; http={code!r} {err}; "
+        f"the stub {'logged' if arrived else 'never saw'} it; record "
+        f"reason {rec.get('reason')!r}; journal {failed[:1]}")
+
+
 # --- teardown ----------------------------------------------------------------
 
 def teardown(keep):
@@ -693,6 +973,7 @@ def main():
             load_rules(pid, not args.without_neighbour_discovery,
                        not args.without_dns_redirect)
         probe(pid, dns, secret, args.broker_over_tcp)
+        filter_rows(secret, args.broker_over_tcp)
     finally:
         teardown(args.keep)
 

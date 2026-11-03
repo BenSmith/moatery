@@ -113,6 +113,28 @@ An unlisted host gets the inspector's own 403 and a record saying
 and the real key 200. The counters name every caller and dropped none as
 foreign.
 
+The request filter, last: the inspector is restarted with a drop-in
+holding `examples/systemd/moat-inspect.service`'s `[Service]` lines (not
+its command or directories) and `--request-filters`, naming the
+example's `sandboxed` wrapper with `FILTER=` a dispatch script in the
+rig's directory (`/rewrite/` writes a marker and the nonce, `/refuse/`
+exits 77 `rig-refusal`). Rows: the unit is active with
+`RestrictNamespaces=no` and `@mount` loaded, and the status names the
+document; a POST to `/rewrite` reaches the provider over the TLS plane as
+the filter's body, with the real key, and the record says `rewrote`;
+`/refuse` gets 403, the stub never logs its nonce, the record says
+`refused` and the journal `filter_reason=rig-refusal`. The premise: a
+second drop-in putting `RestrictNamespaces=yes` back makes bwrap exit 1,
+and the request gets 502, never arrives, and is recorded and journalled
+`filter failed`. Each filter row also holds that the audit log gained
+no AVC in its window.
+
+**2026-11-03, on the proving host (Fedora 44, enforcing), 38/38.** The
+example unit's lines run the wrapped filter on the TLS plane with no
+AVC. With `RestrictNamespaces=yes` the filter fails closed: bwrap exits
+1 and the journal says `exit=1`, so the restriction has to stay out of
+the unit while the filter runs under bwrap.
+
 ## netns_rig.py — the listeners in the container's netns
 
 `docs/DESIGN.md`, "Netns": host_rig's container under plain pasta, with
@@ -279,9 +301,10 @@ another port at the answered address times out. The counters.
 ## hut_rig.py — a moathut hut, through its command line
 
 `docs/MOATHUT.md`: `moathut credential add`, `create`, `enter`, `cp`,
-`log`, `allow`, `network-policy`, `stop` and `rm`, the hut's units run by the
-user's manager and quadlet, the namespace its netns unit holds, the netns
-placement's rules and listeners in it, and the hut's broker.
+`log`, `allow`, `network-policy`, `request-filters`, `stop` and `rm`,
+the hut's units run by the user's manager and quadlet, the namespace its
+netns unit holds, the netns placement's rules and listeners in it, the
+hut's broker and its request filter.
 The tool is the checkout's `bin/moathut`, or with
 `MOATERY_LIBEXEC=/usr/libexec/moatery` the installed one.
 
@@ -298,13 +321,15 @@ python3 tests/manual/hut_rig.py --without-autostart  # must go red
 python3 tests/manual/hut_rig.py --uninspected-ruled  # must go red
 python3 tests/manual/hut_rig.py --cp-unguarded      # must go red
 python3 tests/manual/hut_rig.py --rm-unguarded      # must go red
+python3 tests/manual/hut_rig.py --unfiltered        # must go red
 python3 tests/manual/hut_rig.py --restarts 10       # more restarts of each
 ```
 
 The fixture is riglib's, and eight drop-ins beside the units `create`
 writes, removed before `rm`: the inspector and the broker trust the
 stub's certificate, and under `--without-reload` the inspector's unit
-has no `ExecReload=`; the broker's interpreter sleeps 3 s before it runs,
+has no `ExecReload=`, and under `--unfiltered` its interpreter finds no
+request filter for any host; the broker's interpreter sleeps 3 s before it runs,
 so its start has a window, and under `--broker-not-ready` its unit is
 Type=simple; the namespace's unit finds an nft that fails ahead of the
 system's, for two rows, or one that loads nothing, under
@@ -417,3 +442,41 @@ its workload deactivating, waits and finds no hut, and after it no unit
 of the hut runs, no file of it is left, and its namespace is neither
 held nor served by a pasta. A holder killed leaves the namespace held,
 and `rm --home` lets it go.
+
+The request filter: the rig writes the example's `sandboxed` wrapper
+with its `FILTER=` naming a dispatch script beside it, in the rig's
+directory, which no hut can write, and a document naming the wrapper
+for the provider. The script answers by `MOAT_PATH`: `/rewrite/` with a
+marker and the nonce, `/refuse/` with exit 77 and `rig-refusal`,
+`/crash/` with SEGV, `/probe/` with its sandbox's findings as JSON, and
+anything else with the body. The stub echoes each body's length,
+SHA-256 and first 256 bytes. Rows: with no filters, a POST's body
+reaches the provider whole and the stub logs it, which is the control
+for the rows that it does not; `request-filters` with an `$EDITOR` makes
+the hut filtered and restarts the inspector, whose status names the
+document; `/rewrite`'s body arrives as the filter wrote it, with the key
+the broker attached; `/refuse` is 403 and `/crash` 502, and the stub
+never sees either; `/probe`, run by the real inspector unit through the
+wrapper, finds nothing of the home but the path down to the filter, no
+`/run/user`, no bus, a connect to the stub failing and `unshare -U`
+refused, each of which the rig shows working from the host; the record
+says `rewrote` and `refused`, and the journal names `refused by filter`
+with `filter_reason=rig-refusal`, and `filter failed` with `exit=139`,
+bwrap's 128 and the signal. Each row also holds that the audit log
+gained no AVC in its window.
+
+**2026-11-03, on the proving host (Fedora 44, enforcing), 163/164.**
+bwrap runs under the inspector's own unit: `@system-service` holds
+`unshare`, `clone3` and `pidfd_open`, and the listeners' `@mount` holds
+`mount` and `pivot_root`. Every filter row is green apart from the
+request-filters row's AVC check. That AVC is
+`nnp_transition` from `unconfined_t` to `container_runtime_t`, logged by
+a python3 exec of podman under a listener unit's `NoNewPrivileges=yes`.
+The kernel keeps the old domain, so podman runs as `unconfined_t`. It
+appears at every listener start in the run (62 in the first run), so it
+comes from the listener hardening, not from the filter. Three rows were
+re-derived from what the host showed. bwrap makes the directories
+down to the filter it binds, so `/home` exists holding only that path.
+bwrap brings up the sandbox's own `lo`, so the stub's port is refused,
+not unreachable. Through the wrapper a SEGV shows as `exit=139`, not
+`signal=SEGV`.
