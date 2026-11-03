@@ -2887,13 +2887,32 @@ def new_avcs():
             if "avc:" in ln]
 
 
+# A listener unit runs under NoNewPrivileges=yes and execs podman to
+# find the pod, so the automatic transition to container_runtime_t is
+# denied and podman keeps unconfined_t. Accepted: tests/manual/README.md,
+# "The listeners' nnp_transition denial".
+ACCEPTED_AVC = ("{ nnp_transition }", 'comm="python3"',
+                "scontext=unconfined_u:unconfined_r:unconfined_t:",
+                "tcontext=unconfined_u:unconfined_r:container_runtime_t:")
+
+
+def accepted_avc(line):
+    return all(part in line for part in ACCEPTED_AVC)
+
+
 def filter_row(label, ok, detail):
-    """A row that also holds no AVC was logged since the last one."""
+    """A row that also holds no AVC was logged since the last one, apart
+    from the listeners' accepted one."""
     avcs = new_avcs()
+    accepted = 0
+    if avcs:
+        accepted = sum(map(accepted_avc, avcs))
+        avcs = [ln for ln in avcs if not accepted_avc(ln)]
     row(label, ok and avcs == [],
         f"{detail}; AVCs: "
         + ("unreadable" if avcs is None else str(avcs[:3]) if avcs
-           else "none"))
+           else "none")
+        + (f" ({accepted} accepted nnp_transition)" if accepted else ""))
 
 
 def post(path, body):

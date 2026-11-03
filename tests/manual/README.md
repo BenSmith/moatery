@@ -469,14 +469,32 @@ gained no AVC in its window.
 bwrap runs under the inspector's own unit: `@system-service` holds
 `unshare`, `clone3` and `pidfd_open`, and the listeners' `@mount` holds
 `mount` and `pivot_root`. Every filter row is green apart from the
-request-filters row's AVC check. That AVC is
-`nnp_transition` from `unconfined_t` to `container_runtime_t`, logged by
-a python3 exec of podman under a listener unit's `NoNewPrivileges=yes`.
-The kernel keeps the old domain, so podman runs as `unconfined_t`. It
-appears at every listener start in the run (62 in the first run), so it
-comes from the listener hardening, not from the filter. Three rows were
-re-derived from what the host showed. bwrap makes the directories
-down to the filter it binds, so `/home` exists holding only that path.
+request-filters row's AVC check, for the listeners' `nnp_transition`
+denial (below); the rows now accept that one denial and fail on any
+other. Three rows were re-derived from what the host showed. bwrap
+makes the directories down to the filter it binds, so `/home` exists
+holding only that path.
 bwrap brings up the sandbox's own `lo`, so the stub's port is refused,
 not unreachable. Through the wrapper a SEGV shows as `exit=139`, not
 `signal=SEGV`.
+
+**The listeners' `nnp_transition` denial, accepted (2026-11-03).** Every
+listener start logs `avc: denied { nnp_transition }` for `comm="python3"`
+from `unconfined_t` to `container_runtime_t`. The listener units run
+under `NoNewPrivileges=yes` (the listener hardening), and the listener
+execs podman to find the pod. Executing podman normally moves it to
+`container_runtime_t`; with no new privileges set, SELinux allows that
+only where the policy grants `nnp_transition`, and Fedora's container
+policy does not grant it from `unconfined_t`. For an automatic
+transition the kernel then keeps the old domain, so podman runs as
+`unconfined_t` and works; nothing fails. On the proving host it has
+been logged at every hut listener start since 2026-10-24, unseen
+because no hut_rig row checked the audit log until the filter rows.
+It is not addressed: both domains are unconfined, so the transition is
+no boundary and nothing is gained by it, and allowing it would mean
+moatery shipping and installing an SELinux policy module, root on every
+host, for a rule that would also cover every other `unconfined_t`
+process under no new privileges. Removing `NoNewPrivileges=yes` would
+give up the hardening for a log line. The filter rows match this
+denial exactly (permission, comm and both contexts) and count it in
+their detail; any other AVC still fails the row.
