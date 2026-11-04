@@ -267,7 +267,12 @@ THE ROWS
             make a user namespace, each of which works from the host.
             The record says rewrote and refused, and the journal names
             the refusal's reason and the crash. No row's window logged
-            an AVC.
+            an AVC. Then a `*` filter, and a network policy splicing
+            localhost: both load, and the status gives the filter
+            spliced [localhost]; the provider's POST reaches the filter
+            and the stub; a POST with localhost as its SNI, sent where
+            the provider's goes, reaches the stub with no key, is
+            recorded as a splice, and never reaches the filter.
   rm        credential rm is refused while the hut names it; no unit, pod
             or container is left, nor the broker's socket; the home and the
             record stay, and create, with a policy naming no credential,
@@ -560,6 +565,13 @@ FILTER_LOG = LOGGED_DIR / "log"
 LOGGED_FILTERS = LOGGED_DIR / "request-filters.json"
 LOGGED_EDITOR = LOGGED_DIR / "editor"
 EXAMPLE_LOGGED = CHECKOUT / "examples" / "request-filter" / "logged"
+# The star rows': the logged wrapper under `*`, then a policy splicing a
+# name the host resolves to the stub without a hosts line of the rig's.
+SPLICED = "localhost"
+STAR_FILTERS = LOGGED_DIR / "star-filters.json"
+STAR_FILTERS_EDITOR = LOGGED_DIR / "star-filters-editor"
+STAR_POLICY = LOGGED_DIR / "star-policy.json"
+STAR_POLICY_EDITOR = LOGGED_DIR / "star-policy-editor"
 EXAMPLE_EXCERPT = CHECKOUT / "examples" / "request-filter" / "excerpt"
 REWRITTEN = "moatery-rig-rewritten"
 AUDIT_LOG = "/var/log/audit/audit.log"
@@ -3137,6 +3149,86 @@ def logged_rows():
         code == "502" and not arrived,
         f"http={code!r} {err}; the stub "
         f"{'logged' if arrived else 'never saw'} it")
+    star_rows()
+
+
+def excerpts():
+    log = FILTER_LOG / "excerpts"
+    return log.read_text() if log.exists() else ""
+
+
+def star_rows():
+    """`*` beside a splice: the filter runs on every host the inspector
+    reads, and the spliced one, never decrypted, reaches the stub with
+    nothing run on it. The policy is edited after the filters, so the
+    reload that leaves a host unfiltered is the one `network-policy`
+    checks and the inspector enforces."""
+    want_filters = inspect_policy_digest(STAR_FILTERS.read_text())
+    want_policy = inspect_policy_digest(STAR_POLICY.read_text())
+    edited = hut("request-filters", HUT,
+                 env={"VISUAL": "", "EDITOR": str(STAR_FILTERS_EDITOR)})
+    filters_in = await_(lambda: filters_digest() == want_filters, 40)
+    spliced = hut("network-policy", HUT,
+                  env={"VISUAL": "", "EDITOR": str(STAR_POLICY_EDITOR)})
+    want_lists = [{"host": "*", "run": str(LOGGED), "spliced": [SPLICED]}]
+
+    def loaded():
+        try:
+            status = json.loads(STATUS.read_text())
+        except (OSError, ValueError):
+            return None
+        if (status.get(INSPECT_DIGEST_KEY) == want_policy
+                and status.get(REQUEST_FILTERS_DIGEST_KEY) == want_filters):
+            return status
+        return None
+    status = await_(loaded, 40) or {}
+    lists = status.get("lists", {}).get("request_filters")
+    filter_row(
+        "filter: star: a `*` filter, then a policy splicing "
+        f"{SPLICED}, both load, and the status names the splice the "
+        "filter leaves out",
+        edited.returncode == 0 and bool(filters_in)
+        and spliced.returncode == 0 and lists == want_lists,
+        f"request-filters rc={edited.returncode} "
+        f"{edited.stderr.strip()[-200:]}; network-policy "
+        f"rc={spliced.returncode} {spliced.stderr.strip()[-200:]}; "
+        f"status digests {status.get(INSPECT_DIGEST_KEY)} / "
+        f"{status.get(REQUEST_FILTERS_DIGEST_KEY)} (files {want_policy} / "
+        f"{want_filters}); request_filters {lists}")
+
+    nonce = os.urandom(8).hex()
+    code, got, err = post(f"/star/{nonce}", f"moatery-rig-star {nonce}")
+    logged = await_(lambda: nonce in excerpts(), 5)
+    filter_row(
+        "filter: star: the provider's body, under `*`, reaches the "
+        "filter and the provider",
+        code == "200" and bool(logged) and stub_has(nonce),
+        f"http={code!r} {err}; the log {'holds' if logged else 'lacks'} "
+        f"it; the stub {'logged' if stub_has(nonce) else 'never saw'} it")
+
+    # SNI names the spliced host; the connection goes where the provider's
+    # does, through the inspector. On the host the name is the stub's.
+    nonce = os.urandom(8).hex()
+    seen = len(records())
+    got = exec_in(["curl", "-s", "-S", "-k", "--max-time", "15",
+                   "-o", "/dev/null", "-w", "%{http_code}",
+                   "--connect-to", f"{SPLICED}:443:{PROVIDER}:443",
+                   "--data-binary", f"moatery-rig-spliced {nonce}",
+                   f"https://{SPLICED}/spliced/{nonce}"])
+    arrived = await_(lambda: stub_has(nonce), 5)
+    time.sleep(1)
+    mine = [r for r in records()[seen:] if r.get("host") == SPLICED]
+    filter_row(
+        f"filter: star: a POST to {SPLICED}, spliced, reaches the stub "
+        "with no key, is recorded as a splice, and the filter never "
+        "saw it",
+        got.stdout.strip() == "401" and bool(arrived)
+        and [r.get("mode") for r in mine] == ["splice"]
+        and nonce not in excerpts(),
+        f"http={got.stdout.strip()!r} {got.stderr.strip()}; the stub "
+        f"{'logged' if arrived else 'never saw'} it; records "
+        f"{[(r.get('mode'), r.get('decision')) for r in mine]}; the log "
+        f"{'holds' if nonce in excerpts() else 'lacks'} it")
 
 
 def probe(args, tag, secret):
@@ -3297,6 +3389,15 @@ def material():
         path.chmod(0o755)
     LOGGED_FILTERS.write_text(json.dumps({"filters": [
         {"host": PROVIDER, "run": str(LOGGED)}]}) + "\n")
+    STAR_FILTERS.write_text(json.dumps({"filters": [
+        {"host": "*", "run": str(LOGGED)}]}) + "\n")
+    STAR_POLICY.write_text(json.dumps({
+        "hosts": [SPLICED], "splice": [SPLICED], "policy": [
+            {"host": PROVIDER, "credential": CREDENTIAL}]}) + "\n")
+    for editor, document in ((STAR_FILTERS_EDITOR, STAR_FILTERS),
+                             (STAR_POLICY_EDITOR, STAR_POLICY)):
+        editor.write_text(f"#!/bin/sh\ncp '{document}' \"$1\"\n")
+        editor.chmod(0o755)
     UNFILTERED.mkdir(parents=True, exist_ok=True)
     (UNFILTERED / "sitecustomize.py").write_text(UNFILTERED_SCRIPT)
     SLOW.mkdir(parents=True, exist_ok=True)

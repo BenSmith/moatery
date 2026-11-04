@@ -473,8 +473,14 @@ example's `logged` wrapper and its `excerpt`, as they ship but for
 one line of it with its head cut at 256 bytes and the id and ordinal of
 the request's record, and the directory holds the log and its lock
 alone; with the directory read-only the request is 502 and the stub
-never sees it. Each row also holds that the audit log gained no AVC in
-its window.
+never sees it. Then the logged wrapper goes under `*`, and
+`network-policy` splices `localhost`, the one name besides the
+provider's that the host resolves to the stub: both load, and the
+status gives the filter `spliced` `["localhost"]`; the provider's POST
+reaches the filter and the stub; a POST whose SNI is `localhost`, sent
+where the provider's goes, reaches the stub with no key (401), its
+record's mode is `splice`, and the filter's log never holds it. Each
+row also holds that the audit log gained no AVC in its window.
 
 **2026-11-03, on the proving host (Fedora 44, enforcing), 163/164.**
 bwrap runs under the inspector's own unit: `@system-service` holds
@@ -488,6 +494,12 @@ holding only that path.
 bwrap brings up the sandbox's own `lo`, so the stub's port is refused,
 not unreachable. Through the wrapper a SEGV shows as `exit=139`, not
 `signal=SEGV`.
+
+**2026-11-04, on the proving host (Fedora 44, enforcing), 169/169.**
+With the request-filter loader refusing only a filter a `splice`
+pattern covers: the three star rows green. The spliced POST's record
+reads mode `splice` and decision `forward`, the stub answered it 401,
+and the filter's log never held it; no AVC in their windows.
 
 **The listeners' `nnp_transition` denial, accepted (2026-11-03).** Every
 listener start logs `avc: denied { nnp_transition }` for `comm="python3"`
