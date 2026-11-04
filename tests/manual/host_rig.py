@@ -74,7 +74,11 @@ THE ROWS
             document. A POST to /rewrite reaches the provider over the
             TLS plane as the filter's body, with the real key; one to
             /refuse gets 403, never arrives, and the journal names the
-            filter's reason. The premise: a second drop-in putting
+            filter's reason. Then the document names the example's logged
+            wrapper and its excerpt, LOG= a directory beside them: a POST
+            arrives unchanged and one line of it is logged under the
+            record's id; with the directory emptied and read-only, it gets
+            502 and never arrives. The premise: a second drop-in putting
             RestrictNamespaces=yes back makes bwrap exit 1, and the
             request gets 502 and never arrives.
 
@@ -112,6 +116,7 @@ recipe here is what worked:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -163,8 +168,14 @@ FILTER_DIR = RIG / "host-filter"
 WRAPPER = FILTER_DIR / "sandboxed"
 DISPATCH = FILTER_DIR / "dispatch"
 FILTERS = RIG / "host-request-filters.json"
+# The logged example beside them, as it ships but for LOG=, which names a
+# directory there too.
+LOGGED = FILTER_DIR / "logged"
+FILTER_LOG = FILTER_DIR / "log"
 EXAMPLES = riglib.CHECKOUT / "examples"
 EXAMPLE_WRAPPER = EXAMPLES / "request-filter" / "sandboxed"
+EXAMPLE_LOGGED = EXAMPLES / "request-filter" / "logged"
+EXAMPLE_EXCERPT = EXAMPLES / "request-filter" / "excerpt"
 EXAMPLE_UNIT = EXAMPLES / "systemd" / "moat-inspect.service"
 INSPECT_DROP_INS = UNITS / f"{UNIT}-inspect.service.d"
 REWRITTEN = "moatery-rig-rewritten"
@@ -702,8 +713,15 @@ def filter_material():
     if swapped != 1:
         sys.exit(f"{EXAMPLE_WRAPPER}: no one FILTER= line to point at the "
                  "rig's filter")
-    FILTER_DIR.mkdir(parents=True, exist_ok=True)
-    for path, text in ((WRAPPER, wrapper), (DISPATCH, DISPATCH_SCRIPT)):
+    logged, swapped = re.subn(r"(?m)^LOG=.*$", f"LOG={FILTER_LOG}",
+                              EXAMPLE_LOGGED.read_text())
+    if swapped != 1 or "\nFILTER=${0%/*}/excerpt\n" not in logged:
+        sys.exit(f"{EXAMPLE_LOGGED}: no one LOG= line, or its FILTER= "
+                 "does not name the excerpt beside it")
+    FILTER_LOG.mkdir(parents=True, exist_ok=True)
+    for path, text in ((WRAPPER, wrapper), (DISPATCH, DISPATCH_SCRIPT),
+                       (LOGGED, logged),
+                       (FILTER_DIR / "excerpt", EXAMPLE_EXCERPT.read_text())):
         path.write_text(text)
         path.chmod(0o755)
     FILTERS.write_text(json.dumps({"filters": [
@@ -870,6 +888,8 @@ def filter_rows(secret, over_tcp):
         f"{'logged' if arrived else 'never saw'} it; record filter "
         f"{rec.get('filter')!r}; journal {reasons[:1]}")
 
+    logged_rows()
+
     # The premise: the example's lines leave namespaces unrestricted
     # because bwrap needs them. Put the restriction back and the filter
     # cannot start, and the request is refused, not sent unfiltered.
@@ -891,6 +911,62 @@ def filter_rows(secret, over_tcp):
         f"{state}; RestrictNamespaces={restricted}; http={code!r} {err}; "
         f"the stub {'logged' if arrived else 'never saw'} it; record "
         f"reason {rec.get('reason')!r}; journal {failed[:1]}")
+
+
+def logged_rows():
+    """examples/request-filter/logged in the inspector's place: the body
+    sent unchanged and a line of it logged under the request's id, and a
+    log it cannot write failing the request."""
+    FILTERS.write_text(json.dumps({"filters": [
+        {"host": PROVIDER, "run": str(LOGGED)}]}) + "\n")
+    state, _, named = restart_inspector()
+    nonce = os.urandom(8).hex()
+    path = f"/logged/{nonce}"
+    body = f"moatery-rig-logged {nonce}\n" + "z" * 600
+    code, got, err = post(path, body)
+    sent = hashlib.sha256(body.encode()).hexdigest()
+    rec = await_(lambda: record_for(path), 5)
+    log = FILTER_LOG / "excerpts"
+    lines = ([json.loads(ln) for ln in log.read_text().splitlines()]
+             if log.exists() else [])
+    mine = [ln for ln in lines if nonce in ln.get("head", "")]
+    line = mine[0] if len(mine) == 1 else {}
+    held = sorted(os.listdir(FILTER_LOG))
+    filter_row(
+        "filter: logged: the body arrives unchanged, and the log holds "
+        "one line of it, its head bounded, under the record's id and "
+        "ordinal",
+        state == "active" and named and code == "200"
+        and got.get("body_sha256") == sent and len(mine) == 1
+        and line.get("head") == body[:256]
+        and line.get("length") == len(body) and line.get("path") == path
+        and [line.get("id"), line.get("req")]
+        == [str(rec.get("id")), str(rec.get("req"))]
+        and held == ["excerpts", "lock"],
+        f"{state}; status names the document: {named}; http={code!r} "
+        f"{err}; sha256 {got.get('body_sha256')} (sent {sent}); "
+        f"{len(mine)} line(s), id/req {[line.get('id'), line.get('req')]} "
+        f"(record {[rec.get('id'), rec.get('req')]}); the log holds "
+        f"{held}")
+
+    # Emptied first: a read-only directory still lets the filter append
+    # to the log and open the lock the row above left in it.
+    nonce = os.urandom(8).hex()
+    for name in held:
+        (FILTER_LOG / name).unlink()
+    FILTER_LOG.chmod(0o555)
+    try:
+        code, _, err = post(f"/logged/{nonce}", "x")
+        time.sleep(1)
+        arrived = stub_has(nonce)
+    finally:
+        FILTER_LOG.chmod(0o755)
+    filter_row(
+        "filter: logged: with the log read-only, 502, and the provider "
+        "never saw it",
+        code == "502" and not arrived,
+        f"http={code!r} {err}; the stub "
+        f"{'logged' if arrived else 'never saw'} it")
 
 
 # --- teardown ----------------------------------------------------------------

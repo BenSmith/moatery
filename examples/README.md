@@ -229,6 +229,68 @@ document again with the policy. The inspector's unit carries no
 `RestrictNamespaces=` and allows `@mount`, since bwrap needs both
 ([DESIGN.md](../docs/DESIGN.md), "Request filters: where they run").
 
+### Logging a part of each body
+
+The second pair keeps a log of what went out:
+
+- `excerpt`, the filter: it sends every body unchanged, and appends a
+  line of JSON to `excerpts` with the request's id, ordinal, host,
+  method, path, content type and length, and the body's first 256
+  bytes. Past 16 MiB the file is moved to `excerpts.1`. A line it
+  cannot write fails the request, 502, so no body leaves unlogged;
+- `logged`, its wrapper: `sandboxed`'s sandbox, with the one directory
+  on its `LOG=` line bound writable as the filter's working directory.
+
+- `request-filters-logged.json`, the document naming `logged`, with
+  `HOME` replaced.
+
+The log directory is the workload's bytes as a program that parsed them
+wrote them: keep it where the container cannot write, and read it as
+untrusted. Install the three, and make the directory:
+
+```
+mkdir -p ~/.local/libexec/request-filter ~/.local/state/request-filter
+cp -p request-filter/excerpt ~/.local/libexec/request-filter/
+sed "s|HOME|$HOME|" request-filter/logged \
+    > ~/.local/libexec/request-filter/logged
+chmod 755 ~/.local/libexec/request-filter/logged
+sed "s|HOME|$HOME|" request-filter/request-filters-logged.json \
+    > ~/.config/moatery/request-filters-logged.json
+```
+
+For the host units, name that document in the inspector's
+`--request-filters`, as above. For a hut, the scripts and the directory
+must be outside every hut's home and every mount a hut can write
+([MOATHUT.md](../docs/MOATHUT.md), "Request filters"); moathut checks
+`run`, not the filter or the directory. A new hut takes the document at
+`create`:
+
+```
+moathut create NAME --network-policy POLICY \
+    --request-filters ~/.config/moatery/request-filters-logged.json
+```
+
+and a hut that exists takes it through `request-filters`, with an
+editor that copies it in:
+
+```
+VISUAL= EDITOR="cp $HOME/.config/moatery/request-filters-logged.json" \
+    moathut request-filters NAME
+```
+
+Every filtered request then adds a line to
+`~/.local/state/request-filter/excerpts`. Its `id` and `req` are the
+request's `id` and `req` in the inspector's record (a hut's is
+`~/.local/state/log/moatery/hut/NAME/requests.log`) and its `id=` in the
+journal:
+
+```
+tail -n 5 ~/.local/state/request-filter/excerpts
+```
+
+What is logged is the `record` the filter builds: to keep other parts
+of the body, change how it sets `head`, and keep each field bounded.
+
 ## Elsewhere here
 
 - [quadlet/](quadlet/): a quadlet pod, the listeners in the pod's

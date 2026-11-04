@@ -1,0 +1,16 @@
+#!/bin/sh
+# A request filter's sandbox, as sandboxed's, with one directory it can
+# write: LOG, its working directory. The workload must be able to write
+# none of the three, and nothing may read LOG as trusted: what is in it
+# is the workload's bytes, written by a program that parsed them.
+FILTER=${0%/*}/excerpt
+LOG=HOME/.local/state/request-filter
+exec bwrap --unshare-all --unshare-user --disable-userns \
+    --die-with-parent --new-session --cap-drop ALL \
+    --ro-bind /usr /usr \
+    --symlink usr/bin /bin --symlink usr/lib /lib \
+    --symlink usr/lib64 /lib64 \
+    --proc /proc --dev /dev --tmpfs /tmp \
+    --ro-bind "$FILTER" "$FILTER" \
+    --bind "$LOG" /log --chdir /log \
+    -- "$FILTER"

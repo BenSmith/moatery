@@ -1,0 +1,43 @@
+#!/usr/bin/python3 -I
+"""A request filter: sends every body unchanged, and appends a line of
+JSON for it to `excerpts` in its working directory, with the start of
+the body. Past LIMIT the file is moved to `excerpts.1`, so the two hold
+at most twice that. A line it cannot write fails the request."""
+
+import fcntl
+import json
+import os
+import sys
+import time
+
+HEAD = 256
+FIELD = 512
+LIMIT = 16 << 20
+
+body = sys.stdin.buffer.read()
+record = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+for name in ("MOAT_ID", "MOAT_REQ", "MOAT_HOST", "MOAT_METHOD",
+             "MOAT_PATH", "MOAT_CONTENT_TYPE"):
+    record[name[5:].lower()] = os.environ.get(name, "")[:FIELD]
+record["length"] = len(body)
+record["head"] = body[:HEAD].decode("utf-8", "backslashreplace")
+# ASCII, so the workload's bytes cannot end the line or start another.
+line = (json.dumps(record) + "\n").encode()
+
+# Up to eight filters run at once: the lock keeps a move and the lines
+# around it in order.
+with open("lock", "w") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        if os.stat("excerpts").st_size >= LIMIT:
+            os.replace("excerpts", "excerpts.1")
+    except FileNotFoundError:
+        pass
+    fd = os.open("excerpts", os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+                 0o600)
+    try:
+        if os.write(fd, line) != len(line):
+            raise OSError("short write")
+    finally:
+        os.close(fd)
+sys.stdout.buffer.write(body)

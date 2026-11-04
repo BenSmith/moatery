@@ -123,7 +123,12 @@ exits 77 `rig-refusal`). Rows: the unit is active with
 document; a POST to `/rewrite` reaches the provider over the TLS plane as
 the filter's body, with the real key, and the record says `rewrote`;
 `/refuse` gets 403, the stub never logs its nonce, the record says
-`refused` and the journal `filter_reason=rig-refusal`. The premise: a
+`refused` and the journal `filter_reason=rig-refusal`. Then the
+document names the example's `logged` wrapper and its `excerpt`, as
+they ship but for `LOG=`, a directory beside them: a POST arrives
+unchanged and the log holds one line of it under the record's id and
+ordinal, and with the directory emptied and read-only the request is
+502 and never arrives. The premise: a
 second drop-in putting `RestrictNamespaces=yes` back makes bwrap exit 1,
 and the request gets 502, never arrives, and is recorded and journalled
 `filter failed`. Each filter row also holds that the audit log gained
@@ -462,8 +467,14 @@ wrapper, finds nothing of the home but the path down to the filter, no
 refused, each of which the rig shows working from the host; the record
 says `rewrote` and `refused`, and the journal names `refused by filter`
 with `filter_reason=rig-refusal`, and `filter failed` with `exit=139`,
-bwrap's 128 and the signal. Each row also holds that the audit log
-gained no AVC in its window.
+bwrap's 128 and the signal. Then `request-filters` swaps in the
+example's `logged` wrapper and its `excerpt`, as they ship but for
+`LOG=`, a directory beside them: a POST arrives unchanged, the log holds
+one line of it with its head cut at 256 bytes and the id and ordinal of
+the request's record, and the directory holds the log and its lock
+alone; with the directory read-only the request is 502 and the stub
+never sees it. Each row also holds that the audit log gained no AVC in
+its window.
 
 **2026-11-03, on the proving host (Fedora 44, enforcing), 163/164.**
 bwrap runs under the inspector's own unit: `@system-service` holds

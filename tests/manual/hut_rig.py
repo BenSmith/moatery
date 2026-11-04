@@ -552,6 +552,15 @@ FILTERS = RIG / "hut-request-filters.json"
 FILTERS_EDITOR = RIG / "hut-filters-editor"
 UNFILTERED = RIG / "hut-unfiltered"
 EXAMPLE_WRAPPER = CHECKOUT / "examples" / "request-filter" / "sandboxed"
+# The logged example, as it ships but for LOG=, which names a directory
+# beside it; the document naming it, and the $EDITOR that writes it.
+LOGGED_DIR = RIG / "hut-logged"
+LOGGED = LOGGED_DIR / "logged"
+FILTER_LOG = LOGGED_DIR / "log"
+LOGGED_FILTERS = LOGGED_DIR / "request-filters.json"
+LOGGED_EDITOR = LOGGED_DIR / "editor"
+EXAMPLE_LOGGED = CHECKOUT / "examples" / "request-filter" / "logged"
+EXAMPLE_EXCERPT = CHECKOUT / "examples" / "request-filter" / "excerpt"
 REWRITTEN = "moatery-rig-rewritten"
 AUDIT_LOG = "/var/log/audit/audit.log"
 
@@ -3070,6 +3079,64 @@ def filter_rows(secret):
         f"record: rewrite {recs['rewrite'].get('filter')!r}, refuse "
         f"{recs['refuse'].get('filter')!r}; journal: {refused[:1]} "
         f"{crashed[:1]}")
+    logged_rows()
+
+
+def logged_rows():
+    """examples/request-filter/logged in the hut's inspector: the body
+    sent unchanged and a line of it logged under the request's id, and a
+    log it cannot write failing the request."""
+    want = inspect_policy_digest(LOGGED_FILTERS.read_text())
+    edited = hut("request-filters", HUT,
+                 env={"VISUAL": "", "EDITOR": str(LOGGED_EDITOR)})
+    digest = await_(lambda: filters_digest() == want and want, 40)
+    nonce = os.urandom(8).hex()
+    path = f"/logged/{nonce}"
+    body = f"moatery-rig-logged {nonce}\n" + "z" * 600
+    code, got, err = post(path, body)
+    sent = hashlib.sha256(body.encode()).hexdigest()
+    rec = await_(lambda: record_for(path), 5) or {}
+    log = FILTER_LOG / "excerpts"
+    lines = ([json.loads(ln) for ln in log.read_text().splitlines()]
+             if log.exists() else [])
+    mine = [ln for ln in lines if nonce in ln.get("head", "")]
+    line = mine[0] if len(mine) == 1 else {}
+    held = sorted(os.listdir(FILTER_LOG))
+    filter_row(
+        "filter: logged: the body arrives unchanged, and the log holds "
+        "one line of it, its head bounded, under the record's id and "
+        "ordinal",
+        edited.returncode == 0 and digest == want and code == "200"
+        and got.get("body_sha256") == sent and len(mine) == 1
+        and line.get("head") == body[:256]
+        and line.get("length") == len(body) and line.get("path") == path
+        and [line.get("id"), line.get("req")]
+        == [str(rec.get("id")), str(rec.get("req"))]
+        and held == ["excerpts", "lock"],
+        f"rc={edited.returncode} {edited.stderr.strip()[-200:]}; digest "
+        f"{filters_digest()} (file {want}); http={code!r} {err}; sha256 "
+        f"{got.get('body_sha256')} (sent {sent}); {len(mine)} line(s), "
+        f"id/req {[line.get('id'), line.get('req')]} (record "
+        f"{[rec.get('id'), rec.get('req')]}); the log holds {held}")
+
+    # Emptied first: a read-only directory still lets the filter append
+    # to the log and open the lock the row above left in it.
+    nonce = os.urandom(8).hex()
+    for name in held:
+        (FILTER_LOG / name).unlink()
+    FILTER_LOG.chmod(0o555)
+    try:
+        code, _, err = post(f"/logged/{nonce}", "x")
+        time.sleep(1)
+        arrived = stub_has(nonce)
+    finally:
+        FILTER_LOG.chmod(0o755)
+    filter_row(
+        "filter: logged: with the log read-only, 502, and the provider "
+        "never saw it",
+        code == "502" and not arrived,
+        f"http={code!r} {err}; the stub "
+        f"{'logged' if arrived else 'never saw'} it")
 
 
 def probe(args, tag, secret):
@@ -3167,7 +3234,7 @@ def clear_leftovers():
     for path in (MARKER, HOME / WRITTEN, SEALED, DESCRIBED):
         path.unlink(missing_ok=True)
     shutil.rmtree(SLOW, ignore_errors=True)
-    for path in (FILTER_DIR, UNFILTERED):
+    for path in (FILTER_DIR, UNFILTERED, LOGGED_DIR):
         shutil.rmtree(path, ignore_errors=True)
     for path in (FILTERS, FILTERS_EDITOR):
         path.unlink(missing_ok=True)
@@ -3216,6 +3283,20 @@ def material():
         {"host": PROVIDER, "run": str(WRAPPER)}]}) + "\n")
     FILTERS_EDITOR.write_text(f"#!/bin/sh\ncp '{FILTERS}' \"$1\"\n")
     FILTERS_EDITOR.chmod(0o755)
+    logged, swapped = re.subn(r"(?m)^LOG=.*$", f"LOG={FILTER_LOG}",
+                              EXAMPLE_LOGGED.read_text())
+    if swapped != 1 or "\nFILTER=${0%/*}/excerpt\n" not in logged:
+        sys.exit(f"{EXAMPLE_LOGGED}: no one LOG= line, or its FILTER= "
+                 "does not name the excerpt beside it")
+    FILTER_LOG.mkdir(parents=True, exist_ok=True)
+    for path, text in (
+            (LOGGED, logged),
+            (LOGGED_DIR / "excerpt", EXAMPLE_EXCERPT.read_text()),
+            (LOGGED_EDITOR, f"#!/bin/sh\ncp '{LOGGED_FILTERS}' \"$1\"\n")):
+        path.write_text(text)
+        path.chmod(0o755)
+    LOGGED_FILTERS.write_text(json.dumps({"filters": [
+        {"host": PROVIDER, "run": str(LOGGED)}]}) + "\n")
     UNFILTERED.mkdir(parents=True, exist_ok=True)
     (UNFILTERED / "sitecustomize.py").write_text(UNFILTERED_SCRIPT)
     SLOW.mkdir(parents=True, exist_ok=True)
@@ -3256,7 +3337,7 @@ def teardown(keep):
             if (config / "hut.json").exists():
                 hut("rm", name, "--home")
         for path in (PROJECT, READONLY, SLOW, FILTER_DIR, UNFILTERED,
-                     TWIN_LOGS, OPEN_LOGS,
+                     LOGGED_DIR, TWIN_LOGS, OPEN_LOGS,
                      NFT_FAILS, NFT_LOADS_NOTHING, CP_OUT, CP_UNGUARDED,
                      RM_UNGUARDED, UNHARDENED, CP_STEERED):
             shutil.rmtree(path, ignore_errors=True)
@@ -3431,8 +3512,8 @@ def main():
             "--unhardened: hardening's four rows are expected red")
     if args.unfiltered:
         expected.append(
-            "--unfiltered: filter's /rewrite, /refuse, /crash, /probe and "
-            "record rows are expected red")
+            "--unfiltered: filter's /rewrite, /refuse, /crash, /probe, "
+            "record and two logged rows are expected red")
     if args.without_autostart:
         expected.append(
             "--without-autostart: create's ls, the autostart rows and "

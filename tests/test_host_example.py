@@ -10,7 +10,9 @@ responder answers with, is an example that does not work.
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -139,6 +141,126 @@ class TestTheRequestFilterExample(unittest.TestCase):
         self.assertEqual(list(doc), ["filters"])
         runs = {entry["run"] for entry in doc["filters"]}
         self.assertEqual({Path(run).name for run in runs}, {"sandboxed"})
+
+
+class TestTheLoggedExample(unittest.TestCase):
+    """examples/request-filter/logged and excerpt: sandboxed's sandbox
+    with one writable directory, and a filter that logs a bounded line
+    for each body and sends it unchanged."""
+
+    FILTERS = EXAMPLES / "request-filter"
+    ENV = TestTheRequestFilterExample.ENV
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def _start(self, body, **env):
+        proc = subprocess.Popen(
+            [str(self.FILTERS / "excerpt")], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.dir,
+            env={**self.ENV, "MOAT_LENGTH": str(len(body)), **env},
+            start_new_session=True)
+        return proc, body
+
+    def _run(self, body, **env):
+        proc, body = self._start(body, **env)
+        out, _ = proc.communicate(body, timeout=30)
+        return proc.returncode, out
+
+    def _lines(self, name="excerpts"):
+        return [json.loads(ln)
+                for ln in (self.dir / name).read_text().splitlines()]
+
+    def test_the_wrapper_is_sandboxed_with_one_writable_directory(self):
+        def lines(name):
+            return [ln for ln in (self.FILTERS / name).read_text()
+                    .splitlines() if not ln.startswith(("#", "FILTER="))]
+        logged = lines("logged")
+        bind = '    --bind "$LOG" /log --chdir /log \\'
+        self.assertIn("LOG=HOME/.local/state/request-filter", logged)
+        self.assertIn(bind, logged)
+        self.assertEqual(
+            [ln for ln in logged if not ln.startswith("LOG=") and ln != bind],
+            lines("sandboxed"))
+        self.assertIn("FILTER=${0%/*}/excerpt",
+                      (self.FILTERS / "logged").read_text())
+
+    def test_its_document_names_its_wrapper(self):
+        doc = json.loads(
+            (self.FILTERS / "request-filters-logged.json").read_text())
+        self.assertEqual(list(doc), ["filters"])
+        self.assertEqual({entry["run"] for entry in doc["filters"]},
+                         {"HOME/.local/libexec/request-filter/logged"})
+
+    def test_the_readme_installs_every_file_and_the_log_directory(self):
+        text = README.read_text()
+        for path in self.FILTERS.iterdir():
+            with self.subTest(name=path.name):
+                self.assertIn(f"request-filter/{path.name}", text)
+        log = re.search(r"(?m)^LOG=HOME(/\S+)$",
+                        (self.FILTERS / "logged").read_text()).group(1)
+        self.assertIn(f"mkdir -p ~/.local/libexec/request-filter ~{log}\n",
+                      text)
+
+    def test_the_scripts_are_executable(self):
+        for name in ("logged", "excerpt"):
+            with self.subTest(name=name):
+                self.assertTrue(os.access(self.FILTERS / name, os.X_OK))
+
+    def test_the_body_is_sent_unchanged_and_logged(self):
+        body = b'{"model": "x", "messages": []}\n'
+        self.assertEqual(self._run(body), (0, body))
+        [line] = self._lines()
+        self.assertEqual(
+            {k: line[k] for k in ("id", "req", "host", "method", "path",
+                                  "content_type", "length", "head")},
+            {"id": "5c0e81a2f4d3", "req": "1", "host": "api.example.com",
+             "method": "POST", "path": "/v1/messages",
+             "content_type": "application/json", "length": len(body),
+             "head": body.decode()})
+        self.assertRegex(line["time"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertEqual((self.dir / "excerpts").stat().st_mode & 0o777,
+                         0o600)
+
+    def test_the_workloads_bytes_are_bounded_and_stay_on_one_line(self):
+        body = b"a\nb\r\x00\xff\xe2\x80\xa8" + b"x" * 4096
+        path = "/p\n" + "y" * 4096
+        self.assertEqual(self._run(body, MOAT_PATH=path), (0, body))
+        text = (self.dir / "excerpts").read_bytes()
+        self.assertEqual(text.count(b"\n"), 1)
+        self.assertTrue(text.isascii())
+        [line] = self._lines()
+        self.assertEqual(line["head"], body[:256].decode(
+            "utf-8", "backslashreplace"))
+        self.assertEqual(line["path"], path[:512])
+        self.assertEqual(line["length"], len(body))
+
+    def test_eight_at_once_each_write_a_whole_line(self):
+        procs = [self._start(f"body {i} ".encode() * 2000,
+                             MOAT_REQ=str(i)) for i in range(8)]
+        for proc, body in procs:
+            out, _ = proc.communicate(body, timeout=30)
+            self.assertEqual((proc.returncode, out), (0, body))
+        self.assertEqual(sorted(int(ln["req"]) for ln in self._lines()),
+                         list(range(8)))
+
+    def test_a_full_log_is_moved_aside_once(self):
+        with open(self.dir / "excerpts", "wb") as f:
+            f.truncate(16 << 20)
+        self.assertEqual(self._run(b"one"), (0, b"one"))
+        self.assertEqual(self._run(b"two"), (0, b"two"))
+        self.assertEqual((self.dir / "excerpts.1").stat().st_size, 16 << 20)
+        self.assertEqual([ln["head"] for ln in self._lines()],
+                         ["one", "two"])
+
+    @unittest.skipIf(os.geteuid() == 0, "root writes a read-only directory")
+    def test_a_line_it_cannot_write_fails_the_request(self):
+        self.dir.chmod(0o555)
+        self.addCleanup(self.dir.chmod, 0o755)
+        code, out = self._run(b"secret")
+        self.assertNotIn(code, (0, 77))
+        self.assertEqual(out, b"")
 
 
 if __name__ == "__main__":
