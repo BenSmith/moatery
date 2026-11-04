@@ -24,6 +24,7 @@ from .inspect_document import (
     RequestFilter,
     RequestFilters,
     inspect_policy_digest,
+    pattern_covers,
     patterns_overlap,
 )
 
@@ -108,13 +109,16 @@ def load_request_filters(path, policy) -> RequestFilters:
         raise ValueError(
             f"{path}: filters with the policy's tls 'splice': a spliced "
             f"connection is never decrypted, so no filter could run")
-    for entry in filters:
+    for i, entry in enumerate(filters):
         for pattern in policy.splice:
-            if patterns_overlap(entry.host, pattern):
+            if pattern_covers(pattern, entry.host):
                 raise ValueError(
-                    f"{path}: filter {entry.host!r} overlaps the policy's "
-                    f"'splice' entry {pattern!r}: that host is never read "
-                    f"as an HTTP request, so the filter could never run")
+                    f"{path}: filter {entry.host!r} is covered by the "
+                    f"policy's 'splice' entry {pattern!r}: a spliced host "
+                    f"is never read as an HTTP request, so the filter "
+                    f"could never run")
+        filters[i] = entry._replace(spliced=tuple(
+            p for p in policy.splice if patterns_overlap(entry.host, p)))
     return RequestFilters(tuple(filters), digest)
 
 

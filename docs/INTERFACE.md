@@ -71,7 +71,7 @@ credentialed                requests sent to the broker
 credential_unauthorized     of those, answered 401 or 403
 per_credential              {credential: count}, bounded
 lists.policy                the policy entries, as loaded
-lists.request_filters       the request filters, as loaded
+lists.request_filters       the request filters as loaded, with spliced
 record_failures             records the request log could not take
 bumped                      refusals answered inside terminated TLS
 ech.seen                    hellos with the ECH extension

@@ -92,6 +92,19 @@ def patterns_overlap(a: str, b: str) -> bool:
     return a == b or fnmatch.fnmatchcase(a, b) or fnmatch.fnmatchcase(b, a)
 
 
+def pattern_covers(outer: str, inner: str) -> bool:
+    """Whether every host `inner` names, `outer` names too.
+
+    Exact when `inner` has no wildcard; otherwise `inner`'s wildcards are
+    read as the characters they are, which `outer`'s `*` matches.
+    """
+    outer = normalize_hostname(outer)
+    inner = normalize_hostname(inner)
+    if not outer or not inner:
+        return False
+    return outer == inner or fnmatch.fnmatchcase(inner, outer)
+
+
 # --- The two TLS modes ---
 #
 # `splice` checks the SNI and relays the connection undecrypted. `inspect`,
@@ -170,6 +183,9 @@ def inspect_policy_digest(text: str) -> str:
 class RequestFilter(NamedTuple):
     host: str
     run: str
+    # The policy's `splice` patterns that name some of `host`'s hosts: those
+    # are never decrypted, so their requests never reach `run`.
+    spliced: tuple = ()
 
 
 class RequestFilters(NamedTuple):
@@ -191,7 +207,10 @@ class RequestFilters(NamedTuple):
 
     @property
     def summary(self) -> str:
-        return f"filters={len(self.filters)}"
+        spliced = sorted({p for f in self.filters for p in f.spliced})
+        if not spliced:
+            return f"filters={len(self.filters)}"
+        return f"filters={len(self.filters)} spliced={','.join(spliced)}"
 
 
 NO_REQUEST_FILTERS = RequestFilters((), "")

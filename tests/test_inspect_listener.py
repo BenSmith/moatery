@@ -38,6 +38,7 @@ from moatery.inspect_document import (
 from moatery.egress_plane import CLEARTEXT, TLS, plane_for_port
 from tests.policy_document import policy_document
 from moatery.inspect_policy import Policy, load_policy
+from moatery.request_filter import load_request_filters
 from moatery.sd_listen import NotSocketActivated
 from moatery.tls_hello import (
     ALPN_KEPT, HelloUnreadable, TLS_EXT_ECH, read_client_hello,
@@ -2030,6 +2031,36 @@ class TestPerHostSplice(unittest.TestCase):
         term.assert_not_called()
         self.assertIn("splice", out.getvalue())
         self.assertIn("host=sum.golang.org", out.getvalue())
+
+    def test_a_spliced_host_under_a_star_filter_is_never_filtered(self):
+        """The loader lets `*` stand beside splice because a spliced host
+        is never terminated, so its bodies never reach a filter."""
+        mod, listener, out = self._listener(["*"], ["sum.golang.org"])
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        marker = os.path.join(d, "ran")
+        run = os.path.join(d, "filter")
+        with open(run, "w") as f:
+            f.write(f"#!/bin/sh\ntouch {marker}\nexec cat\n")
+        os.chmod(run, 0o755)
+        filters = os.path.join(d, "filters.json")
+        with open(filters, "w") as f:
+            json.dump({"filters": [{"host": "*", "run": run}]}, f)
+        policy = listener.inspection.policy
+        listener.inspection.policy = policy._replace(
+            request_filters=load_request_filters(filters, policy))
+        conn, guest = self._client(_hello_bytes(server_name="sum.golang.org"))
+        guest.shutdown(socket.SHUT_WR)
+        upstream, far = socket.socketpair()
+        self.addCleanup(upstream.close)
+        self.addCleanup(far.close)
+        with unittest.mock.patch.object(inspect_tls, "_serve_tls_inspect") as term:
+            with unittest.mock.patch.object(
+                    socket, "create_connection", return_value=upstream):
+                serve_tls(listener.inspection, conn, _where("tls"))
+        term.assert_not_called()
+        self.assertIn("splice", out.getvalue())
+        self.assertFalse(os.path.exists(marker), "the filter ran")
 
     def test_the_peeked_hello_reaches_the_origin_ONCE_and_unmodified(self):
         """The seam the peek opens, and the one that fails silently.

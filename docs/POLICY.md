@@ -346,7 +346,10 @@ not, by the policy alone. Without the flag nothing is filtered.
 - `host` is a pattern, as above, matched against the request's host:
   the name the policy decided it on. It follows hosts however they were
   admitted, by `hosts`, by `*` or by a `policy` entry, and brokered or
-  not, so a brokered host's broker receives the filtered body.
+  not, so a brokered host's broker receives the filtered body. A
+  spliced host is never decrypted, so a `splice` pattern carves its
+  names out of `host`, as it does out of `hosts`: `*` beside a `splice`
+  list filters every host but those.
 - `run` is the filter: an absolute path to a regular file the inspector
   can execute and that is not group- or world-writable, checked through
   any link. It is exec'd directly, with no arguments and no shell.
@@ -360,10 +363,14 @@ The inspector reads the document at start, after the policy, and a
 document that is missing or refused fails the start. SIGUSR1 reloads
 the two as a pair: both are swapped, or neither is, and the `WARNING:`
 line names the document that was refused. So a policy whose `splice`
-would cover a filtered host is refused at a reload, and the old policy
-and filters stay. The status file carries the SHA-256 of the
-document's text as `request_filters_digest`, and its entries under
-`lists.request_filters`.
+would cover a filter's whole pattern is refused at a reload, and the
+old policy and filters stay; one that covers part of it is enforced,
+and that part goes unfiltered. The line that names the document loaded
+ends with `spliced=`, the `splice` patterns that leave some of a
+filter's hosts unfiltered, when there are any. The status file carries
+the SHA-256 of the document's text as `request_filters_digest`, and
+its entries under `lists.request_filters`, each with those patterns as
+`spliced`.
 
 Refused, naming what:
 
@@ -371,8 +378,9 @@ Refused, naming what:
 - a `host` or `run` that is empty or not a string, or `filters` that is
   not a list;
 - two overlapping entries with different `run`;
-- any entry under `"tls": "splice"`, and an entry whose host overlaps a
-  `splice` pattern: a spliced connection is never read;
+- any entry under `"tls": "splice"`, and an entry a `splice` pattern
+  covers, every host it names spliced: a spliced connection is never
+  read, so the filter could never run;
 - a `run` that is relative, missing, not a regular file, not
   executable, or group- or world-writable.
 

@@ -3311,7 +3311,7 @@ class TestRequestFilters(unittest.TestCase):
         with self.assertRaisesRegex(commands.HutError,
                                     "request filters would not load "
                                     "beside it: filter 'api.example.com' "
-                                    "overlaps"):
+                                    "is covered by"):
             commands.edit_policy(
                 "agent", dirs=self.dirs, environ=self.env, isatty=False,
                 runner=host, edit=self._editor(

@@ -200,7 +200,7 @@ def _lists(policy):
             for e in policy.policy
         ] if policy else [],
         "request_filters": [
-            {"host": f.host, "run": f.run}
+            {"host": f.host, "run": f.run, "spliced": list(f.spliced)}
             for f in policy.request_filters.filters
         ] if policy else [],
     }

@@ -246,8 +246,9 @@ filters, and its inspector is started without the flag.
   is restarted instead. A stopped hut has them from its next start.
 - `network-policy` and `allow` load the hut's filters beside the new
   policy too, and refuse one that would strand them, such as a `splice`
-  over a filtered host: the inspector reloads the two together, and
-  refuses the pair.
+  covering a filter's whole pattern: the inspector reloads the two
+  together, and refuses the pair. A `splice` over part of one, as under
+  `*`, leaves those hosts unfiltered.
 
 Both `create` and `request-filters` refuse a `run` that is in, or is
 reached through, a place a hut can write, as `cp` refuses a path

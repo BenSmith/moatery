@@ -12,6 +12,7 @@ import unittest
 from moatery.http_request import parse_request
 from moatery.inspect_document import (
     NO_REQUEST_FILTERS, RequestFilter, inspect_policy_digest,
+    pattern_covers,
 )
 from moatery.inspect_policy import Policy
 from moatery.request_filter import (
@@ -129,11 +130,40 @@ class TestTheDocument(_Dir):
             {"host": "api.example.com", "run": self.run_path},
             {"host": "*", "run": other}]}, "overlap")
 
-    def test_overlap_with_a_splice_entry_is_refused(self):
-        policy = Policy("inspect", (), splice=("*.example.com",))
-        self.refused({"filters": [
-            {"host": "api.example.com", "run": self.run_path}]},
-            "'splice' entry '*.example.com'", policy)
+    def test_a_filter_a_splice_entry_covers_is_refused(self):
+        for host, splice in (("api.example.com", "*.example.com"),
+                             ("api.example.com", "API.example.com."),
+                             ("*.a.example.com", "*.example.com"),
+                             ("*", "*")):
+            with self.subTest(host=host, splice=splice):
+                self.refused(
+                    {"filters": [{"host": host, "run": self.run_path}]},
+                    f"covered by the policy's 'splice' entry {splice!r}",
+                    Policy("inspect", (), splice=(splice,)))
+
+    def test_a_star_loads_beside_splice_with_the_spliced_names(self):
+        """Splice carves its names out of the filter, as it does out of
+        `hosts`: a filter is refused only when splice leaves it none."""
+        policy = Policy("inspect", ("*",),
+                        splice=("updates.example.net", "*.cdn.example"))
+        got = self.load({"filters": [{"host": "*", "run": self.run_path}]},
+                        policy)
+        self.assertEqual(got.filters[0].spliced,
+                         ("updates.example.net", "*.cdn.example"))
+        self.assertEqual(got.filter_for("api.example.com"), self.run_path)
+        self.assertEqual(
+            got.summary,
+            "filters=1 spliced=*.cdn.example,updates.example.net")
+
+    def test_only_the_splice_entries_a_filter_overlaps_are_named(self):
+        policy = Policy("inspect", (),
+                        splice=("api.example.com", "other.example.net"))
+        got = self.load({"filters": [
+            {"host": "*.example.com", "run": self.run_path},
+            {"host": "b.example.org", "run": self.run_path}]}, policy)
+        self.assertEqual([f.spliced for f in got.filters],
+                         [("api.example.com",), ()])
+        self.assertEqual(got.summary, "filters=2 spliced=api.example.com")
 
     def test_tls_splice_refuses_any_filter_and_admits_none(self):
         policy = Policy("splice", ("*",))
@@ -168,6 +198,24 @@ def _req(head=b"POST /v1/x?q=secret HTTP/1.1\r\nHost: api.example.com\r\n"
               b"Content-Type: application/json\r\n"
               b"Authorization: Bearer no\r\nContent-Length: 5\r\n\r\n"):
     return parse_request(head)
+
+
+class TestPatternCovers(unittest.TestCase):
+
+    def test_covers(self):
+        for outer, inner, want in (
+                ("*.example.com", "api.example.com", True),
+                ("*.example.com", "*.a.example.com", True),
+                ("*", "*.example.com", True),
+                ("*", "*", True),
+                ("API.example.com.", "api.example.com", True),
+                ("api.example.com", "*.example.com", False),
+                ("*.example.com", "example.com", False),
+                ("*.example.com", "*", False),
+                ("b.example.com", "api.example.com", False),
+                ("", "api.example.com", False)):
+            with self.subTest(outer=outer, inner=inner):
+                self.assertIs(pattern_covers(outer, inner), want)
 
 
 class _Runs(_Dir):

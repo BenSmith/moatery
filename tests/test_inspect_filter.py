@@ -529,7 +529,8 @@ class TestTheFiltersReloadWithThePolicy(unittest.TestCase):
         self.assertEqual(status[REQUEST_FILTERS_DIGEST_KEY],
                          policy.request_filters.digest)
         self.assertEqual(status["lists"]["request_filters"],
-                         [{"host": f.host, "run": f.run}
+                         [{"host": f.host, "run": f.run,
+                           "spliced": list(f.spliced)}
                           for f in policy.request_filters.filters])
         return policy
 
@@ -571,6 +572,19 @@ class TestTheFiltersReloadWithThePolicy(unittest.TestCase):
     def test_a_policy_splicing_a_filtered_host_is_refused(self):
         self.write_policy({"hosts": [FILTERED], "splice": ["*.example"]})
         self.assertIn("splice", self._kept())
+
+    def test_a_policy_splicing_part_of_a_filter_is_enforced_and_named(self):
+        """The reload that leaves a host unfiltered says so in its line and
+        the status file."""
+        self.write_filters(self.run_b, host="*")
+        self.write_policy({"hosts": ["*"], "splice": ["updates.example"]})
+        policy = self.enforced()
+        self.assertEqual(policy.splice, ("updates.example",))
+        self.assertEqual(policy.request_filters.filters[0].spliced,
+                         ("updates.example",))
+        self.assertIn(f"request filters reloaded from {self.filters_path}: "
+                      f"filters=1 spliced=updates.example",
+                      self.listener.inspection.out.getvalue())
 
 
 class TestTheFlag(unittest.TestCase):
