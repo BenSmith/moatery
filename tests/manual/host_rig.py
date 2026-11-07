@@ -52,6 +52,10 @@ THE ROWS
             request as forwarded under the credential, and its counters
             show it named the caller (SO_ORIGINAL_DST on a host socket whose
             DNAT happened a namespace away must fall back cleanly).
+  slash     a scoped package's path, /@types%2fnode, reaches the provider
+            as /@types%2Fnode, its slash still encoded, and is answered
+            200; one whose %2F read as a slash makes a dot segment is
+            answered 400 by the inspector and never reaches the stub.
   neighbour with the container's neighbour table flushed, the request is
             served again: its dial to the loopback map has to resolve the
             gateway afresh, and the egress chain sees that ARP. The flush
@@ -83,13 +87,14 @@ THE ROWS
             request gets 502 and never arrives.
 
 `--without-rules` skips loading the netns rules and changes nothing else.
-The `premise`, `first`, `dns`, `silent`, `quic`, `h2`, `request`, `neighbour`,
-`unlisted` and `counters` rows must go red -- the inspector is never even
-activated, and with no egress chain the counters are absent -- and a run
-where they stay green is measuring nothing. `--without-dns-redirect` leaves the
-port-53 lines out of the redirect: the queries go to pasta's forwarder,
-which the egress chain drops, and `first`, `dns`, `h2`, `request`, `neighbour`,
-`unlisted` and `counters` must go red.
+The `premise`, `first`, `dns`, `silent`, `quic`, `h2`, `request`, `slash`,
+`neighbour`, `unlisted` and `counters` rows must go red -- the inspector
+is never even activated, and with no egress chain the counters are
+absent -- and a run where they stay green is measuring nothing.
+`--without-dns-redirect` leaves the port-53 lines out of the redirect:
+the queries go to pasta's forwarder, which the egress chain drops, and
+`first`, `dns`, `h2`, `request`, `slash`, `neighbour`, `unlisted` and
+`counters` must go red.
 `--broker-over-tcp` puts the broker on 127.129.0.1:8081 instead of the
 socket path, and the broker's no-TCP and other-uid rows must go red.
 `--without-neighbour-discovery` loads the egress chain without its ARP
@@ -591,6 +596,30 @@ def probe(pid, dns, secret, over_tcp):
         hit is not None,
         f"{hit}" if hit else f"records for {PROVIDER}: {forwarded}")
 
+    say("slash")
+    nonce = os.urandom(8).hex()
+    rc, code, body, err = curl_in(
+        f"https://{PROVIDER}/{nonce}/@types%2fnode", "-H",
+        f"Authorization: Bearer {PLACEHOLDER}")
+    try:
+        arrived = json.loads(body).get("path", "")
+    except ValueError:
+        arrived = ""
+    row("slash: /@types%2fnode reaches the provider as /@types%2Fnode, "
+        "answered 200",
+        rc == 0 and code == "200" and arrived == f"/{nonce}/@types%2Fnode",
+        f"curl rc={rc} http={code} {err}; the stub saw {arrived!r}")
+    dotted = os.urandom(8).hex()
+    rc, code, _, err = curl_in(
+        f"https://{PROVIDER}/{dotted}/..%2Fadmin", "-H",
+        f"Authorization: Bearer {PLACEHOLDER}")
+    row("slash: /..%2Fadmin is answered 400 and never reaches the stub, "
+        "which logged the scoped one",
+        rc == 0 and code == "400" and not stub_has(dotted)
+        and stub_has(nonce),
+        f"curl rc={rc} http={code} {err}; the stub "
+        f"{'saw' if stub_has(dotted) else 'never saw'} it")
+
     say("neighbour")
     dev = default_route_device()
     in_netns(pid, ["ip", "neigh", "flush", "dev", dev])
@@ -990,15 +1019,15 @@ def main():
                     help="leave the container for inspection")
     ap.add_argument("--without-rules", action="store_true",
                     help="skip the netns rules; premise, first, dns, "
-                         "silent, quic, h2, request, neighbour, unlisted "
-                         "and counters must go red")
+                         "silent, quic, h2, request, slash, neighbour, "
+                         "unlisted and counters must go red")
     ap.add_argument("--without-neighbour-discovery", action="store_true",
                     help="leave ARP and neighbour discovery out of the "
                          "egress chain; neighbour and unlisted must go red")
     ap.add_argument("--without-dns-redirect", action="store_true",
                     help="leave port 53 out of the redirect; first, dns, "
-                         "request, neighbour, unlisted and counters must go "
-                         "red")
+                         "h2, request, slash, neighbour, unlisted and "
+                         "counters must go red")
     ap.add_argument("--broker-over-tcp", action="store_true",
                     help="the broker on 127.129.0.1:8081; its no-TCP and "
                          "other-uid rows must go red")

@@ -140,6 +140,13 @@ AVC. With `RestrictNamespaces=yes` the filter fails closed: bwrap exits
 1 and the journal says `exit=1`, so the restriction has to stay out of
 the unit while the filter runs under bwrap.
 
+**2026-11-07, on the proving host (Fedora 44, enforcing), 42/42.** The
+slash rows: `/@types%2fnode` reached the stub as `/@types%2Fnode` and
+was answered 200, and `/..%2Fadmin` was answered 400 by the inspector
+and never reached the stub; no AVC. Under `--without-rules`, 9/40, both
+slash rows red with the rest: the requests are refused, never reaching
+an inspector.
+
 ## netns_rig.py — the listeners in the container's netns
 
 `docs/DESIGN.md`, "Netns": host_rig's container under plain pasta, with
