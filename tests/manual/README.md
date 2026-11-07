@@ -521,3 +521,25 @@ process under no new privileges. Removing `NoNewPrivileges=yes` would
 give up the hardening for a log line. The filter rows match this
 denial exactly (permission, comm and both contexts) and count it in
 their detail; any other AVC still fails the row.
+
+**The vsock probe's `module_request` denial, accepted (2026-11-07).**
+The seccomp probe opens two vsock sockets. Where one reaches the kernel
+and the vsock module is not loaded, the kernel asks to load it
+(`kmod="net-pf-40"`), and SELinux refuses `module_request` from
+`container_t` to `kernel_t`; the socket call fails and nothing else
+does. Under podman's default the vsock with an upper bit set reaches
+the kernel, and with no filter both do, so the stock container's rows
+log one and two. The 3ac10c4 run on the proving host logged exactly
+those three, unchecked because no seccomp row read the audit log. The
+two stock rows accept this denial, exactly as the filter rows match
+`nnp_transition`; the hut's own rows accept only `nnp_transition`, so
+a vsock that gets past the hut's profile, where the module is not
+loaded, fails them on the denial as well as on its errno. A host that
+has the module loaded logs nothing, and the rows hold no AVC either
+way.
+
+**2026-11-07, on the proving host (Fedora 44, enforcing), 169/169.**
+The stock rows accepted one and two `module_request` denials, the hut's
+user's and privileged root's held none. Under `--podman-seccomp`,
+167/169: those two rows red, each on its errnos and on one
+`module_request` for `net-pf-40`.

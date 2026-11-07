@@ -309,7 +309,9 @@ must go red.
 
 `--podman-seccomp` runs the workload under podman's default seccomp
 profile: seccomp's rows that the hut's user, and root in a privileged
-exec, are refused by the profile must go red. Its stock container's row
+exec, are refused by the profile must go red, on the vsock's
+`module_request` denial too where the module is not loaded. Its stock
+container's row
 and the row of what a hut does stay green, and so does the like hut's,
 which the drop-in is not on.
 
@@ -1559,26 +1561,32 @@ def seccomp_rows():
     say("seccomp")
     seccomp_drift()
     (HUT_HOME / SECCOMP_PROBE).write_text(SECCOMP_SCRIPT)
+    global audit_mark
+    audit_mark = audit_size()
+    reached = (ACCEPTED_AVC, VSOCK_AVC)
     stock = stock_probe()
     upper = stock.get("vsock, upper bit")
-    row("seccomp: under podman's default, every call the probe makes "
+    filter_row(
+        "seccomp: under podman's default, every call the probe makes "
         "reaches the kernel, a vsock with an upper bit set among them",
         not differing(stock, {**SECCOMP_KERNEL, **SECCOMP_ALLOWED})
         and stock.get("vsock") == "EPERM"
         and upper not in (None, "EPERM", "ENOSYS"),
         f"differing: {differing(stock, SECCOMP_KERNEL)}; vsock "
-        f"{stock.get('vsock')}, with an upper bit {upper}")
+        f"{stock.get('vsock')}, with an upper bit {upper}", reached)
     bare = stock_probe("--security-opt", "seccomp=unconfined")
-    row("seccomp: with no filter, io_uring and a handle open, which "
+    filter_row(
+        "seccomp: with no filter, io_uring and a handle open, which "
         "podman's default refuses too, reach the kernel",
         not differing(bare, SECCOMP_UNFILTERED),
-        f"differing: {differing(bare, SECCOMP_UNFILTERED)}")
+        f"differing: {differing(bare, SECCOMP_UNFILTERED)}", reached)
     mine = seccomp_probe("--user", USER)
-    row("seccomp: the hut's user is refused, by the profile, a namespace, "
+    filter_row(
+        "seccomp: the hut's user is refused, by the profile, a namespace, "
         "a mount, ptrace, the keyring, io_uring, a handle open, a vsock "
         "however its family is written, an RDS, an SCTP, an xfrm, a "
         "generic netlink and a sock_diag socket, and a line discipline "
-        "however its ioctl is written",
+        "however its ioctl is written, and no vsock reaches the kernel",
         not differing(mine, SECCOMP_REFUSED),
         f"differing: {differing(mine, SECCOMP_REFUSED)}")
     row("seccomp: and what a hut does reaches the kernel: a thread, an "
@@ -1587,8 +1595,10 @@ def seccomp_rows():
         not differing(mine, SECCOMP_ALLOWED),
         f"differing: {differing(mine, SECCOMP_ALLOWED)}")
     root = seccomp_probe("--privileged", "--user", "0")
-    row("seccomp: a shell podman exec --privileged opens, as root, is "
-        "refused every one of them as well",
+    filter_row(
+        "seccomp: a shell podman exec --privileged opens, as root, is "
+        "refused every one of them as well, and no vsock reaches the "
+        "kernel",
         not differing(root, SECCOMP_REFUSED),
         f"differing: {differing(root, SECCOMP_REFUSED)}")
 
@@ -2917,23 +2927,32 @@ ACCEPTED_AVC = ("{ nnp_transition }", 'comm="python3"',
                 "tcontext=unconfined_u:unconfined_r:container_runtime_t:")
 
 
-def accepted_avc(line):
-    return all(part in line for part in ACCEPTED_AVC)
+# A vsock socket that reaches the kernel in a container, where the vsock
+# module is not loaded, asks to load it, and container_t may not. Logged
+# only where the probe's vsock gets past the filter. Accepted:
+# tests/manual/README.md, "The vsock probe's module_request denial".
+VSOCK_AVC = ("{ module_request }", 'comm="python3"', 'kmod="net-pf-40"',
+             "scontext=system_u:system_r:container_t:",
+             "tcontext=system_u:system_r:kernel_t:")
 
 
-def filter_row(label, ok, detail):
+def accepted_avc(line, accepted=(ACCEPTED_AVC,)):
+    return any(all(part in line for part in parts) for parts in accepted)
+
+
+def filter_row(label, ok, detail, accepted=(ACCEPTED_AVC,)):
     """A row that also holds no AVC was logged since the last one, apart
-    from the listeners' accepted one."""
+    from the accepted ones: the listeners' unless told otherwise."""
     avcs = new_avcs()
-    accepted = 0
+    count = 0
     if avcs:
-        accepted = sum(map(accepted_avc, avcs))
-        avcs = [ln for ln in avcs if not accepted_avc(ln)]
+        count = sum(accepted_avc(ln, accepted) for ln in avcs)
+        avcs = [ln for ln in avcs if not accepted_avc(ln, accepted)]
     row(label, ok and avcs == [],
         f"{detail}; AVCs: "
         + ("unreadable" if avcs is None else str(avcs[:3]) if avcs
            else "none")
-        + (f" ({accepted} accepted nnp_transition)" if accepted else ""))
+        + (f" ({count} accepted)" if count else ""))
 
 
 def post(path, body):
