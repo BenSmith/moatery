@@ -88,9 +88,9 @@ THE ROWS
 
 `--without-rules` skips loading the netns rules and changes nothing else.
 The `premise`, `first`, `dns`, `silent`, `quic`, `h2`, `request`, `slash`,
-`neighbour`, `unlisted` and `counters` rows must go red -- the inspector
-is never even activated, and with no egress chain the counters are
-absent -- and a run where they stay green is measuring nothing.
+`neighbour`, `unlisted`, `counters` and `filter` rows must go red -- the
+inspector is never even activated, and with no egress chain the counters
+are absent -- and a run where they stay green is measuring nothing.
 `--without-dns-redirect` leaves the port-53 lines out of the redirect:
 the queries go to pasta's forwarder, which the egress chain drops, and
 `first`, `dns`, `h2`, `request`, `slash`, `neighbour`, `unlisted` and
@@ -1020,7 +1020,7 @@ def main():
     ap.add_argument("--without-rules", action="store_true",
                     help="skip the netns rules; premise, first, dns, "
                          "silent, quic, h2, request, slash, neighbour, "
-                         "unlisted and counters must go red")
+                         "unlisted, counters and filter must go red")
     ap.add_argument("--without-neighbour-discovery", action="store_true",
                     help="leave ARP and neighbour discovery out of the "
                          "egress chain; neighbour and unlisted must go red")
