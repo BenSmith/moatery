@@ -114,8 +114,9 @@ Examples and images:
 Python 3.14 or later (each Fedora's own), standard library only;
 OpenSSL 3.5 (`openssl` on `PATH`, for the CA and the per-host
 certificates); systemd 256 or later for `LoadCredentialEncrypted=` in a
-user unit; podman with pasta for the container placements, 5.3 or later
-for moathut.
+user unit; podman with pasta, and shadow-utils' `newuidmap` and
+`newgidmap`, for the container placements; podman 5.3 or later for
+moathut.
 
 ## Installing
 

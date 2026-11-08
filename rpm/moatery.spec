@@ -21,10 +21,12 @@ Requires:       python(abi) = %{python3_version}
 # invocations.
 Requires:       openssl >= 3.5
 # The container placements: rules loaded into the workload's netns with nft,
-# its traffic carried by pasta.
+# its traffic carried by pasta, and the user's subordinate ids mapped into
+# the container by newuidmap and newgidmap.
 Recommends:     podman
 Recommends:     passt
 Recommends:     nftables
+Recommends:     shadow-utils
 # moathut's completion, which bash-completion loads.
 Suggests:       bash-completion
 

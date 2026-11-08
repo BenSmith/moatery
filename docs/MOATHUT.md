@@ -663,7 +663,9 @@ from `~/.config/moatery/hut` and credential names, and
 ## Requirements
 
 The moatery programs; podman 5.3 or later (quadlet `.pod` units with
-`DNS=`), with pasta; util-linux's `unshare`, `nsenter` and `umount`;
+`DNS=`), with pasta; shadow-utils' `newuidmap` and `newgidmap`, with the
+user's ranges in `/etc/subuid` and `/etc/subgid`; util-linux's `unshare`,
+`nsenter` and `umount`;
 systemd 256 or later (`LoadCredentialEncrypted=` in a user unit); a
 lingering user (`loginctl enable-linger`) for a hut to outlive the login
 session.
