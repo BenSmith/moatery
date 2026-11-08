@@ -1,9 +1,9 @@
 # The unit gate: ruff (syntax, names, imports, 79 columns), then the
 # suite under coverage of the shipped code, failing under .coveragerc's
 # floor. Runs on every push and pull request; .github/workflows/unit.yml
-# is the same gate on GitHub. A push to main that passes it publishes the
-# RPM to this forge's RPM registry, the dnf repository the homelab's
-# hypervisor images install moatery from.
+# is the same gate on GitHub. A push to main that passes it publishes an
+# RPM per Fedora to this forge's RPM registry, the dnf repository the
+# homelab's hypervisor images install moatery from.
 #
 # `just coverage` runs the tests, so this job gates both. The python
 # tooling is installed here when the runner does not carry it.
@@ -36,44 +36,52 @@ jobs:
       - name: Test under coverage
         run: just coverage
 
+  # The RPM installs into the Python of the Fedora it is built on, so each
+  # Fedora gets its own build, tested on it, in the registry group named
+  # for it. The list is .packit.yaml's Copr targets.
   publish:
     needs: unit
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: native
-    timeout-minutes: 10
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        fedora_version: [43, 44, 45]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Tooling
-        run: |
-          sudo dnf install -y just rpm-build git-core python3-rpm-macros \
-            openssl
-
       - name: Build RPM
-        # The runner is persistent, so rpmbuild/ can hold earlier builds.
+        env:
+          FEDORA_VERSION: ${{ matrix.fedora_version }}
+          # Unique to this run and this matrix entry: jobs share the
+          # runner's podman store.
+          IMAGE: localhost/moatery-rpm:ci-${{ github.run_id }}-${{ matrix.fedora_version }}
         run: |
           rm -rf rpmbuild
-          just rpm
+          mkdir -p rpmbuild
+          sudo podman build --ignorefile rpm/containerignore \
+            -f rpm/Containerfile --build-arg FEDORA_VERSION="$FEDORA_VERSION" \
+            -t "$IMAGE" .
+          ctr=$(sudo podman create "$IMAGE" none)
+          trap 'sudo podman rm -f "$ctr" >/dev/null; sudo podman rmi -f "$IMAGE" >/dev/null' EXIT
+          sudo podman cp "$ctr:/moatery.rpm" rpmbuild/moatery.rpm
+          rpm -qp rpmbuild/moatery.rpm
 
       - name: Publish RPM
         env:
           PKG_PUBLISH_TOKEN: ${{ secrets.PKG_PUBLISH_TOKEN }}
-          UPLOAD: ${{ github.server_url }}/api/packages/${{ github.repository_owner }}/rpm/upload
+          UPLOAD: ${{ github.server_url }}/api/packages/${{ github.repository_owner }}/rpm/fedora-${{ matrix.fedora_version }}/upload
         run: |
-          set -- rpmbuild/RPMS/noarch/moatery-*.rpm
-          if [ "$#" -ne 1 ]; then
-            echo "::error::expected one moatery RPM, got: $*"
-            exit 1
-          fi
+          rpm=rpmbuild/moatery.rpm
           log=$(mktemp)
           trap 'rm -f "$log"' EXIT
           code=$(curl -sS -o "$log" -w '%{http_code}' \
             -H "Authorization: token ${PKG_PUBLISH_TOKEN}" \
-            --upload-file "$1" "$UPLOAD")
+            --upload-file "$rpm" "$UPLOAD")
           if [ "$code" != 201 ]; then
-            echo "::error::uploading $1: HTTP $code"
+            echo "::error::uploading $rpm: HTTP $code"
             cat "$log"
             exit 1
           fi
-          echo "published $(basename "$1")"
+          echo "published $(rpm -qp "$rpm") to fedora-${{ matrix.fedora_version }}"

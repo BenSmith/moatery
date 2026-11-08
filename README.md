@@ -143,7 +143,8 @@ suite executes as subprocesses — and fails below the floor in
 `.coveragerc`. `.github/workflows/unit.yml` runs `just lint` and `just
 coverage` on every push and pull request, in Fedora as an ordinary
 user, and `.forgejo/workflows/unit.yml` the same on a Forgejo forge,
-which also publishes main's RPM to the forge's RPM registry.
+which also publishes main's RPM to the forge's RPM registry: one build
+per Fedora, tested on it, in the group `fedora-<version>`.
 
 ## Status
 

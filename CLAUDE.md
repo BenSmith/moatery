@@ -83,7 +83,9 @@ python3 tests/manual/hut_rig.py             # same; a hut, through moathut
 Forgejo forge) runs `just lint` and `just coverage` on every push and
 pull request; `just rpm-image` runs `just test` too. The Forgejo one then
 publishes main's RPM to the forge's RPM registry (the `PKG_PUBLISH_TOKEN`
-secret, a token with package write access).
+secret, a token with package write access): one `just rpm-image` build
+per Fedora in `.packit.yaml`'s targets, in the group `fedora-<version>`,
+since the RPM installs into that Fedora's Python.
 
 `tests/__init__.py` puts the checkout root on `sys.path`; test modules
 import as `tests.<name>`, and `load_script()` imports the extension-less

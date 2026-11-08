@@ -58,8 +58,10 @@ rpm:
 
 # the RPM as an image, localhost/moatery-rpm:VERSION, built and tested in
 # a container from this checkout
+# FEDORA_VERSION, when set, is the Fedora the RPM is built and tested on.
 rpm-image:
     podman build --ignorefile rpm/containerignore -f rpm/Containerfile \
+        ${FEDORA_VERSION:+--build-arg FEDORA_VERSION="$FEDORA_VERSION"} \
         -t "localhost/moatery-rpm:$(cat VERSION)" .
 
 rpm-clean:
