@@ -9,9 +9,10 @@ a VM), `docs/POLICY.md` (the policy document) and
 `docs/INTERFACE.md` (the names other programs import and the status
 file paths they read). `moathut` lays the netns placement out as
 long-lived huts: `docs/MOATHUT-GUIDE.md` is its guide, `docs/MOATHUT.md`
-its reference, `docs/MOATHUT-CLAUDE-CODE.md` Claude Code in a hut. `examples/` holds the host placement's user units and a
-logrotate configuration, the netns placement as a quadlet pod, and a
-bootc image; the RPM installs them with the docs.
+its reference, `docs/MOATHUT-CLAUDE-CODE.md` Claude Code in a hut.
+`examples/` holds the host placement's user units and a logrotate
+configuration, the netns placement as a quadlet pod, and a bootc image;
+the RPM installs them with the docs.
 
 ## Layout
 
@@ -33,8 +34,9 @@ bootc image; the RPM installs them with the docs.
 ## Conventions
 
 - **Stdlib only.** No third-party imports in anything that ships. System
-  `python3` (3.14), `unittest`, no venv, no package manager, no formatter
-  (measured and declined; it explodes paired argv lists). 79 columns.
+  `python3` (3.14 on F43/44, 3.15 on F45), `unittest`, no venv, no package
+  manager, no formatter (measured and declined; it explodes paired argv
+  lists). 79 columns.
 - **Entrypoints are `main()` shims.** Logic lives in importable modules;
   a script owns only what the process boundary owns (argv, signals, fd
   recovery, exit status).

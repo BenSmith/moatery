@@ -111,10 +111,11 @@ Examples and images:
 
 ## Requirements
 
-Python 3.14, standard library only; OpenSSL 3.5 (`openssl` on `PATH`, for
-the CA and the per-host certificates); systemd 256 or later for
-`LoadCredentialEncrypted=` in a user unit; podman with pasta for the
-container placements, 5.3 or later for moathut.
+Python 3.14 or later (each Fedora's own), standard library only;
+OpenSSL 3.5 (`openssl` on `PATH`, for the CA and the per-host
+certificates); systemd 256 or later for `LoadCredentialEncrypted=` in a
+user unit; podman with pasta for the container placements, 5.3 or later
+for moathut.
 
 ## Installing
 

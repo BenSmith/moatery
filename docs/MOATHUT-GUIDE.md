@@ -14,7 +14,7 @@ command does exactly, the files and units, and what is refused and why.
 
 You need, on the host:
 
-- Python 3.14 and OpenSSL 3.5 or later;
+- Python 3.14 or later and OpenSSL 3.5 or later;
 - podman 5.3 or later, with pasta, and nftables;
 - systemd 256 or later;
 - the moatery RPM, which carries `moathut` and the programs it
@@ -114,9 +114,10 @@ Every start is a fresh container from the image. What survives a stop:
 
 - **The hut's home.** It has its own home directory, separate from
   yours, so anything installed under it (`pip install --user`, tools in
-  `~/.local`) is kept, and `~/.local/bin` is on the hut's `PATH`. SELinux keeps every other hut and container out
-  of it; you can still reach it from the host, but copy with `moathut
-  cp` (below) rather than into it there.
+  `~/.local`) is kept, and `~/.local/bin` is on the hut's `PATH`.
+  SELinux keeps every other hut and container out of it; you can still
+  reach it from the host, but copy with `moathut cp` (below) rather than
+  into it there.
 - **Your mounts.** These are your own directories. Any hut can mount
   the same directory, so two huts can work on one project.
 
