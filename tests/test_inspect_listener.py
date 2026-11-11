@@ -1165,6 +1165,16 @@ class TestPolicyRefusals(unittest.TestCase):
                 with self.subTest(entry=entry):
                     self._refused({"policy": [entry]}, '["*"]')
 
+    def test_a_credential_that_names_none_is_refused(self):
+        """Dropped, it sent the host unbrokered: the workload's placeholder
+        went to the origin, which answered 401 for what was a typo."""
+        for bad in (7, "", "  ", None, True, ["k"]):
+            with self.subTest(bad=bad):
+                self._refused(
+                    {"policy": [{"host": "a.example", "methods": ["*"],
+                                 "paths": ["*"], "credential": bad}]},
+                    "'credential'", repr(bad))
+
     def test_methods_or_paths_as_a_string_is_refused(self):
         for key in ("methods", "paths"):
             with self.subTest(key=key):

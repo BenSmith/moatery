@@ -320,14 +320,11 @@ is refused rather than one half being ignored:
 - a `policy` entry whose host overlaps a `splice` pattern.
 
 Also refused: a key the document or an entry does not take, an entry
-without `methods` or `paths`, a key of the wrong type (a list that is not a list, a name
-that is empty or not a string, an entry with no `host`, `methods` or
-`paths` given as a string), and an `http2` list that names a host (see
-[HTTP/2](#http2)).
-
-A `credential` that is not a non-empty string is ignored rather than
-refused; that request then goes to the origin unbrokered, and its record
-line carries no credential.
+without `methods` or `paths`, a key of the wrong type (a list that is not
+a list, a name that is empty or not a string, an entry with no `host`,
+`methods` or `paths` given as a string), a `credential` that is not a
+non-empty string, `null` included (an entry without one leaves the key
+out), and an `http2` list that names a host (see [HTTP/2](#http2)).
 
 ## Request filters
 

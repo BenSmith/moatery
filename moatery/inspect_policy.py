@@ -177,13 +177,14 @@ def load_policy(path):
                         f"{path}: policy entry {item['host']!r}: {key!r} "
                         f"holds {member!r}, which is not a "
                         f"{'method' if key == 'methods' else 'path pattern'}")
-        # Absent and null are the same. A non-string credential is dropped
-        # rather than refused, so the host goes unbrokered and says so in the
-        # record instead of failing the start.
+        # Absent is unbrokered. Present, it names a credential: anything
+        # else would send the placeholder to the origin unbrokered.
         credential = item.get("credential")
-        if not isinstance(credential, str) or not credential.strip():
-            credential = None
-        else:
+        if "credential" in item:
+            if not isinstance(credential, str) or not credential.strip():
+                raise ValueError(
+                    f"{path}: policy entry {item['host']!r}: 'credential' "
+                    f"is {credential!r}, which is not a credential's id")
             credential = credential.strip()
         policy.append(VmPolicyEntry(
             host=item["host"],
