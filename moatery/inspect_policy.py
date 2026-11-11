@@ -159,18 +159,19 @@ def load_policy(path):
                              f"host: {item!r}")
         _refuse_unknown(item, ENTRY_KEYS, path,
                         f"policy entry {item['host']!r}")
-        # None and [] differ: absent is any, empty is none. Methods are
+        # Both are stated: `["*"]` is any, `[]` is none. Methods are
         # uppercased here too, since permits compares `method.upper()` and a
         # hand-written `["get"]` would otherwise deny every GET.
         methods = item.get("methods")
         paths = item.get("paths")
         for key, value in (("methods", methods), ("paths", paths)):
             # A string is refused rather than iterated as one-letter members.
-            if value is not None and not isinstance(value, list):
+            if not isinstance(value, list):
                 raise ValueError(
-                    f"{path}: policy entry {item['host']!r}: {key!r} is not "
-                    f"a list or null")
-            for member in value or ():
+                    f"{path}: policy entry {item['host']!r}: {key!r} is "
+                    f"{'not a list' if key in item else 'missing'}; "
+                    f'["*"] permits any')
+            for member in value:
                 if not isinstance(member, str) or not member.strip():
                     raise ValueError(
                         f"{path}: policy entry {item['host']!r}: {key!r} "
@@ -186,9 +187,8 @@ def load_policy(path):
             credential = credential.strip()
         policy.append(VmPolicyEntry(
             host=item["host"],
-            methods=None if methods is None else tuple(
-                m.upper() for m in methods),
-            paths=None if paths is None else tuple(paths),
+            methods=tuple(m.upper() for m in methods),
+            paths=tuple(paths),
             credential=credential))
     _refuse_inert_entries(path, tls, policy, splice)
     return Policy(tls=tls, hosts=tuple(hosts),

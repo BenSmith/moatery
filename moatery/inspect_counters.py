@@ -194,8 +194,8 @@ def _lists(policy):
         "splice": list(policy.splice) if policy else [],
         "policy": [
             {"host": e.host,
-             "methods": None if e.methods is None else list(e.methods),
-             "paths": None if e.paths is None else list(e.paths),
+             "methods": ["*"] if e.methods is None else list(e.methods),
+             "paths": ["*"] if e.paths is None else list(e.paths),
              "credential": e.credential}
             for e in policy.policy
         ] if policy else [],

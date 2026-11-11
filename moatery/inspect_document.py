@@ -132,9 +132,10 @@ def path_readings(path):
 class VmPolicyEntry(NamedTuple):
     """One policy entry, normalised: a host pattern and what it permits.
 
-    `methods` and `paths` are None where the key was absent, which means
-    any; an empty tuple means none. Collapsing the two fails closed, and so
-    quietly.
+    A `methods` holding `"*"` is any method, and `paths` holding `"*"`
+    any path, as a pattern; an empty tuple is none. None is any too: a
+    document cannot say it, but a caller building entries from its own
+    configuration can.
     """
 
     host: str
@@ -146,7 +147,8 @@ class VmPolicyEntry(NamedTuple):
         """Whether this entry permits one method on one path. `methods` and
         `paths` are a cross product.
         """
-        if self.methods is not None and method.upper() not in self.methods:
+        if (self.methods is not None and "*" not in self.methods
+                and method.upper() not in self.methods):
             return False
         if self.paths is not None and not any(
                 fnmatch.fnmatchcase(path, pattern) for pattern in self.paths):

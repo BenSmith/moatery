@@ -222,7 +222,7 @@ def write_policy(path):
         "hosts": [PROVIDER],
         "internal_expected": [],
         "splice": [],
-        "policy": [{"host": PROVIDER, "methods": None, "paths": None,
+        "policy": [{"host": PROVIDER, "methods": ["*"], "paths": ["*"],
                     "credential": CREDENTIAL}],
     }, indent=2) + "\n")
     path.chmod(0o644)

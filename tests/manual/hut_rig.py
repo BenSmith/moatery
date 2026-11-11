@@ -3366,7 +3366,8 @@ def material():
     POLICY.write_text(json.dumps({
         "tls": "inspect", "hosts": [], "internal_expected": [],
         "splice": [], "policy": [
-            {"host": PROVIDER, "credential": CREDENTIAL}]}, indent=2) + "\n")
+            {"host": PROVIDER, "methods": ["*"], "paths": ["*"],
+             "credential": CREDENTIAL}]}, indent=2) + "\n")
     PLAIN_POLICY.write_text(json.dumps({"hosts": [PROVIDER]}) + "\n")
     BAD_EDITOR.write_text("#!/bin/sh\nprintf '{\"hosts\": \"x\"}' > \"$1\"\n")
     BAD_EDITOR.chmod(0o755)
@@ -3412,7 +3413,8 @@ def material():
         {"host": "*", "run": str(LOGGED)}]}) + "\n")
     STAR_POLICY.write_text(json.dumps({
         "hosts": [SPLICED], "splice": [SPLICED], "policy": [
-            {"host": PROVIDER, "credential": CREDENTIAL}]}) + "\n")
+            {"host": PROVIDER, "methods": ["*"], "paths": ["*"],
+             "credential": CREDENTIAL}]}) + "\n")
     for editor, document in ((STAR_FILTERS_EDITOR, STAR_FILTERS),
                              (STAR_POLICY_EDITOR, STAR_POLICY)):
         editor.write_text(f"#!/bin/sh\ncp '{document}' \"$1\"\n")

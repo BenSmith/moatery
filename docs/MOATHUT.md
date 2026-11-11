@@ -196,7 +196,8 @@ host the workload reaches has to be listed.
   asked for that no list admits. Both leave out what the policy now lets
   through.
 - **allow** only widens. A host no list names goes into `hosts`, or,
-  with `--method` or `--path`, into an entry of its own. A host `hosts`
+  with `--method` or `--path`, into an entry of its own, where the one
+  not given is `["*"]`. A host `hosts`
   admits is left alone: an entry for it would confine it to the entry. A
   host entries govern takes another entry, since `hosts` is not
   consulted for it, and so needs `--method` or `--path`; if it is

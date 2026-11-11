@@ -859,7 +859,8 @@ class TestPolicyLoading(unittest.TestCase):
             "hosts": ["example.com"],
             "internal": [{"host": "nas.example.com", "reason": "nas"}],
             "splice": [{"host": "pinned.example.com", "reason": "pinned"}],
-            "policy": [{"host": "api.example.com", "methods": ["GET"]}]})
+            "policy": [{"host": "api.example.com", "methods": ["GET"],
+                        "paths": ["*"]}]})
         self.assertEqual(set(doc), set(Policy._fields) - NON_DOCUMENT_FIELDS)
         # The other direction of the exemption: a digest that leaked INTO the
         # document would pass the line above unnoticed.
@@ -920,23 +921,16 @@ class TestPolicyLoading(unittest.TestCase):
         self.assertEqual(entry.methods, ("GET",))
         self.assertEqual(entry.paths, ("/v2/*",))
 
-    def test_an_absent_key_survives_the_LOAD_as_absent(self):
-        """null and [] are different answers and the loader must keep them
-        apart, not only the writer.
-
-        `tuple(methods or ())` reads correct and turns every unconstrained
-        entry into one that permits NOTHING. That fails closed, so it fails
-        quietly: the workload reaches none of its hosts, every unit test about
-        the matcher still passes because the matcher was never wrong, and the
-        only symptom is a guest that gets a 403 for a request its config
-        permits.
-        """
-        path = self._write(json.dumps(policy_document({
-            "policy": [{"host": "a.example"}]})))
-        entry, = load_policy(path).policy
-        self.assertIsNone(entry.methods)
-        self.assertIsNone(entry.paths)
-        self.assertTrue(entry.permits("DELETE", "/anything"))
+    def test_a_star_is_any_and_an_empty_list_none(self):
+        """`["*"]` and `[]` are different answers and the loader keeps them
+        apart: `tuple(methods or ())` would read correct and turn every
+        unconstrained entry into one that permits nothing, quietly."""
+        path = self._write(json.dumps(policy_document({"policy": [
+            {"host": "a.example", "methods": ["*"], "paths": ["*"]},
+            {"host": "b.example", "methods": [], "paths": ["*"]}]})))
+        any_, none = load_policy(path).policy
+        self.assertTrue(any_.permits("DELETE", "/anything"))
+        self.assertFalse(none.permits("GET", "/"))
 
     def test_an_http2_list_naming_a_host_is_refused(self):
         """Ignored, it would leave that host's h2-only client failing with
@@ -991,17 +985,6 @@ class TestPolicyLoading(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             load_policy(path)
         self.assertIn("7", str(caught.exception))
-
-    def test_an_absent_key_survives_the_normalisation(self):
-        """None and () are still different after it. A normaliser that turned
-        an absent `methods` into an empty tuple would make every
-        unconstrained entry permit nothing."""
-        path = self._write(json.dumps({
-            "tls": "inspect", "hosts": ["a.example"],
-            "policy": [{"host": "a.example"}]}))
-        entry, = load_policy(path).policy
-        self.assertIsNone(entry.methods)
-        self.assertIsNone(entry.paths)
 
     def test_a_missing_document_is_an_error_not_an_empty_policy(self):
         """An empty `hosts` list is a legal configuration, so a listener that
@@ -1140,7 +1123,8 @@ class TestPolicyRefusals(unittest.TestCase):
             with self.subTest(key=key, bad=bad):
                 self._refused(
                     {"tls": "inspect",
-                     "policy": [{"host": "a.example", key: ["x", bad]}]},
+                     "policy": [{"host": "a.example", "methods": ["*"],
+                                 "paths": ["*"], key: ["x", bad]}]},
                     repr(key), repr(bad))
 
     def test_an_unknown_key_is_refused_naming_it(self):
@@ -1170,17 +1154,30 @@ class TestPolicyRefusals(unittest.TestCase):
     def test_an_entry_with_an_empty_host_is_refused(self):
         self._refused({"tls": "inspect", "policy": [{"host": " "}]}, "host")
 
+    def test_an_absent_or_null_methods_or_paths_is_refused(self):
+        """Absent read as any, so a misspelt `methods` widened its entry
+        to every method. Both are stated now, `["*"]` for any."""
+        for key in ("methods", "paths"):
+            for entry in ({"host": "a.example", key: ["*"]},
+                          {"host": "a.example", key: ["*"],
+                           ("paths" if key == "methods" else "methods"):
+                           None}):
+                with self.subTest(entry=entry):
+                    self._refused({"policy": [entry]}, '["*"]')
+
     def test_methods_or_paths_as_a_string_is_refused(self):
         for key in ("methods", "paths"):
             with self.subTest(key=key):
                 self._refused(
                     {"tls": "inspect",
-                     "policy": [{"host": "a.example", key: "GET"}]},
+                     "policy": [{"host": "a.example", "methods": ["*"],
+                                 "paths": ["*"], key: "GET"}]},
                     repr(key))
 
     def test_policy_entries_under_whole_workload_splice_are_refused(self):
         self._refused({"tls": "splice",
-                       "policy": [{"host": "a.example"}]}, "splice")
+                       "policy": [{"host": "a.example", "methods": ["*"],
+                                   "paths": ["*"]}]}, "splice")
 
     def test_a_policy_host_in_the_splice_list_is_refused(self):
         for pattern in ("a.example", "*.example", "A.Example."):
@@ -1188,13 +1185,14 @@ class TestPolicyRefusals(unittest.TestCase):
                 self._refused(
                     {"tls": "inspect", "splice": [pattern],
                      "policy": [{"host": "a.example",
-                                 "methods": ["GET"]}]},
+                                 "methods": ["GET"], "paths": ["*"]}]},
                     "'a.example'", repr(pattern), "'splice'")
 
     def test_lists_that_do_not_overlap_the_policy_still_load(self):
         policy = self._load(
             {"tls": "inspect", "splice": ["cdn.example"],
-             "policy": [{"host": "api.example", "methods": ["GET"]}]})
+             "policy": [{"host": "api.example", "methods": ["GET"],
+                         "paths": ["*"]}]})
         self.assertTrue(policy.splices("cdn.example"))
         self.assertFalse(policy.splices("api.example"))
 
@@ -1205,7 +1203,8 @@ class TestPolicyRefusals(unittest.TestCase):
         terminated and policed rather than spliced."""
         policy = self._load(
             {"tls": "inspect", "splice": ["*b.example.com"],
-             "policy": [{"host": "a*.example.com", "methods": ["GET"]}]})
+             "policy": [{"host": "a*.example.com", "methods": ["GET"],
+                         "paths": ["*"]}]})
         self.assertTrue(policy.governs("ab.example.com"))
         self.assertFalse(policy.splices("ab.example.com"))
         self.assertTrue(policy.splices("xb.example.com"))
@@ -4515,12 +4514,13 @@ class TestCounters(unittest.TestCase):
 
     def test_the_reported_policy_carries_the_rules_and_not_just_the_names(self):
         """Which hosts are governed is half the question; what they are
-        governed BY is the half an operator reads this file for. An absent key
-        stays null, because null and [] are different answers here too."""
+        governed BY is the half an operator reads this file for. An entry
+        built with None, which no document can say, reports `["*"]`, the
+        document's own word for it, and not [], which means none."""
         _, listener, _ = self._listener(
             policy=(("api.example", None, ("/v1/*",)),))
         entry, = listener.status()["lists"]["policy"]
-        self.assertIsNone(entry["methods"])
+        self.assertEqual(entry["methods"], ["*"])
         self.assertEqual(entry["paths"], ["/v1/*"])
 
     def test_the_lists_key_names_every_list_the_policy_holds(self):
@@ -4824,7 +4824,7 @@ class TestPolicyReload(unittest.TestCase):
         and the GET the old admitted is still forwarded."""
         listener = self._listener({"tls": "inspect", "hosts": ["a.example"]})
         self._write({"tls": "inspect", "policy": [
-            {"host": "a.example", "methods": ["POST"]}]})
+            {"host": "a.example", "methods": ["POST"], "paths": ["*"]}]})
         narrowed = load_policy(self.path)
         insp = listener.inspection
 

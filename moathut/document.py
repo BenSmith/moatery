@@ -37,11 +37,8 @@ def allow(doc, policy, host, methods=(), paths=()):
         if not path.startswith(("/", "*")):
             raise AllowRefused(f"--path {path!r} is matched against a "
                                "request's path, which begins with /")
-    entry = {"host": host}
-    if methods:
-        entry["methods"] = methods
-    if paths:
-        entry["paths"] = paths
+    entry = {"host": host, "methods": methods or ["*"],
+             "paths": paths or ["*"]}
     doc = json.loads(json.dumps(doc))
     if policy.governs(host):
         if not (methods or paths):

@@ -11,9 +11,9 @@ tests were written for: a network table with `hosts`, `tls`, and
 the document's `internal_expected`, the key the reader takes.
 
 What it normalises is what the document's vocabulary (moatery/inspect_document)
-says a writer normalises: `methods` uppercased, `methods` and `paths` null
-where absent and never an empty list in their place, and `credential`
-carried only on the entries that set one.
+says a writer normalises: `methods` uppercased, `methods` and `paths`
+`["*"]` where the table leaves them out and never an empty list in their
+place, and `credential` carried only on the entries that set one.
 """
 
 from moatery.inspect_document import TLS_DEFAULT
@@ -30,7 +30,7 @@ def _hosts_of(net, key):
 
 def _list(value, *, upper=False):
     if value is None:
-        return None
+        return ["*"]
     if not isinstance(value, list):
         return []
     return [item.upper() if upper else item

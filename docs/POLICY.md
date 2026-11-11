@@ -25,7 +25,7 @@ looks up that no list admits.
   "policy": [
     {"host": "api.anthropic.com", "methods": ["POST"],
      "paths": ["/v1/messages"], "credential": "anthropic"},
-    {"host": "github.com", "methods": ["GET"]}
+    {"host": "github.com", "methods": ["GET"], "paths": ["*"]}
   ]
 }
 ```
@@ -42,8 +42,9 @@ This one lets the workload:
 - reach `updates.example.net`, whose TLS is passed through undecrypted,
   so its traffic is checked by name only.
 
-Every key is optional. An absent list is an empty one; `{}` is a valid
-document that admits nothing.
+Every top-level key is optional. An absent list is an empty one; `{}` is
+a valid document that admits nothing. An entry states its `methods` and
+`paths`.
 
 ## Keys
 
@@ -80,14 +81,14 @@ network error. The reason is in the record, not the response.
 ```
 
 - `host` (required): a pattern, as above.
-- `methods`: absent or `null` means any method. A list, compared
-  uppercased. An empty list permits no method.
-- `paths`: absent or `null` means any path. A list of `fnmatch` patterns,
-  case-sensitive, matched against the request's path **without its
-  query**, after percent-decoding of unreserved characters, dot-segment
-  resolution and collapsing of duplicate slashes. `*` matches `/`. An
-  empty list permits no path. A path holding an encoded slash is matched
-  twice (see "Encoded slashes").
+- `methods` (required): a list, compared uppercased. `["*"]` permits any
+  method, and an empty list none.
+- `paths` (required): a list of `fnmatch` patterns, case-sensitive,
+  matched against the request's path **without its query**, after
+  percent-decoding of unreserved characters, dot-segment resolution and
+  collapsing of duplicate slashes. `*` matches `/`, so `["*"]` permits
+  any path; an empty list permits none. A path holding an encoded slash
+  is matched twice (see "Encoded slashes").
 - `credential`: the id of a credential the broker holds for this host.
   It belongs to the HOST, not to the entry: present on any entry matching
   a host, it sends every permitted request to that host to the broker
@@ -114,8 +115,9 @@ A host that any matching entry gives a `credential` is brokered: every
 request to it that the entries permit goes to the broker named by
 `moat-inspect --broker`, including a request only a credential-less
 entry permits, and the broker attaches the real credential. So
-`{"host": "api.x", "methods": ["GET"]}` beside
-`{"host": "api.x", "methods": ["POST"], "credential": "k"}` brokers the
+`{"host": "api.x", "methods": ["GET"], "paths": ["*"]}` beside
+`{"host": "api.x", "methods": ["POST"], "paths": ["*"], "credential":
+"k"}` brokers the
 GET too. The broker selects the credential by the request's `Host`,
 from its own `--host HOST=ID` flags, so the two must agree: the entry's
 `credential` names the id in the record, and the broker's flag decides
@@ -317,9 +319,8 @@ is refused rather than one half being ignored:
   method, path or credential applies;
 - a `policy` entry whose host overlaps a `splice` pattern.
 
-Also refused: a key the document or an entry does not take (a
-misspelt `methods` would otherwise read as absent, permitting any
-method), a key of the wrong type (a list that is not a list, a name
+Also refused: a key the document or an entry does not take, an entry
+without `methods` or `paths`, a key of the wrong type (a list that is not a list, a name
 that is empty or not a string, an entry with no `host`, `methods` or
 `paths` given as a string), and an `http2` list that names a host (see
 [HTTP/2](#http2)).

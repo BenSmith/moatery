@@ -649,14 +649,17 @@ class TestCredentials(unittest.TestCase):
         return brokering(_policy(self, entries, ["pypi.org"]), load)
 
     def test_a_policy_with_no_credential_has_no_broker(self):
-        self.assertIsNone(self._brokering([{"host": "api.x.com"}]))
+        self.assertIsNone(self._brokering(
+            [{"host": "api.x.com", "methods": ["*"], "paths": ["*"]}]))
 
     def test_the_broker_holds_what_the_policy_brokers_among_its_hosts(self):
         a = _credential("a", ["api.a.com", "up.a.com"], "A")
         b = _credential("b", ["api.b.com"], "B")
         broker = self._brokering([
-            {"host": "*.a.com", "paths": ["/v1/*"], "credential": "a"},
-            {"host": "api.b.com", "credential": "b"}], a, b)
+            {"host": "*.a.com", "methods": ["*"], "paths": ["/v1/*"],
+             "credential": "a"},
+            {"host": "api.b.com", "methods": ["*"], "paths": ["*"],
+             "credential": "b"}], a, b)
         self.assertEqual(broker.hosts, (("api.a.com", "a"),
                                         ("up.a.com", "a"),
                                         ("api.b.com", "b")))
@@ -664,26 +667,32 @@ class TestCredentials(unittest.TestCase):
 
     def test_a_host_the_credential_does_not_name_is_refused(self):
         with self.assertRaisesRegex(CredentialError, "for api.a.com only"):
-            self._brokering([{"host": "evil.example", "credential": "a"}],
+            self._brokering([{"host": "evil.example", "methods": ["*"],
+                              "paths": ["*"], "credential": "a"}],
                             _credential("a", ["api.a.com"]))
 
     def test_a_credential_an_earlier_entry_takes_every_host_of(self):
         a = _credential("a", ["api.x.com"], "A")
         b = _credential("b", ["api.x.com"], "B")
         with self.assertRaisesRegex(CredentialError, "earlier entry"):
-            self._brokering([{"host": "api.x.com", "credential": "a"},
-                             {"host": "api.x.com", "credential": "b"}], a, b)
+            self._brokering([{"host": "api.x.com", "methods": ["*"],
+                              "paths": ["*"], "credential": "a"},
+                             {"host": "api.x.com", "methods": ["*"],
+                              "paths": ["*"], "credential": "b"}], a, b)
 
     def test_two_credentials_may_not_set_one_variable(self):
         with self.assertRaisesRegex(CredentialError, "both set K"):
-            self._brokering([{"host": "api.a.com", "credential": "a"},
-                             {"host": "api.b.com", "credential": "b"}],
+            self._brokering([{"host": "api.a.com", "methods": ["*"],
+                              "paths": ["*"], "credential": "a"},
+                             {"host": "api.b.com", "methods": ["*"],
+                              "paths": ["*"], "credential": "b"}],
                             _credential("a", ["api.a.com"], "K"),
                             _credential("b", ["api.b.com"], "K"))
 
     def test_an_unknown_credential_is_refused(self):
         with self.assertRaisesRegex(CredentialError, "no credential a"):
-            self._brokering([{"host": "api.a.com", "credential": "a"}])
+            self._brokering([{"host": "api.a.com", "methods": ["*"],
+                              "paths": ["*"], "credential": "a"}])
 
 
 class TestBrokerUnits(unittest.TestCase):
@@ -884,7 +893,7 @@ class TestAllowDocument(unittest.TestCase):
            "splice": [],
            "policy": [{"host": "api.x", "methods": ["POST"],
                        "paths": ["/v1/*"], "credential": "k"},
-                      {"host": "api.y", "methods": ["GET"]}]}
+                      {"host": "api.y", "methods": ["GET"], "paths": ["*"]}]}
 
     def _load(self, doc):
         path = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -1017,8 +1026,8 @@ class TestRecordReading(unittest.TestCase):
 
     def test_the_refusals_the_policy_still_makes(self):
         """A refusal the policy no longer makes is not one to act on."""
-        policy = _policy(self, [{"host": "api.y", "methods": ["GET"]}],
-                         hosts=["now.listed"])
+        policy = _policy(self, [{"host": "api.y", "methods": ["GET"],
+                                 "paths": ["*"]}], hosts=["now.listed"])
         docs = [_line(host="evil.example", decision="drop",
                       reason="not allowlisted")] * 3 + [
             _line(host="now.listed", decision="drop",
@@ -1702,7 +1711,8 @@ class TestCommands(unittest.TestCase):
         bad_policy.write_text('{"hosts": "pypi.org"}')
         brokered = self.policy.with_name("brokered.json")
         brokered.write_text(json.dumps({"policy": [
-            {"host": "api.x", "paths": ["/v1/*"], "credential": "k"}]}))
+            {"host": "api.x", "methods": ["*"], "paths": ["/v1/*"],
+             "credential": "k"}]}))
         cases = {"exists": dict(name="agent"),
                  "name": dict(name="Agent"),
                  "policy": dict(name="b", policy=bad_policy),
@@ -2107,7 +2117,8 @@ with mock.patch.object(cli, "unit_netns", held):
     def _brokered(self, name="brokered.json", host="api.x"):
         path = self.policy.with_name(name)
         path.write_text(json.dumps({"policy": [
-            {"host": host, "paths": ["/v1/*"], "credential": "k"}]}))
+            {"host": host, "methods": ["*"], "paths": ["/v1/*"],
+             "credential": "k"}]}))
         return path
 
     def test_a_secret_is_sealed_by_its_standard_input(self):
@@ -2534,8 +2545,9 @@ with mock.patch.object(cli, "unit_netns", held):
         before = hut.policy.read_text()
         for bad, words in (('{"hosts": "x"}', "'hosts'"),
                            ("{", "policy: Expecting"),
-                           ('{"policy": [{"host": "api.x", "paths": ["/*"],'
-                            ' "credential": "nosuch"}]}', "no credential")):
+                           ('{"policy": [{"host": "api.x", "methods": ["*"],'
+                            ' "paths": ["/*"], "credential": "nosuch"}]}',
+                            "no credential")):
             host = FakeHost(self.home)
             with self.subTest(bad), \
                     self.assertRaisesRegex(commands.HutError, words):
