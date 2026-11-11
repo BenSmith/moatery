@@ -2131,6 +2131,45 @@ with mock.patch.object(cli, "unit_netns", held):
             self._add(auth_format="Bearer")
         self.assertFalse(credentials_root(self.dirs).exists())
 
+    def test_a_token_prefix_reaches_the_workload_and_survives_rotation(self):
+        from moathut import cli
+        args = parse(["credential", "add", "k", "--host", "api.x",
+                      "--env", "K", "--placeholder-prefix", "gho_"])
+        host = FakeHost(self.home)
+        add = commands.credential_add
+        with mock.patch.object(cli, "credential_add",
+                               side_effect=lambda *a, **kw: add(
+                                   *a, runner=host, **kw)), \
+                mock.patch("sys.stdout"):
+            cli.run_credential(args, dirs=self.dirs,
+                               stdin=io.StringIO("sk-real"))
+        hut, _ = self._create(policy=self._brokered())
+        before = json.loads(described(self.dirs, "k").read_text())
+        self.assertRegex(before["placeholder"], r"^gho_[0-9a-f]{32}$")
+        self.assertIn(f"Environment=K={before['placeholder']}",
+                      hut.container_file.read_text())
+        (huts, moved), _ = self._add(secret="sk-new",
+                                    placeholder_prefix="gho_")
+        self.assertEqual((huts, moved), (["agent"], False))
+        after = json.loads(described(self.dirs, "k").read_text())
+        self.assertEqual(after["placeholder"], before["placeholder"])
+
+    def test_changing_a_prefix_reports_a_workload_restart(self):
+        self._add()
+        hut, _ = self._create(policy=self._brokered())
+        (huts, moved), _ = self._add(placeholder_prefix="gho_")
+        self.assertEqual((huts, moved), (["agent"], True))
+        self.assertIn("Environment=K=gho_", hut.container_file.read_text())
+
+    def test_an_invalid_prefix_changes_nothing(self):
+        self._add()
+        before = described(self.dirs, "k").read_bytes()
+        for prefix in ("", "gho_\n", "a" * 49, "{secret}", "-bad"):
+            with self.subTest(prefix=prefix), self.assertRaisesRegex(
+                    commands.HutError, "placeholder prefix"):
+                self._add(placeholder_prefix=prefix)
+            self.assertEqual(described(self.dirs, "k").read_bytes(), before)
+
     def test_a_hut_naming_a_credential_has_a_broker_holding_it(self):
         self._add()
         hut, _ = self._create(policy=self._brokered())

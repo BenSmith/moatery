@@ -35,7 +35,7 @@ _moathut_takes_value() {
     case $1 in
         --network-policy | --image | --mount | --seccomp | --like | \
             --request-filters | --method | --path | --host | --env | \
-            --auth-header | --auth-format)
+            --auth-header | --auth-format | --placeholder-prefix)
             return 0 ;;
     esac
     return 1
@@ -78,7 +78,8 @@ _moathut() {
             COMPREPLY=($(compgen -W "GET HEAD POST PUT PATCH DELETE
                 OPTIONS" -- "$cur"))
             return ;;
-        --image | --path | --host | --env | --auth-header | --auth-format)
+        --image | --path | --host | --env | --auth-header | --auth-format | \
+            --placeholder-prefix)
             return ;;
     esac
 
@@ -127,7 +128,8 @@ _moathut() {
             case ${pos[1]} in
                 "") names="add ls rm" ;;
                 add)
-                    options="--host --env --auth-header --auth-format"
+                    options="--host --env --auth-header --auth-format
+                        --placeholder-prefix"
                     ((n == 1)) && names=$(_moathut_credentials) ;;
                 rm) ((n == 1)) && names=$(_moathut_credentials) ;;
             esac ;;

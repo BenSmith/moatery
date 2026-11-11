@@ -1332,12 +1332,13 @@ def _replace(path, data, mode=0o600):
 
 
 def credential_add(credential, secret, *, hosts, env, auth_header,
-                   auth_format, dirs, runner=run):
+                   auth_format, dirs, runner=run, placeholder_prefix=None):
     """Seal the secret, or replace one sealed before: what is not given is
     kept, and so is the placeholder. The huts naming it are written
-    again and their brokers restarted. Returns their names and whether
-    the variable changed, which a running hut's workload has from its
-    next start."""
+    again and their brokers restarted. An explicit prefix keeps a
+    matching placeholder, or generates a new one. Returns their names
+    and whether the variable or placeholder changed, which a running
+    hut's workload has from its next start."""
     if not valid_name(credential):
         raise HutError(f"{credential!r}: a credential's id is lowercase "
                        "letters, digits and inner dashes, 48 at most")
@@ -1351,9 +1352,14 @@ def credential_add(credential, secret, *, hosts, env, auth_header,
             credential, (), env, BROKER_DEFAULT_AUTH_HEADER,
             BROKER_DEFAULT_AUTH_FORMAT, credentials.placeholder())
     try:
+        fiction = old.placeholder
+        if placeholder_prefix is not None:
+            generated = credentials.placeholder(placeholder_prefix)
+            if not fiction.startswith(placeholder_prefix):
+                fiction = generated
         new = describe(credential, hosts or old.hosts, env or old.env,
                        auth_header or old.auth_header,
-                       auth_format or old.auth_format, old.placeholder,
+                       auth_format or old.auth_format, fiction,
                        secret.strip(), reserved=RESERVED)
     except CredentialError as exc:
         raise HutError(f"credential: {exc}") from None
@@ -1394,7 +1400,8 @@ def credential_add(credential, secret, *, hosts, env, auth_header,
         raise HutError(f"credential {credential} is sealed, but the broker "
                        f"of {', '.join(failed)} did not start again; see "
                        "journalctl --user -u 'moathut-*-broker'")
-    return [hut.name for hut, _, _ in huts], new.env != old.env
+    changed = (new.env, new.placeholder) != (old.env, old.placeholder)
+    return [hut.name for hut, _, _ in huts], changed
 
 
 def credential_ls(*, dirs):

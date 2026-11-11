@@ -27,6 +27,7 @@ Usage:
   moathut ls
   moathut credential add ID [--host HOST]... [--env VARIABLE]
                      [--auth-header FIELD] [--auth-format FORMAT]
+                     [--placeholder-prefix PREFIX]
   moathut credential ls
   moathut credential rm ID
   moathut --version

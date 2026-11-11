@@ -59,6 +59,7 @@ moathut network-policy NAME
 moathut request-filters NAME
 moathut credential add ID [--host HOST]... [--env VARIABLE]
                    [--auth-header FIELD] [--auth-format FORMAT]
+                   [--placeholder-prefix PREFIX]
 moathut credential ls
 moathut credential rm ID
 moathut stop NAME
@@ -289,12 +290,20 @@ of it is checked by the broker's own `build_profiles` with the real
 secret first, so a key the broker would refuse is refused here. A
 credential is sealed once and serves every hut whose policy names it.
 
+`--placeholder-prefix` generates the random placeholder with a
+non-secret prefix such as `gho_`, for clients that check a token's shape
+before sending it. The default prefix is `moatery-placeholder-`. A
+prefix is 1 to 48 ASCII letters, digits, underscores or dashes, starting
+with a letter or digit; 32 random hexadecimal digits follow it.
+
 Adding an ID that exists replaces it: the secret, and whichever of the
 hosts, variable, header and format are given; the placeholder stays.
+An explicit prefix keeps a matching placeholder, or generates a new one.
 The units of every hut whose policy names it are written again and a
 running broker is restarted, which a request in the gap finds refused.
-A changed variable reaches a running workload at its next start. A
-replacement a hut could no longer hold is refused, and nothing changes.
+A changed variable or placeholder reaches a running workload at its
+next start. A replacement a hut could no longer hold is refused, and
+nothing changes.
 
 **credential ls** lists each credential: its ID, its variable, its
 hosts, and the huts whose policy names it. **credential rm** refuses

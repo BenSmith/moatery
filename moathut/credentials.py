@@ -52,8 +52,12 @@ class Broker(NamedTuple):
     credentials: tuple
 
 
-def placeholder():
-    return f"moatery-placeholder-{secrets.token_hex(16)}"
+def placeholder(prefix="moatery-placeholder-"):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}", prefix):
+        raise CredentialError(
+            "placeholder prefix needs 1 to 48 ASCII letters, digits, "
+            "underscores or dashes, starting with a letter or digit")
+    return f"{prefix}{secrets.token_hex(16)}"
 
 
 def describe(credential, hosts, env, auth_header, auth_format, fiction,

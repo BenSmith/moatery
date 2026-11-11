@@ -126,6 +126,9 @@ def build_parser():
                    help="the header the secret is sent in (x-api-key)")
     p.add_argument("--auth-format", metavar="FORMAT",
                    help="its value, with {secret} substituted ({secret})")
+    p.add_argument("--placeholder-prefix", metavar="PREFIX",
+                   help="generate a placeholder with this non-secret "
+                        "prefix; keep an existing one if it matches")
     credential.add_parser("ls", help="list the credentials")
     credential.add_parser("rm", help="remove a credential no hut's "
                                      "policy names").add_argument("id")
@@ -166,11 +169,12 @@ def run_credential(args, *, dirs, stdin):
         huts, moved = credential_add(
             args.id, _secret(args.id, stdin), hosts=args.host, env=args.env,
             auth_header=args.auth_header, auth_format=args.auth_format,
-            dirs=dirs)
+            placeholder_prefix=args.placeholder_prefix, dirs=dirs)
         print(f"credential {args.id} sealed")
         for name in huts:
             print(f"hut {name}: its broker holds it"
-                  + ("; the new variable is set from its next start"
+                  + ("; the new variable or placeholder is set from "
+                     "its next start"
                      if moved else ""))
     elif args.credential_command == "ls":
         for row in credential_ls(dirs=dirs):
