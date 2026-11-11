@@ -317,7 +317,9 @@ is refused rather than one half being ignored:
   method, path or credential applies;
 - a `policy` entry whose host overlaps a `splice` pattern.
 
-Also refused: a key of the wrong type (a list that is not a list, a name
+Also refused: a key the document or an entry does not take (a
+misspelt `methods` would otherwise read as absent, permitting any
+method), a key of the wrong type (a list that is not a list, a name
 that is empty or not a string, an entry with no `host`, `methods` or
 `paths` given as a string), and an `http2` list that names a host (see
 [HTTP/2](#http2)).

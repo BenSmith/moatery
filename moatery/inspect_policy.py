@@ -108,6 +108,11 @@ class Policy(NamedTuple):
         return None
 
 
+DOCUMENT_KEYS = ("tls", "hosts", "internal_expected", "splice", "http2",
+                 "policy")
+ENTRY_KEYS = ("host", "methods", "paths", "credential")
+
+
 def load_policy(path):
     """Read the policy document, or raise.
 
@@ -123,6 +128,9 @@ def load_policy(path):
     if not isinstance(doc, dict):
         raise ValueError(
             f"{path}: expected a JSON object, got {type(doc).__name__}")
+    # A misspelt key would otherwise read as absent, and an absent
+    # `methods` or `paths` permits any.
+    _refuse_unknown(doc, DOCUMENT_KEYS, path, "the document")
     # One of two words or refused: every branch asks for "inspect" or
     # "splice", and an unknown mode would skip the CA check and splice
     # everything.
@@ -149,6 +157,8 @@ def load_policy(path):
                 or not item["host"].strip()):
             raise ValueError(f"{path}: a 'policy' entry is not a table with a "
                              f"host: {item!r}")
+        _refuse_unknown(item, ENTRY_KEYS, path,
+                        f"policy entry {item['host']!r}")
         # None and [] differ: absent is any, empty is none. Methods are
         # uppercased here too, since permits compares `method.upper()` and a
         # hand-written `["get"]` would otherwise deny every GET.
@@ -185,6 +195,14 @@ def load_policy(path):
                   internal_expected=tuple(
                       normalize_hostname(h) for h in internal_expected),
                   splice=tuple(splice), policy=tuple(policy), digest=digest)
+
+
+def _refuse_unknown(table, known, path, where):
+    unknown = sorted(set(table) - set(known))
+    if unknown:
+        raise ValueError(
+            f"{path}: {where} has {', '.join(map(repr, unknown))}, which "
+            f"it does not take; its keys are {', '.join(known)}")
 
 
 def _names(doc, key, path):

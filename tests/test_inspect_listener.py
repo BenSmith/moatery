@@ -1143,6 +1143,30 @@ class TestPolicyRefusals(unittest.TestCase):
                      "policy": [{"host": "a.example", key: ["x", bad]}]},
                     repr(key), repr(bad))
 
+    def test_an_unknown_key_is_refused_naming_it(self):
+        """A misspelt `methods` read as absent, which permits any method:
+        `"method": ["GET"]` loaded clean and permitted DELETE."""
+        for doc, word in (
+                ({"policy": [{"host": "a.example", "method": ["GET"]}]},
+                 "'method'"),
+                ({"policy": [{"host": "a.example", "path": ["/v1/*"]}]},
+                 "'path'"),
+                ({"policy": [{"host": "a.example", "credentials": "k"}]},
+                 "'credentials'"),
+                ({"host": ["a.example"]}, "'host'"),
+                ({"hosts": ["a.example"], "comment": "x"}, "'comment'")):
+            with self.subTest(doc=doc):
+                self._refused(doc, word)
+
+    def test_every_known_key_loads(self):
+        policy = self._load(
+            {"tls": "inspect", "hosts": ["a.example"],
+             "internal_expected": ["a.example"], "splice": ["c.example"],
+             "http2": [],
+             "policy": [{"host": "b.example", "methods": ["GET"],
+                         "paths": ["/"], "credential": "k"}]})
+        self.assertEqual(policy.credential_for("b.example"), "k")
+
     def test_an_entry_with_an_empty_host_is_refused(self):
         self._refused({"tls": "inspect", "policy": [{"host": " "}]}, "host")
 
