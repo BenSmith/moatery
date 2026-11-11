@@ -9,7 +9,8 @@ a VM), `docs/POLICY.md` (the policy document) and
 `docs/INTERFACE.md` (the names other programs import and the status
 file paths they read). `moathut` lays the netns placement out as
 long-lived huts: `docs/MOATHUT-GUIDE.md` is its guide, `docs/MOATHUT.md`
-its reference, `docs/MOATHUT-CLAUDE-CODE.md` Claude Code in a hut.
+its reference, `docs/MOATHUT-CLAUDE-CODE.md` Claude Code in a hut,
+`docs/MOATHUT-COPILOT.md` Copilot CLI in one.
 `examples/` holds the host placement's user units and a logrotate
 configuration, the netns placement as a quadlet pod, and a bootc image;
 the RPM installs them with the docs.

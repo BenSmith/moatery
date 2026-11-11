@@ -8,6 +8,10 @@ installed (`just rpm` builds it): the programs in
 and these files in `/usr/share/doc/moatery/examples/`. The commands
 below are run from that directory, or from `examples/` in a checkout.
 
+`copilot/copilot_hut.py` is the recipe for Copilot CLI in a hut: it
+seals the host's login, writes the policy and installs a pinned release
+([MOATHUT-COPILOT.md](../docs/MOATHUT-COPILOT.md)).
+
 The workload's name in these files is `example`, and the brokered
 provider is `api.example.com` under the credential id `example`.
 Everything else follows from those three.

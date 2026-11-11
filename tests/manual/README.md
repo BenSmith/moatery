@@ -550,3 +550,38 @@ The stock rows accepted one and two `module_request` denials, the hut's
 user's and privileged root's held none. Under `--podman-seccomp`,
 167/169: those two rows red, each on its errnos and on one
 `module_request` for `net-pf-40`.
+
+## copilot_rig.py — Copilot CLI in a hut, against GitHub
+
+`docs/MOATHUT-COPILOT.md`: the recipe's `enroll`, `policy` and
+`install`, in a hut the guide's steps 1 to 3 made. Unlike the other
+rigs it has no stub: the provider is GitHub's real API, through the
+host's own Copilot login, and one row is a real inference request,
+which Copilot counts as usage.
+
+**Provisional: no run yet.** The rows have not been seen green or red;
+the first run's results go in [FINDINGS.md](FINDINGS.md).
+
+```bash
+python3 tests/manual/copilot_rig.py copilot-hut            # every row green
+python3 tests/manual/copilot_rig.py copilot-hut --restart  # a fresh start
+python3 tests/manual/copilot_rig.py copilot-hut --plant    # must go red
+python3 tests/manual/copilot_rig.py copilot-hut --probe-permitted  # red
+```
+
+The rig pipes itself into the hut, where it sends the requests and
+reports what it saw; the rows are judged on the host, beside the hut's
+record. The premise row is the hut's `COPILOT_GITHUB_TOKEN`: `gho_`
+shaped, and not the host's token, compared by SHA-256. The brokered
+account check, the model list and `get_me` through `/mcp/readonly` are
+the controls for the refusal rows: the same backend answers the
+placeholder, and refuses `POST /mcp`, `POST /agents/sessions` and
+`GET /copilot_internal/v2/token` with a 403 and a new `drop` in the
+record, with no credential. The last row scans the regular files of the
+hut's home, without following links, for the host token's length and
+fingerprint; only the fingerprint goes into the hut.
+
+`--plant` writes a decoy `gho_` token in the hut's home and has the
+scan look for it, so the last row must go red. `--probe-permitted`
+sends the refusal probes to a route the policy permits, so their rows
+must go red.

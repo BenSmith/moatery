@@ -387,7 +387,9 @@ prints what it did:
 ## API keys
 
 [MOATHUT-CLAUDE-CODE.md](MOATHUT-CLAUDE-CODE.md) walks through Claude
-Code in a hut, with a subscription's token sealed this way.
+Code in a hut, with a subscription's token sealed this way, and
+[MOATHUT-COPILOT.md](MOATHUT-COPILOT.md) GitHub Copilot CLI, with the
+host's GitHub login.
 
 A hut can use an API key without ever holding it. You seal the key on
 the host once. The hut gets a placeholder in an environment variable,
