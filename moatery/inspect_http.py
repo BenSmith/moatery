@@ -564,11 +564,14 @@ def _refuse(client, conn, req, status, reason):
     """Answer a request we will not relay. True if the connection lives.
 
     The body is drained before the answer, or the next request would be
-    read out of it. A guest waiting on `Expect: 100-continue` has no body
-    coming, so its connection is closed.
+    read out of it. It is drained on a connection that closes too: a close
+    with the body unread resets it, and the reset can overtake the answer.
+    A guest waiting on `Expect: 100-continue` has no body coming, so its
+    connection is closed.
     """
-    keep = not req.wants_close and not req.expects_continue
-    if keep:
-        keep = drain(client, req.framing)
+    if req.expects_continue:
+        keep = False
+    else:
+        keep = drain(client, req.framing) and not req.wants_close
     send_response(conn, status, reason, close=not keep)
     return keep

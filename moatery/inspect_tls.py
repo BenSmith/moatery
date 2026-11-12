@@ -31,8 +31,9 @@ from .egress_relay import relay
 from . import egress_relay
 from .egress_upstream import UPSTREAM_ALPN, dial_failure_reason, tls_failure
 from .http_framing import (
-    RequestUnreadable, _Stream, is_http_request_start, send_response,
+    RequestUnreadable, _Stream, drain, is_http_request_start, send_response,
 )
+from .http_request import parse_request
 from .http_target import SCHEME_HTTPS
 from . import inspect_http
 from .inspect_scope import quoted
@@ -256,11 +257,18 @@ def _serve_tls_inspect(insp, conn, where, host, allowed, hello, policy):
 def _bump_answer(tls_conn, status, phrase):
     """Deliver a refusal inside a handshake we just completed.
 
-    The guest's request is read and discarded first: a client still sending
-    when the connection closes reports a broken pipe instead of the status.
+    The guest's request is read and discarded first, its body to
+    DRAIN_MAX: a client still sending when the connection closes reports a
+    broken pipe, and a close with its body unread resets the connection,
+    which can overtake the status.
     """
+    stream = _Stream(tls_conn)
     try:
-        _Stream(tls_conn).read_head()
+        head = stream.read_head()
+        req = parse_request(head, SCHEME_HTTPS) if head else None
+        # One waiting on `Expect: 100-continue` sends no body.
+        if req is not None and not req.expects_continue:
+            drain(stream, req.framing)
     except (RequestUnreadable, OSError):
         pass
     send_response(tls_conn, status, phrase, close=True)

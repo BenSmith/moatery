@@ -1174,6 +1174,62 @@ class TestARedirectOffTheAllowlistIsNamedWhereBothNamesAreKnown(
         self.assertEqual(redirect_target("https://h/a%2fb"), ("h", "/a%2Fb"))
 
 
+class TestARefusedBodyIsReadBeforeTheClose(TerminationCase):
+    """The Copilot rig on 0.11.0 (2026-11-11): urllib's POST to a refused
+    path, sent with `Connection: close`, got a reset where the 403 was due,
+    as the record logged the drop. The body was left unread and the close
+    reset the connection; at 20 KB the reset overtakes the answer."""
+
+    def test_a_refused_post_that_closes_gets_its_403(self):
+        mod = _mod()
+        origin = _Origin(self.origin_pem)
+        self.addCleanup(origin.close)
+        listener, _ = self._listener(
+            mod, origin, entries=(("localhost", ("GET",), ("*",)),))
+        body = b"x" * 20000
+        response, error = self._exchange(
+            listener, origin,
+            request=b"POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
+                    b"Connection: close\r\nContent-Length: "
+                    + str(len(body)).encode() + b"\r\n\r\n" + body)
+        self.assertIsNone(error)
+        self.assertIn(b"403 Forbidden", response)
+        self.assertEqual(origin.requests, [])
+
+    def test_a_post_to_an_unlisted_host_gets_its_403(self):
+        """The bumped refusal, which reads the request itself."""
+        mod = _mod()
+        origin = _Origin(self.origin_pem)
+        self.addCleanup(origin.close)
+        listener, _ = self._listener(mod, origin, hosts=("nothing.example",))
+        body = b"x" * 20000
+        response, error = self._exchange(
+            listener, origin,
+            request=b"POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
+                    b"Connection: close\r\nContent-Length: "
+                    + str(len(body)).encode() + b"\r\n\r\n" + body)
+        self.assertIsNone(error)
+        self.assertIn(b"403 Forbidden", response)
+
+    def test_one_waiting_to_continue_is_answered_without_its_body(self):
+        mod = _mod()
+        origin = _Origin(self.origin_pem)
+        self.addCleanup(origin.close)
+        for kwargs in ({"hosts": ("nothing.example",)},
+                       {"entries": (("localhost", ("GET",), ("*",)),)}):
+            with self.subTest(**kwargs):
+                listener, _ = self._listener(mod, origin, **kwargs)
+                started = time.monotonic()
+                response, error = self._exchange(
+                    listener, origin,
+                    request=b"POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
+                            b"Expect: 100-continue\r\n"
+                            b"Content-Length: 20000\r\n\r\n")
+                self.assertIsNone(error)
+                self.assertIn(b"403 Forbidden", response)
+                self.assertLess(time.monotonic() - started, 2)
+
+
 class TestTheStartRefusesWhatItCannotDo(unittest.TestCase):
 
     def test_inspect_without_a_ca_fails_the_start(self):
