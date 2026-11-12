@@ -552,3 +552,48 @@ port and the listener read nothing from it. `--uninspected-ruled`
 137/139, red on that hut's table and connect rows alone;
 `--without-rules` 78/139, the rig's hut's connect reaching the listener
 (`'sent'`) and the other uninspected rows green.
+
+## Every rig, before a release
+
+**0.11.0, 2026-11-10.** Commit e85536d, its RPM installed on the proving
+host (Fedora 44), each rig as an ordinary user, then each of its break
+flags. Every clean run green, and every flag red on the rows it names and
+no others. No defect.
+
+| Rig | Clean | Break flags |
+|---|---|---|
+| host_rig | 42/42 | `--without-rules` 9/40, `--without-dns-redirect` 12/40, `--broker-over-tcp` 40/42, `--rules-after-start` 41/42 |
+| netns_rig | 31/31 | `--without-rules` 14/31, `--without-netns-pid` 19/30, `--without-dns-redirect` 17/31, `--without-notify` 29/31, `--rules-after-start` 30/31 |
+| sidecar_rig | 38/38 | `--without-rules` 17/38, `--without-private-drop` 36/38, `--without-dns-redirect` 30/38 |
+| vm_rig | 32/32 | `--without-rules` 11/31, `--without-dns-redirect` 15/31, `--without-neighbour-discovery` 13/31, `--rules-after-boot` 30/32 |
+| vm_placement_rig | netns 24/24, sidecar 24/24 | `--rules-after-boot` 22/24, `--loopback-answer` 18/24, `--no-build` 24/24 |
+| hut_rig | 169/169 | below |
+
+hut_rig's flags: `--without-rules` 94/169; `--without-held-netns`
+160/169, the nine held-namespace rows; `--podman-seccomp` 167/169, the two
+seccomp rows; `--broker-not-ready` 151/169, every row whose first request
+needs the broker (502, "credential broker unreachable");
+`--listeners-required` 166/169, the three loop rows where the inspector
+stops; `--without-reload` 164/169, allow restarting the inspector and the
+running download cut (curl 56); `--without-reopen` 168/169, the record
+row; `--without-autostart` 164/169, the create, autostart and outside
+rows; `--uninspected-ruled` 167/169, the uninspected hut's table and
+connect; `--cp-unguarded` 164/169, the five cp rows; `--rm-unguarded`
+166/169, the three rm rows; `--unfiltered` 161/169, the seven filter
+rows.
+
+Every hut_rig run's denials were of two kinds the AVC rows expect:
+`nnp_transition` from `unconfined_t` to `container_runtime_t`, and
+`module_request` for `net-pf-40` (the seccomp rows' vsock socket). 65 a
+run; 69 under `--without-rules` and `--without-held-netns`, and 77 under
+`--without-reload`, the extra all of the first kind.
+
+Two gaps in the rigs, not in moatery:
+
+- the AVC rows and the driver read `/var/log/audit/audit.log` alone.
+  The proving host rotates it at 8 MB, about every four hours under
+  these runs, and it rotated during `--podman-seccomp`: a denial written
+  before a rotation, inside a run, is not seen. `ausearch --input-logs`
+  or reading the rotated files would close it.
+- `host_rig.py --without-dns-redirect` turns the filter rows red as well
+  as the ones its help names.
