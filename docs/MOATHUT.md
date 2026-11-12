@@ -54,6 +54,7 @@ moathut create NAME (--network-policy FILE | --like HUT)
 moathut enter NAME [--root] [-- COMMAND...]
 moathut cp SRC... DEST
 moathut log NAME [--refused]
+moathut explain NAME HOST [--method M] [--path P]
 moathut allow NAME HOST [--method M]... [--path P]...
 moathut network-policy NAME
 moathut request-filters NAME
@@ -195,6 +196,21 @@ host the workload reaches has to be listed.
   refused; and the responder's `unlisted_names`, the names the workload
   asked for that no list admits. Both leave out what the policy now lets
   through.
+- **explain** says what the hut's policy and request filters do with
+  HOST: the `hosts` patterns or the entries that admit it, whether its
+  TLS is terminated or spliced, and by what, each entry that governs it,
+  the credential its requests are brokered with (and why the broker
+  cannot attach it, if it cannot), the filter its request bodies go
+  through, and an `internal_expected` pattern naming it. With `--method`
+  or `--path` (GET and `/` standing in for the one not given) it judges
+  that request too, parsed as the inspector parses one: the method as
+  given, so a lowercase one is refused, and the path normalised, with
+  both readings of an encoded slash shown. A spliced host's request is
+  judged over http alone, since its https is never read. A filtered
+  host's request is permitted subject to its filter, whose answer
+  depends on the body. It answers with the inspector's own loaders,
+  parser and `Policy`, from the documents on disk; when the running
+  inspector holds others, it says so, and they apply once it reloads.
 - **allow** only widens. A host no list names goes into `hosts`, or,
   with `--method` or `--path`, into an entry of its own, where the one
   not given is `["*"]`. A host `hosts`

@@ -87,8 +87,8 @@ _moathut() {
     case $command in
         "")
             options="--version"
-            names="create enter cp log allow network-policy request-filters
-                stop rm ls credential ptyxis" ;;
+            names="create enter cp log explain allow network-policy
+                request-filters stop rm ls credential ptyxis" ;;
         create)
             options="--network-policy --image --mount --autostart --seccomp
                 --request-filters --like --dry-run" ;;
@@ -113,7 +113,7 @@ _moathut() {
         log)
             options="--refused"
             ((n == 0)) && names=$(_moathut_huts) ;;
-        allow)
+        explain | allow)
             options="--method --path"
             ((n == 0)) && names=$(_moathut_huts) ;;
         network-policy | request-filters | stop)

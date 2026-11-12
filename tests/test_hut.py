@@ -32,9 +32,11 @@ from tests.test_quadlet_example import _ruleset
 
 from moatery.egress_record import DROP_MISDIRECTED
 from moatery.inspect_document import INSPECT_DIGEST_KEY, inspect_policy_digest
+from moatery.inspect_document import RequestFilter, RequestFilters
 from moatery.inspect_policy import load_policy
 from moatery.request_filter import REQUEST_FILTERS_DIGEST_KEY
 from moathut import commands, document, netns, record, seccomp
+from moathut.explain import report
 from moathut.cli import main, parse
 from moathut.credentials import (Broker, Credential, CredentialError,
                                      brokering, describe)
@@ -966,6 +968,125 @@ def _line(**fields):
                          "reason", "status", "credential"))
     doc.update(ts="2026-09-30T01:02:03.456Z", mode="terminate", **fields)
     return doc
+
+
+class TestExplain(unittest.TestCase):
+    """explain answers with the inspector's own Policy methods, so what it
+    says of a host is what the inspector does with it."""
+
+    DOC = {"tls": "inspect", "hosts": ["pypi.org", "*.github.com"],
+           "internal_expected": ["git.internal"],
+           "splice": ["*.pythonhosted.org", "git.internal"],
+           "policy": [{"host": "api.x", "methods": ["POST"],
+                       "paths": ["/v1/*"], "credential": "k"},
+                      {"host": "api.x", "methods": ["*"],
+                       "paths": ["/models"]}]}
+
+    def _report(self, host, method=None, path=None, doc=None):
+        path_ = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (path_ / "p.json").write_text(document.dumps(doc or self.DOC))
+        return "\n".join(report(load_policy(path_ / "p.json"), host,
+                                 method, path))
+
+    def test_a_listed_host_names_the_pattern_and_any_request(self):
+        said = self._report("api.github.com", "DELETE", "/repos")
+        self.assertIn("admitted    by hosts: *.github.com", said)
+        self.assertIn("tls         terminated, its requests read", said)
+        self.assertIn("entries     none: any method, any path", said)
+        self.assertIn("credential  none", said)
+        self.assertIn("request     DELETE /repos: permitted", said)
+
+    def test_a_governed_host_lists_every_entry_and_their_union(self):
+        said = self._report("api.x")
+        self.assertIn("admitted    by its entries", said)
+        self.assertIn("2 govern it", said)
+        self.assertIn("methods: POST  paths: /v1/*  credential: k", said)
+        self.assertIn("methods: any  paths: /models", said)
+        self.assertIn("credential  k, which the broker attaches", said)
+        self.assertNotIn("  request ", said)
+        for method, path, verdict in (("POST", "/v1/m", "permitted"),
+                                      ("GET", "/models", "permitted"),
+                                      ("GET", "/v1/m", "refused, 403"),
+                                      ("POST", "/v1/a/../m?q=/x",
+                                       "permitted")):
+            with self.subTest(method=method, path=path):
+                said = self._report("api.x", method, path)
+                self.assertIn(f"request     {method} {path}", said)
+                self.assertTrue(said.endswith(f": {verdict}"))
+        self.assertTrue(self._report("api.x", "POST", "/v1/../admin")
+                        .endswith("POST /v1/../admin (matched as /admin): "
+                                  "refused, 403"))
+        self.assertIn("POST /v1/..;/admin: refused, 400: the segment",
+                      self._report("api.x", "POST", "/v1/..;/admin"))
+        self.assertTrue(self._report("api.x", path="/models").endswith(
+            "GET /models: permitted"))
+        self.assertTrue(self._report("api.x", "POST").endswith(
+            "POST /: refused, 403"))
+
+    def test_a_request_is_read_as_the_inspector_reads_it(self):
+        """The method as sent, which the inspector refuses lowercase, and
+        an encoded slash's two readings, each of which must pass."""
+        self.assertTrue(self._report("api.x", "post", "/v1/m").endswith(
+            "post /v1/m: refused, 400: method 'post' is not uppercase"))
+        self.assertTrue(self._report("api.x", "POST", "/v1/a%2fb").endswith(
+            "POST /v1/a%2fb (matched as /v1/a%2Fb and as /v1/a/b): "
+            "permitted"))
+        self.assertTrue(self._report("api.x", "GET", "/models%2Fx")
+                        .endswith("(matched as /models%2Fx and as "
+                                  "/models/x): refused, 403"))
+
+    def test_an_unlisted_host_is_refused_and_splice_admits_nothing(self):
+        said = self._report("files.pythonhosted.org", "GET", "/")
+        self.assertIn("admitted    no: neither hosts nor an entry names "
+                      "it; splice's *.pythonhosted.org admits nothing", said)
+        self.assertNotIn("tls", said)
+        self.assertIn("request     GET /: refused, 403: the host is not "
+                      "admitted", said)
+
+    def test_a_spliced_host_is_read_over_http_alone(self):
+        """Splicing is the TLS plane's; the cleartext plane judges every
+        request it reads by admits and permits."""
+        doc = dict(self.DOC, hosts=self.DOC["hosts"] + ["git.internal"])
+        said = self._report("git.internal", "GET", "/", doc=doc)
+        self.assertIn("tls         spliced, by: git.internal", said)
+        self.assertIn("ClientHello carrying ECH", said)
+        self.assertIn("internal    expected in private space, by: "
+                      "git.internal", said)
+        self.assertIn("request     GET /\n"
+                      "              over https: not read, the connection "
+                      "is spliced\n"
+                      "              over http: permitted", said)
+        doc = {"tls": "splice", "hosts": ["pypi.org"]}
+        said = self._report("pypi.org", "DELETE", "/x", doc=doc)
+        self.assertIn('tls         spliced, by: the document\'s tls is '
+                      '"splice"', said)
+        self.assertTrue(said.endswith("over http: permitted"))
+
+    def test_a_filtered_host_names_its_filter_and_the_verdict_too(self):
+        path_ = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (path_ / "p.json").write_text(document.dumps(self.DOC))
+        policy = load_policy(path_ / "p.json")._replace(
+            request_filters=RequestFilters(
+                (RequestFilter("api.*", "/usr/libexec/f"),), "d"))
+        said = "\n".join(report(policy, "api.x", "POST", "/v1/m"))
+        self.assertIn("filter      /usr/libexec/f, on each request with a "
+                      "body\n", said)
+        self.assertIn("Content-Encoding", said)
+        self.assertTrue(said.endswith(
+            "POST /v1/m: permitted, then a body goes through "
+            "/usr/libexec/f, which may refuse or rewrite it"))
+        self.assertTrue("\n".join(report(policy, "api.x", "GET", "/v1/m"))
+                        .endswith(": refused, 403"))
+        self.assertIn("filter      none", "\n".join(
+            report(policy, "pypi.org")))
+
+    def test_a_credential_that_cannot_be_read_is_said(self):
+        path_ = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (path_ / "p.json").write_text(document.dumps(self.DOC))
+        said = "\n".join(report(load_policy(path_ / "p.json"), "api.x",
+                                credential_error="no credential k"))
+        self.assertIn("credential  k, which the broker cannot attach: no "
+                      "credential k", said)
 
 
 class TestRecordRotation(unittest.TestCase):
@@ -2689,6 +2810,30 @@ with mock.patch.object(cli, "unit_netns", held):
         self.assertEqual(host.calls, [hup])
         self.assertFalse(hut.record.exists())
 
+    def test_explain_reads_the_huts_policy_and_refuses_a_pattern(self):
+        self._create()
+        host = self._host(listener_state="inactive")
+        self.assertEqual(
+            commands.explain("agent", "PyPI.org.", method="GET",
+                             dirs=self.dirs, runner=host)[-1],
+            "  request     GET /: permitted")
+        for name, path, words in (("*.example", None, "not a host name"),
+                                  ("pypi.org", "v1", "begins with /")):
+            with self.subTest(host=name), self.assertRaisesRegex(
+                    commands.HutError, words):
+                commands.explain("agent", name, path=path, dirs=self.dirs,
+                                 runner=host)
+        from moathut import cli
+        with mock.patch("sys.stdout") as out, \
+                mock.patch.object(commands, "_state",
+                                  return_value="inactive"):
+            cli.run_command(parse(["explain", "agent", "pypi.org",
+                                   "--path", "/simple/"]), tool=(),
+                            environ=self.env, cwd=self.home, isatty=False)
+        said = "".join(c.args[0] for c in out.write.call_args_list)
+        self.assertIn("admitted    by hosts: pypi.org", said)
+        self.assertIn("GET /simple/: permitted", said)
+
     def test_the_command_line_takes_the_policy_loop(self):
         from moathut import cli
         args = parse(["allow", "agent", "api.x", "--method", "GET",
@@ -2785,6 +2930,9 @@ with mock.patch.object(cli, "unit_netns", held):
                     pause=self.fail)),
                 ("log --refused", lambda: commands.refused(
                     "agent", dirs=self.dirs)),
+                ("explain", lambda: commands.explain(
+                    "agent", "example.com", dirs=self.dirs,
+                    runner=host)),
                 ("allow", lambda: commands.allow(
                     "agent", "example.com", methods=[], paths=[],
                     dirs=self.dirs, runner=host, pause=self.fail)),
@@ -3178,6 +3326,40 @@ class TestRequestFilters(unittest.TestCase):
         plain, _ = self._create("plain")
         self.assertNotIn("--request-filters", self._flag(plain))
         self.assertFalse(plain.request_filters.exists())
+
+    def test_explain_reads_the_huts_filters_and_its_running_inspector(self):
+        """The filters are the hut's on disk, loaded beside its policy; a
+        running inspector holding another digest is said, a stopped one
+        not."""
+        self.policy.write_text('{"hosts": ["pypi.org", "api.example.com"]}')
+        run = self._program()
+        hut, _ = self._create(request_filters=self._document(run))
+        stopped = self._host(listener_state="inactive")
+        said = "\n".join(commands.explain(
+            "agent", "api.example.com", method="POST", dirs=self.dirs,
+            runner=stopped))
+        self.assertIn(f"filter      {run}, on each request with a body",
+                      said)
+        self.assertTrue(said.endswith(f"through {run}, which may refuse "
+                                      "or rewrite it"))
+        hut.status.write_text(json.dumps({
+            INSPECT_DIGEST_KEY: inspect_policy_digest(
+                hut.policy.read_text()),
+            REQUEST_FILTERS_DIGEST_KEY: "older"}))
+        self.assertNotIn("inspector", "\n".join(commands.explain(
+            "agent", "pypi.org", dirs=self.dirs, runner=stopped)))
+        self.assertEqual(
+            commands.explain("agent", "pypi.org", dirs=self.dirs,
+                             runner=self._host())[-1],
+            "  inspector   holds other request filters than the hut's on "
+            "disk, which this reads; it enforces these once it reloads")
+        hut.status.write_text(json.dumps({
+            INSPECT_DIGEST_KEY: inspect_policy_digest(
+                hut.policy.read_text()),
+            REQUEST_FILTERS_DIGEST_KEY: inspect_policy_digest(
+                hut.request_filters.read_text())}))
+        self.assertNotIn("inspector", "\n".join(commands.explain(
+            "agent", "pypi.org", dirs=self.dirs, runner=self._host())))
 
     def test_a_relative_document_is_read_from_the_working_directory(self):
         self._document(name="home/rel.json")

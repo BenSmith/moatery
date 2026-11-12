@@ -32,6 +32,7 @@ from . import archive, credentials, document, ptyxis, record, seccomp
 from .archive import ArchiveRefused
 from .credentials import CredentialError, brokering, describe
 from .document import AllowRefused
+from .explain import report
 from .mounts import MountRefused, parse_mount, refuse
 from .netns import (NetnsError, connect, exec_with_pid, load_rules, make,
                     netns_id, pod_pid, release, rules_loaded)
@@ -1022,6 +1023,52 @@ def refused(name, *, dirs):
             for doc in record.lines(path))
     return (record.refusals(docs, policy),
             record.unlisted(hut.resolve_status, policy))
+
+
+def explain(name, host, *, method=None, path=None, dirs, runner=run):
+    """What the hut's policy and request filters do with HOST, and with a
+    request to it if `method` or `path` is given, as lines."""
+    hut, _settings = _inspected(name, dirs)
+    policy = _policy(hut.policy)
+    if hut.request_filters.exists():
+        try:
+            policy = policy._replace(request_filters=load_request_filters(
+                hut.request_filters, policy))
+        except (OSError, ValueError) as exc:
+            raise HutError(f"request filters: {exc}") from None
+    try:
+        host = document.host_name(host)
+    except AllowRefused as exc:
+        raise HutError(f"explain: {exc}") from None
+    if path is not None and not path.startswith("/"):
+        raise HutError(f"explain: --path {path!r} is a request's path, "
+                       "which begins with /")
+    credential, credential_error = policy.credential_for(host), None
+    if credential:
+        try:
+            credentials.read(dirs, credential)
+        except CredentialError as exc:
+            credential_error = str(exc)
+    lines = report(policy, host, method, path,
+                   credential_error=credential_error)
+    # What is on disk is what a running inspector holds once it reloads.
+    if _state(hut.inspect_service, runner) == "active":
+        try:
+            status = json.loads(hut.status.read_text())
+        except (OSError, ValueError):
+            status = None
+        if isinstance(status, dict):
+            older = [what for what, key, digest in (
+                ("policy", INSPECT_DIGEST_KEY, policy.digest),
+                ("request filters", REQUEST_FILTERS_DIGEST_KEY,
+                 policy.request_filters.digest))
+                if key in status and status[key] != digest]
+            if older:
+                lines.append(f"  inspector   holds other "
+                             f"{' and '.join(older)} than the hut's on "
+                             "disk, which this reads; it enforces these "
+                             "once it reloads")
+    return lines
 
 
 def allow(name, host, *, methods, paths, dirs, runner=run,

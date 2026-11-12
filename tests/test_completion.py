@@ -127,7 +127,8 @@ class TestTheCompletion(unittest.TestCase):
         (self.home / ".config" / "moatery" / "hut" / "half").mkdir()
         huts = {"work", "play"}
         for line in ("moathut enter ", "moathut log ", "moathut allow ",
-                     "moathut network-policy ", "moathut stop ",
+                     "moathut explain ", "moathut network-policy ",
+                     "moathut stop ",
                      "moathut rm ",
                      "moathut ptyxis ", "moathut ptyxis --remove ",
                      "moathut create x --like ",
@@ -146,7 +147,8 @@ class TestTheCompletion(unittest.TestCase):
                      "moathut allow --method GET work ",
                      "moathut enter work ", "moathut enter work -- ",
                      "moathut enter work -- -",
-                     "moathut ls ", "moathut allow work --path "):
+                     "moathut ls ", "moathut allow work --path ",
+                     "moathut explain work "):
             with self.subTest(line=line):
                 self.assertEqual(self.complete(line), set())
 

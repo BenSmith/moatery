@@ -9,16 +9,16 @@ from pathlib import Path
 
 from .commands import (DEFAULT_IMAGE, DEFAULT_LIBEXEC, HutError, allow, cp,
                        create, credential_add, credential_ls, credential_rm,
-                       edit_policy, edit_request_filters, enter, log, ls,
-                       ptyxis_add,
-                       ptyxis_remove, refused, rm, stop, unit_exec,
-                       unit_netns, unit_rotate, unit_sudoers)
+                       edit_policy, edit_request_filters, enter, explain,
+                       log, ls, ptyxis_add, ptyxis_remove, refused, rm,
+                       stop, unit_exec, unit_netns, unit_rotate,
+                       unit_sudoers)
 from .netns import NetnsError
 from .paths import user_dirs
 from .process import CommandFailed
 
-PUBLIC = ("{create,enter,cp,log,allow,network-policy,request-filters,"
-          "stop,rm,ls,credential,ptyxis}")
+PUBLIC = ("{create,enter,cp,log,explain,allow,network-policy,"
+          "request-filters,stop,rm,ls,credential,ptyxis}")
 
 # The release's VERSION, which the RPM installs beside the package.
 VERSION = Path(__file__).with_name("VERSION")
@@ -79,6 +79,14 @@ def build_parser():
                    help="instead, what the record holds that the hut's "
                         "policy still refuses, and the names asked for "
                         "that no list admits")
+    p = sub.add_parser("explain", help="what a hut's policy does with a "
+                                       "host, or a request to it")
+    p.add_argument("name")
+    p.add_argument("host")
+    p.add_argument("--method", help="judge a request with this method; "
+                                    "GET if only --path is given")
+    p.add_argument("--path", help="judge a request for this path; / if "
+                                  "only --method is given")
     p = sub.add_parser("allow", help="let a hut reach a host, or a method "
                                      "or path on it; its listeners reload")
     p.add_argument("name")
@@ -256,6 +264,10 @@ def run_command(args, *, tool, environ, cwd, isatty, stdin=sys.stdin):
                 write=lambda line: print(line, flush=True))
         except KeyboardInterrupt:
             pass
+    elif args.command == "explain":
+        for line in explain(args.name, args.host, method=args.method,
+                            path=args.path, dirs=dirs):
+            print(line)
     elif args.command == "allow":
         _applied(args.name, f"{args.host} allowed",
                  "its policy allows that already",
